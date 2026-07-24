@@ -10,7 +10,7 @@ import {
 import { Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
-const stories = [
+const mock_stories = [
   {
     id: "story-1",
     title: "Episode 1 - Candy Forest",
@@ -21,7 +21,7 @@ const stories = [
   },
 ];
 
-const scripts = [
+const mock_scripts = [
   {
     id: "script-1",
     storyId: "story-1",
@@ -39,7 +39,7 @@ const scripts = [
   },
 ];
 
-const prompts = [
+const mock_prompts = [
   {
     scriptId: "script-1",
     text: `Create a rough storyboard for Episode 1.
@@ -91,7 +91,11 @@ export default function StoryboardPage() {
   const [imageCount, setImageCount] = useState(4);
   const [isLoading, setIsLoading] = useState(false);
 
-  const filteredScripts = scripts.filter(
+  //database values
+  const [scripts,setScripts] = useState();
+  const [stories,setStories] = useState();
+
+  const filteredScripts = mock_scripts.filter(
     (script) => script.storyId === selectedStory
   );
 
@@ -104,7 +108,7 @@ export default function StoryboardPage() {
   }, [selectedStory]);
 
   useEffect(() => {
-    const promptData = prompts.find(
+    const promptData = mock_prompts.find(
       (prompt) => prompt.scriptId === selectedScript
     );
 
@@ -127,6 +131,37 @@ export default function StoryboardPage() {
       });
     }, 1200);
   }
+
+  useEffect(()=>{
+    console.log({
+      stories,scripts
+    })
+  },[stories])
+
+  //database data fetch
+
+  useEffect(()=>{
+    async function main(){
+      try{
+        const scriptResponse = fetch("/api/scripts");
+        const storyResponse = fetch("/api/stories");
+
+        const [storyBuffer,scriptBuffer] = await Promise.all([storyResponse,scriptResponse]);
+        const [story,script] = await Promise.all([storyBuffer.json(),scriptBuffer.json()]);
+
+        setStories(story);
+        setScripts(script);
+
+      }catch(err){
+        console.log("some error occurred")
+      }
+    }
+
+    main();
+  
+  
+  }
+  ,[])
 
   return (
     <div className="w-full pl-6 pr-6 py-8 space-y-8 page-enter">
@@ -174,7 +209,7 @@ export default function StoryboardPage() {
                 <option value="">Select a story</option>
 
                 {
-                  stories.map((story) => (
+                  mock_stories.map((story) => (
                     <option key={story.id} value={story.id}>{story.title}</option>
                   ))
                 }

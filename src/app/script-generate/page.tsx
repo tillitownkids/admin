@@ -50,6 +50,7 @@ export default function ScriptGeneratePage() {
             generated_at: script.generated_at
           };
         });
+        console.log(loadedHistory)
         setHistory(loadedHistory);
       }
     } catch (e) {
