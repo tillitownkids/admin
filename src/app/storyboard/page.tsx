@@ -96,6 +96,14 @@ export default function StoryboardPage() {
   );
 
   useEffect(() => {
+    if (filteredScripts.length > 0) {
+      setSelectedScript(filteredScripts[0].id);
+    } else {
+      setSelectedScript("");
+    }
+  }, [selectedStory]);
+
+  useEffect(() => {
     const promptData = prompts.find(
       (prompt) => prompt.scriptId === selectedScript
     );
@@ -121,7 +129,7 @@ export default function StoryboardPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-10 page-enter">
+    <div className="w-full pl-6 pr-6 py-8 space-y-8 page-enter">
       <header className="flex items-center gap-4">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
           <ImageIcon className="h-6 w-6" />
@@ -148,70 +156,68 @@ export default function StoryboardPage() {
         >
       
           <div className="space-y-2">
-            <label className="text-sm font-medium">
+            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
               Story
             </label>
+            <div className="relative">
+              <select 
+                value={selectedStory}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+  
+                  setSelectedStory(e.target.value);
+                  setSelectedScript("");
+                  setPrompt("");
+                }}
+                className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
+              > 
+                <option value="">Select a story</option>
 
-            <Select
-              value={selectedStory}
-              onValueChange={(value) => {
-                if (!value) return;
-
-                setSelectedStory(value);
-                setSelectedScript("");
-                setPrompt("");
-              }}
-            >
-              <SelectTrigger className={"w-2/3"}>
-                <SelectValue placeholder="Select Story" />
-              </SelectTrigger>
-
-              <SelectContent>
-                {stories.map((story) => (
-                  <SelectItem
-                    key={story.id}
-                    value={story.id}
-                  >
-                    {story.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                {
+                  stories.map((story) => (
+                    <option key={story.id} value={story.id}>{story.title}</option>
+                  ))
+                }
+              </select>
+              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-muted-foreground">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
+              </div>
+            </div>
+      
           </div>
+
+
           <div className="space-y-2">
-            <label className="text-sm font-medium">
+            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
               Script
             </label>
-
-            <Select
-              value={selectedScript}
-              disabled={!selectedStory}
-              onValueChange={(value) => {
-                if (!value) return;
-
-                setSelectedScript(value);
-              }}
-            >
-              <SelectTrigger className={"w-2/3"}>
-                <SelectValue placeholder="Select Script" />
-              </SelectTrigger>
-
-              <SelectContent>
-                {filteredScripts.map((script) => (
-                  <SelectItem
-                    key={script.id}
-                    value={script.id}
-                  >
-                    {script.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="relative">
+              <select 
+                value={selectedScript}
+                disabled={!selectedStory}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+  
+                  setSelectedScript(e.target.value);
+                }}
+                className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
+              > 
+                {/* <option value="">Select a script</option> */}
+                {
+                  filteredScripts.map((script) => (
+                    <option key={script.id} value={script.id}>{script.title}</option>
+                  ))
+                }
+              </select>
+              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-muted-foreground">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
+              </div>
+            </div>
+      
           </div>
-
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">
+              <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
                 Prompt
               </label>
 
@@ -232,7 +238,7 @@ export default function StoryboardPage() {
 
 
           <div className="space-y-2">
-            <label className="text-sm font-medium mx-2">
+            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
               Number of Images
             </label>
 
