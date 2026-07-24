@@ -11,6 +11,7 @@ const navItems = [
   { name: "Script Generate", path: "/script-generate", icon: FileText },
   { name: "Video Approval", path: "/video-approval", icon: CheckSquare },
   { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
+  // { name: "Storyboard Generate", path: "/storyboard-generation", icon: ImageIcon },
   { name: "YouTube Publishing", path: "/youtube-publishing", icon: Tv },
 ];
 
