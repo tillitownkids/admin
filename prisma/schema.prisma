@@ -16,6 +16,7 @@ model Story {
   content         String
   generated_at    DateTime @default(now())
   status          String   // "pending", "success", "failed"
+  scripts         Script[]
 }
 
 model Script {
@@ -27,4 +28,6 @@ model Script {
   content         String
   generated_at    DateTime @default(now())
   status          String   // "pending", "success", "failed"
+  storyId         String?
+  story           Story?   @relation(fields: [storyId], references: [id])
 }
