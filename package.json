@@ -11,6 +11,8 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1085.0",
     "@base-ui/react": "^1.6.0",
+    "@prisma/client": "^5.22.0",
+    "@supabase/supabase-js": "^2.110.8",
     "@tiptap/core": "^3.27.4",
     "@tiptap/extension-bubble-menu": "^3.27.4",
     "@tiptap/extension-floating-menu": "^3.27.4",
@@ -40,6 +42,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "prisma": "^5.22.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

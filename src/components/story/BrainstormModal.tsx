@@ -74,7 +74,7 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
   };
 
   return (
-    <div className="absolute right-0 top-full mt-2 z-[100] w-[1130px] max-w-[90vw] animate-in fade-in duration-200">
+    <div className="absolute right-0 top-full mt-2 z-[100] w-[1270px] max-w-[90vw] animate-in fade-in duration-200">
       <div className="w-full bg-card/95 backdrop-blur-2xl border border-border/50 rounded-3xl flex flex-col relative overflow-hidden text-card-foreground">
         
         {/* Header */}

@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Story {
+  id              String   @id @default(uuid())
+  topic           String   @default("")
+  episode_number  String
+  generation_type String   @default("new") // e.g., "new", "continue"
+  mode            String   @default("single") // "single", "multi"
+  content         String
+  generated_at    DateTime @default(now())
+  status          String   // "pending", "success", "failed"
+}
+
+model Script {
+  id              String   @id @default(uuid())
+  topic           String   @default("")
+  episode_number  String
+  generation_type String   @default("new") // e.g., "new", "continue"
+  mode            String   @default("single") // "single", "multi"
+  content         String
+  generated_at    DateTime @default(now())
+  status          String   // "pending", "success", "failed"
+}

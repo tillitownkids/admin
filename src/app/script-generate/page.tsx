@@ -9,10 +9,10 @@ import { useState, useRef, useEffect } from "react";
 export interface StoryHistory {
   id: string;
   topic: string;
-  type: 'single' | 'multi';
+  mode: 'single' | 'multi'; // API uses 'mode' instead of 'type'
   content?: string;
+  generated_at: string; // API uses 'generated_at'
   episodes?: Episode[];
-  date: string;
 }
 
 export default function ScriptGeneratePage() {
@@ -29,32 +29,62 @@ export default function ScriptGeneratePage() {
   const [isBrainstormModalOpen, setIsBrainstormModalOpen] = useState(false);
   const editorRef = useRef<any>(null);
 
-  useEffect(() => {
-    const savedHistory = localStorage.getItem('story_history');
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error("Failed to parse history", e);
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch('/api/scripts');
+      if (res.ok) {
+        const data = await res.json();
+        // map DB scripts to state format
+        const loadedHistory = data.scripts.map((script: any) => {
+          let episodes = undefined;
+          let content = script.content;
+          if (script.mode === 'multi') {
+            try { episodes = JSON.parse(script.content); } catch (e) {}
+          }
+          return {
+            id: script.id,
+            topic: script.topic,
+            mode: script.mode,
+            content: content,
+            episodes: episodes,
+            generated_at: script.generated_at
+          };
+        });
+        setHistory(loadedHistory);
       }
+    } catch (e) {
+      console.error("Failed to load history from DB", e);
     }
+  };
+
+  useEffect(() => {
+    fetchHistory();
   }, []);
 
-  const saveToHistory = (newRecord: Omit<StoryHistory, 'id' | 'date'>) => {
-    const record: StoryHistory = {
-      ...newRecord,
-      id: Math.random().toString(36).substring(2, 9),
-      date: new Date().toISOString()
-    };
-    const updatedHistory = [record, ...history];
-    setHistory(updatedHistory);
-    localStorage.setItem('story_history', JSON.stringify(updatedHistory));
+  const saveToHistory = async (newRecord: Omit<StoryHistory, 'id' | 'generated_at' | 'episodes'>) => {
+    try {
+      const res = await fetch('/api/scripts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: newRecord.topic,
+          mode: newRecord.mode,
+          content: newRecord.content,
+          generation_type: generationType
+        })
+      });
+      if (res.ok) {
+        fetchHistory(); // refresh history from DB
+      }
+    } catch (e) {
+      console.error("Failed to save script to DB", e);
+    }
   };
 
   const loadHistoryRecord = (record: StoryHistory) => {
     setTopic(record.topic);
-    setMode(record.type);
-    if (record.type === 'multi' && record.episodes) {
+    setMode(record.mode);
+    if (record.mode === 'multi' && record.episodes) {
       setGeneratedEpisodes(record.episodes);
       setSelectedEpisode(record.episodes[0]?.episodeNumber);
       if (editorRef.current) {
@@ -130,7 +160,7 @@ export default function ScriptGeneratePage() {
             editorRef.current.commands.setContent(episodes[0].script);
           }
         }
-        saveToHistory({ topic, type: 'multi', episodes });
+        saveToHistory({ topic, mode: 'multi', content: data.result });
         setViewMode('edit');
       } else if (editorRef.current && data.result) {
         // Load the generated HTML story into the editor
@@ -140,7 +170,7 @@ export default function ScriptGeneratePage() {
             finalContent = currentContent + "<br/><br/>" + data.result;
         }
         editorRef.current.commands.setContent(finalContent);
-        saveToHistory({ topic, type: 'single', content: finalContent });
+        saveToHistory({ topic, mode: 'single', content: finalContent });
         setViewMode('edit');
       }
     } catch (err: any) {
@@ -152,8 +182,15 @@ export default function ScriptGeneratePage() {
     }
   };
 
-  const handleSaveDraft = () => {
-    // In a real app, you might save the current draft state here
+  const handleSaveDraft = async () => {
+    const currentContent = editorRef.current?.getHTML() || "";
+    if (topic.trim() || currentContent.trim()) {
+      await saveToHistory({ 
+        topic: topic || "Untitled Script", 
+        mode: mode, 
+        content: mode === 'multi' ? JSON.stringify(generatedEpisodes) : currentContent 
+      });
+    }
     setViewMode('history');
   };
 
@@ -233,13 +270,13 @@ export default function ScriptGeneratePage() {
                 className="cursor-pointer group flex flex-col p-6 rounded-3xl border border-border bg-card hover:border-primary/40 transition-all duration-300 min-h-[200px]"
               >
                 <div className="flex items-center justify-between mb-4">
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${record.type === 'multi' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                    {record.type === 'multi' ? <Layers className="w-3 h-3" /> : <LayoutTemplate className="w-3 h-3" />}
-                    {record.type}
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${record.mode === 'multi' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                    {record.mode === 'multi' ? <Layers className="w-3 h-3" /> : <LayoutTemplate className="w-3 h-3" />}
+                    {record.mode}
                   </span>
                   <span className="text-xs text-muted-foreground flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    {new Date(record.date).toLocaleDateString()}
+                    {new Date(record.generated_at).toLocaleDateString()}
                   </span>
                 </div>
                 
