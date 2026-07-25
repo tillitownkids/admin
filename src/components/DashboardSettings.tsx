@@ -2,6 +2,7 @@
 
 import { Users, Type } from "lucide-react";
 import { useState, useEffect } from "react";
+import { labelClass, selectFieldClass } from "@/lib/styles";
 
 export function DashboardSettings() {
   const [audience, setAudience] = useState('kids');
@@ -25,21 +26,21 @@ export function DashboardSettings() {
   };
 
   return (
-    <div className="bg-card text-card-foreground rounded-xl border border-border flex flex-col mt-6 h-fit">
-      <div className="p-6 border-b border-border">
+    <div className="bg-card text-card-foreground rounded-xl border border-border flex flex-col h-fit">
+      <div className="p-5 border-b border-border">
         <h2 className="text-lg font-semibold tracking-tight">Global Story Settings</h2>
       </div>
-      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-3">
-          <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+          <label className={labelClass}>
             <Users className="w-4 h-4 text-primary" />
             Target Audience
           </label>
           <div className="relative">
-            <select 
+            <select
               value={audience}
               onChange={(e) => handleAudienceChange(e.target.value)}
-              className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
+              className={selectFieldClass}
             >
               <option value="kids">Kids (4-8 years)</option>
               <option value="preteens">Pre-teens (9-12 years)</option>
@@ -53,15 +54,15 @@ export function DashboardSettings() {
         </div>
 
         <div className="space-y-3">
-          <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+          <label className={labelClass}>
             <Type className="w-4 h-4 text-primary" />
             Tone
           </label>
           <div className="relative">
-            <select 
+            <select
               value={tone}
               onChange={(e) => handleToneChange(e.target.value)}
-              className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
+              className={selectFieldClass}
             >
               <option value="educational">Educational & Fun</option>
               <option value="adventurous">Adventurous</option>

@@ -4,6 +4,9 @@ import { Sparkles, Save, Type, Users, Wand2, FileText, Bot, Loader2, X, LayoutTe
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
 import { MultiEpisodeCards, Episode } from "@/components/MultiEpisodeCards";
 import { BrainstormModal } from "@/components/story/BrainstormModal";
+import { PageHeader } from "@/components/PageHeader";
+import { GlassPanel } from "@/components/GlassPanel";
+import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass, selectFieldClass } from "@/lib/styles";
 import { useState, useRef, useEffect } from "react";
 
 export interface StoryHistory {
@@ -202,38 +205,27 @@ export default function StoryGeneratePage() {
   };
 
   return (
-    <div className="w-full mx-auto space-y-8 page-enter pb-10">
-      <header className="space-y-3 flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-primary/10 text-primary border border-primary/20">
-            <Bot className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-foreground font-heading">
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary/60">
-                Story
-              </span>{" "}
-              Generation
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Craft engaging stories tailored for the TilliTown universe.
-            </p>
-          </div>
-        </div>
-        
-        {viewMode !== 'history' && (
-          <button 
-            onClick={() => setViewMode('history')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary/50 hover:bg-secondary text-secondary-foreground transition-colors font-medium text-sm"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to History
-          </button>
-        )}
-      </header>
+    <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
+      <PageHeader
+        icon={Bot}
+        title="Story"
+        highlight="Generation"
+        description="Craft engaging stories tailored for the TilliTown universe."
+        action={
+          viewMode !== 'history' && (
+            <button
+              onClick={() => setViewMode('history')}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary/50 hover:bg-secondary text-secondary-foreground transition-colors font-medium text-sm"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to History
+            </button>
+          )
+        }
+      />
 
       {error && (
-        <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-2xl flex items-center justify-between animate-in fade-in duration-300">
+        <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg flex items-center justify-between animate-in fade-in duration-300">
           <div className="flex items-center gap-2">
             <X className="w-4 h-4 cursor-pointer" onClick={() => setError(null)} />
             <span className="text-sm font-medium">{error}</span>
@@ -246,17 +238,17 @@ export default function StoryGeneratePage() {
 
       {viewMode === 'history' ? (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div 
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div
               onClick={() => {
                 setTopic('');
                 setGeneratedEpisodes([]);
 
                 setViewMode('create');
               }}
-              className="cursor-pointer group flex flex-col items-center justify-center p-8 rounded-3xl border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all duration-300 min-h-[200px]"
+              className="cursor-pointer group flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 transition-colors duration-300 min-h-[200px]"
             >
-              <div className="w-14 h-14 rounded-full bg-primary/20 text-primary flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <div className="w-12 h-12 rounded-full bg-primary/20 text-primary flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
                 <Plus className="w-6 h-6" />
               </div>
               <h3 className="font-bold text-lg text-primary">Create New Story</h3>
@@ -264,12 +256,12 @@ export default function StoryGeneratePage() {
             </div>
 
             {history.map((record) => (
-              <div 
+              <div
                 key={record.id}
                 onClick={() => loadHistoryRecord(record)}
-                className="cursor-pointer group flex flex-col p-6 rounded-3xl border border-border bg-card hover:border-primary/40 transition-all duration-300 min-h-[200px]"
+                className="cursor-pointer group flex flex-col p-5 rounded-2xl border border-border bg-card min-h-[200px]"
               >
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-3">
                   <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${record.mode === 'multi' ? 'bg-indigo-500/10 text-indigo-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
                     {record.mode === 'multi' ? <Layers className="w-3 h-3" /> : <LayoutTemplate className="w-3 h-3" />}
                     {record.mode}
@@ -292,18 +284,47 @@ export default function StoryGeneratePage() {
           </div>
         </div>
       ) : (
-        <div className="bg-card/40 backdrop-blur-2xl border border-border/50 rounded-3xl overflow-hidden transition-all duration-500 hover:border-primary/20 group/panel">
-          <div className="p-8 sm:p-10 space-y-8 relative">
-          
-          {/* Subtle background decoration */}
-          <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -z-10 pointer-events-none group-hover/panel:bg-primary/10 transition-colors duration-500"></div>
-
-          <div className="flex justify-between items-center mb-6">
+        <GlassPanel
+          footer={
+            <>
+              <p className="text-sm text-muted-foreground">
+                Estimated generation time: <span className="font-semibold text-foreground">~30 seconds</span>
+              </p>
+              <div className="flex w-full sm:w-auto items-center gap-3">
+                <button
+                  onClick={handleSaveDraft}
+                  className={`flex-1 sm:flex-none ${secondaryButtonClass}`}
+                >
+                  <Save className="w-4 h-4" />
+                  Save Draft
+                </button>
+                <button
+                  onClick={handleGenerate}
+                  disabled={isLoading || !topic.trim()}
+                  className={`flex-1 sm:flex-none ${primaryButtonClass} group`}
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
+                      Generate Story
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
+          }
+        >
+          <div className="flex justify-between items-center">
             {viewMode !== 'edit' ? (
-              <div className="flex bg-muted/50 p-1 rounded-xl w-fit mb-4">
+              <div className="flex bg-muted/50 p-1 rounded-lg w-fit">
                <button
                 onClick={() => setMode('single')}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                className={`flex items-center gap-2 px-5 py-2 rounded-md text-sm font-semibold transition-all ${
                   mode === 'single' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -312,7 +333,7 @@ export default function StoryGeneratePage() {
                </button>
                <button
                 onClick={() => setMode('multi')}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                className={`flex items-center gap-2 px-5 py-2 rounded-md text-sm font-semibold transition-all ${
                   mode === 'multi' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -343,19 +364,19 @@ export default function StoryGeneratePage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-1 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-6">
             {viewMode !== 'edit' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-3">
-                <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+                <label className={labelClass}>
                   <Wand2 className="w-4 h-4 text-primary" />
                   Generation Type
                 </label>
                 <div className="relative">
-                  <select 
+                  <select
                     value={generationType}
                     onChange={(e) => setGenerationType(e.target.value)}
-                    className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
+                    className={selectFieldClass}
                   >
                     <option value="continue">Continue Ongoing Story</option>
                     <option value="new">Write New Story</option>
@@ -368,18 +389,18 @@ export default function StoryGeneratePage() {
 
               {mode === 'multi' && (
                 <div className="space-y-3">
-                  <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+                  <label className={labelClass}>
                     <Layers className="w-4 h-4 text-primary" />
                     Episode Count
                   </label>
                   <div className="relative">
-                    <input 
+                    <input
                       type="number"
                       min="2"
                       max="10"
                       value={episodeCount}
                       onChange={(e) => setEpisodeCount(parseInt(e.target.value) || 5)}
-                      className="w-full bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary placeholder:text-muted-foreground/60 hover:bg-background"
+                      className={fieldClass}
                     />
                   </div>
                 </div>
@@ -389,32 +410,30 @@ export default function StoryGeneratePage() {
 
           {generatedEpisodes.length > 0 && (
             <div className="pt-6 border-t border-border/40">
-              <MultiEpisodeCards 
+              <MultiEpisodeCards
                 episodes={generatedEpisodes}
                 onSelectEpisode={handleSelectEpisode}
                 selectedEpisodeNumber={selectedEpisode}
               />
             </div>
           )}
-          
+
             <div className="space-y-3">
-              <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+              <label className={labelClass}>
                 <FileText className="w-4 h-4 text-primary" />
                 Type story details for next episode
               </label>
-              <textarea 
+              <textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                className="w-full bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary placeholder:text-muted-foreground/60 hover:bg-background"
-                placeholder="e.g., A magical adventure in the candy forest where friends learn to share..." 
+                className={fieldClass}
+                placeholder="e.g., A magical adventure in the candy forest where friends learn to share..."
               />
             </div>
           </div>
 
-          
-
           <div className="space-y-3">
-            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+            <label className={labelClass}>
               <Wand2 className="w-4 h-4 text-primary" />
               {mode === 'multi' && selectedEpisode ? `Editing Episode ${selectedEpisode} Story` : 'Additional Instructions / Story Sandbox'}
             </label>
@@ -422,42 +441,9 @@ export default function StoryGeneratePage() {
               <TiptapEditor editorRef={editorRef} />
             </div>
           </div>
-        </div>
-        
-        <div className="bg-muted/30 p-6 sm:px-10 border-t border-border/40 flex flex-col sm:flex-row items-center justify-between gap-6 backdrop-blur-md">
-          <p className="text-sm text-muted-foreground">
-            Estimated generation time: <span className="font-semibold text-foreground">~30 seconds</span>
-          </p>
-          <div className="flex w-full sm:w-auto items-center gap-3">
-            <button 
-              onClick={handleSaveDraft}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-border/80 bg-background/80 hover:bg-muted text-foreground font-semibold transition-all duration-300 active:scale-[0.98]"
-            >
-              <Save className="w-4 h-4" /> 
-              Save Draft
-            </button>
-            <button 
-              onClick={handleGenerate}
-              disabled={isLoading || !topic.trim()}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all duration-300 active:scale-[0.98] group disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" /> 
-                  Generate Story
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
+        </GlassPanel>
       )}
-      
+
     </div>
   );
 }

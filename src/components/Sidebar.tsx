@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { LayoutDashboard, FileText, CheckSquare, Image as ImageIcon, Tv } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+export const navItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
   { name: "Story Generate", path: "/story-generate", icon: FileText },
   { name: "Script Generate", path: "/script-generate", icon: FileText },

@@ -1,14 +1,10 @@
 "use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
+import { PageHeader } from "@/components/PageHeader";
+import { GlassPanel } from "@/components/GlassPanel";
+import { fieldClass, labelClass, primaryButtonClass, selectFieldClass } from "@/lib/styles";
 
 const mock_stories = [
   {
@@ -164,48 +160,56 @@ export default function StoryboardPage() {
   ,[])
 
   return (
-    <div className="w-full pl-6 pr-6 py-8 space-y-8 page-enter">
-      <header className="flex items-center gap-4">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-          <ImageIcon className="h-6 w-6" />
-        </div>
+    <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
+      <PageHeader
+        icon={ImageIcon}
+        title="Storyboard"
+        highlight="Generation"
+        description="Generate storyboard images for your episodes."
+      />
 
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Storyboard{" "}
-            <span className="bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-              Generation
-            </span>
-          </h1>
-
-          <p className="mt-1 text-muted-foreground">
-            Generate storyboard images for your episodes.
-          </p>
-        </div>
-      </header>
-
-      <div className="rounded-2xl border bg-card p-6 shadow-sm">
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-6"
-        >
-      
-          <div className="space-y-2">
-            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
-              Story
-            </label>
+      <GlassPanel
+        footer={
+          <button
+            type="submit"
+            form="storyboard-form"
+            disabled={
+              isLoading ||
+              !selectedStory ||
+              !selectedScript ||
+              !prompt.trim()
+            }
+            className={`w-full sm:w-auto ${primaryButtonClass} group`}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Generating Storyboard...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 group-hover:rotate-12 transition-transform duration-300" />
+                Generate Storyboard
+              </>
+            )}
+          </button>
+        }
+      >
+        <form id="storyboard-form" onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-3">
+            <label className={labelClass}>Story</label>
             <div className="relative">
-              <select 
+              <select
                 value={selectedStory}
                 onChange={(e) => {
                   if (!e.target.value) return;
-  
+
                   setSelectedStory(e.target.value);
                   setSelectedScript("");
                   setPrompt("");
                 }}
-                className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
-              > 
+                className={selectFieldClass}
+              >
                 <option value="">Select a story</option>
 
                 {
@@ -218,26 +222,21 @@ export default function StoryboardPage() {
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
               </div>
             </div>
-      
           </div>
 
-
-          <div className="space-y-2">
-            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
-              Script
-            </label>
+          <div className="space-y-3">
+            <label className={labelClass}>Script</label>
             <div className="relative">
-              <select 
+              <select
                 value={selectedScript}
                 disabled={!selectedStory}
                 onChange={(e) => {
                   if (!e.target.value) return;
-  
+
                   setSelectedScript(e.target.value);
                 }}
-                className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground"
-              > 
-                {/* <option value="">Select a script</option> */}
+                className={selectFieldClass}
+              >
                 {
                   filteredScripts.map((script) => (
                     <option key={script.id} value={script.id}>{script.title}</option>
@@ -248,13 +247,11 @@ export default function StoryboardPage() {
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
               </div>
             </div>
-      
           </div>
-          <div className="space-y-2">
+
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
-                Prompt
-              </label>
+              <label className={labelClass}>Prompt</label>
 
               <span className="text-xs text-muted-foreground">
                 Editable
@@ -267,15 +264,12 @@ export default function StoryboardPage() {
               disabled={!selectedScript}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Select a script to load its prompt..."
-              className="min-h-[220px] w-full resize-y rounded-xl border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary"
+              className={`min-h-[220px] resize-y ${fieldClass}`}
             />
           </div>
 
-
-          <div className="space-y-2">
-            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
-              Number of Images
-            </label>
+          <div className="space-y-3">
+            <label className={labelClass}>Number of Images</label>
 
             <input
               type="number"
@@ -285,36 +279,13 @@ export default function StoryboardPage() {
               onChange={(e) =>
                 setImageCount(Number(e.target.value))
               }
-              className="w-36 rounded-xl border bg-background px-4 py-2 outline-none transition focus:border-primary"
+              className={`w-36 ${fieldClass}`}
             />
           </div>
-
-          <button
-            type="submit"
-            disabled={
-              isLoading ||
-              !selectedStory ||
-              !selectedScript ||
-              !prompt.trim()
-            }
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generating Storyboard...
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" />
-                Generate Storyboard
-              </>
-            )}
-          </button>
         </form>
-      </div>
+      </GlassPanel>
 
-      <div className="rounded-2xl border bg-card p-6 shadow-sm">
+      <div className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold">
             Generated Images
@@ -325,7 +296,7 @@ export default function StoryboardPage() {
           </span>
         </div>
 
-        <div className="mt-6 flex h-72 items-center justify-center rounded-xl border border-dashed p-4">
+        <div className="mt-4 flex h-72 items-center justify-center rounded-lg border border-dashed border-border p-4">
           <div className="text-center">
             <ImageIcon className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
 
