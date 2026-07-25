@@ -25,7 +25,7 @@ export class BedrockService {
     
     if (anthropicKey) {
       const models = [
-        'kiwi'
+        'claude-3-5-sonnet-20241022'
       ];
       
       for (const model of models) {

@@ -2,15 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, CheckSquare, Image as ImageIcon, Tv } from "lucide-react";
+import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+export const navItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
   { name: "Story Generate", path: "/story-generate", icon: FileText },
   { name: "Script Generate", path: "/script-generate", icon: FileText },
-  { name: "Video Approval", path: "/video-approval", icon: CheckSquare },
+  { name: "Episode Production", path: "/episode-production", icon: Clapperboard },
+  { name: "Characters", path: "/characters", icon: Users },
+  { name: "Locations", path: "/locations", icon: MapPin },
   { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
+  { name: "Video Approval", path: "/video-approval", icon: CheckSquare },
   { name: "YouTube Publishing", path: "/youtube-publishing", icon: Tv },
 ];
 
@@ -32,7 +35,7 @@ export default function Sidebar() {
         <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2">Main Menu</div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => {
-            const isActive = pathname === item.path;
+            const isActive = pathname === item.path || (item.path !== "/" && pathname.startsWith(`${item.path}/`));
             const Icon = item.icon;
 
             return (

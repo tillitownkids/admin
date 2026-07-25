@@ -401,7 +401,6 @@ export default function StoryboardPage() {
                   </div>
                 </div>
 
-                {/* Card Footer */}
                 <div className="p-3.5 flex items-center justify-between border-t bg-card/50 text-xs">
                   <span className="text-muted-foreground truncate max-w-[130px]">
                     {data.author ? `By ${data.author}` : `Scene ${index + 1}`}

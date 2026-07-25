@@ -6,14 +6,26 @@ export interface ScriptGenerateInput {
   tone: string;
   instructions: string;
   generationType: string;
+  featuredCharacters?: { name: string; description: string }[];
+  previousEpisodeSummary?: string;
 }
 
 export class ScriptGenerateTask extends BaseAITask {
   buildPrompt(input: ScriptGenerateInput): string {
     const isContinuing = input.generationType === 'continue';
-    const actionText = isContinuing 
-      ? `Continue the ongoing story seamlessly based on the provided instructions and previous text.` 
+    const actionText = isContinuing
+      ? `Continue the ongoing story seamlessly based on the provided instructions and previous text.`
       : `Create a complete, engaging, and age-appropriate new story based on the following details:`;
+
+    const charactersBlock = input.featuredCharacters?.length
+      ? `\n- **Featured Characters** (keep their portrayal consistent with these descriptions):\n${input.featuredCharacters
+          .map((c) => `  - ${c.name}: ${c.description}`)
+          .join('\n')}`
+      : '';
+
+    const previousEpisodeBlock = input.previousEpisodeSummary
+      ? `\n- **Previous Episode Context** (for continuity — do not repeat it, build on it): ${input.previousEpisodeSummary}`
+      : '';
 
     return `You are a professional story writer for the TilliTown universe.
 ${actionText}
@@ -21,7 +33,7 @@ ${actionText}
 - **Story Idea / Topic**: ${input.topic}
 - **Target Audience**: ${input.audience}
 - **Tone**: ${input.tone}
-${input.instructions ? `- **Additional Context / Existing Story**: ${input.instructions}` : ''}
+${input.instructions ? `- **Additional Context / Existing Story**: ${input.instructions}` : ''}${charactersBlock}${previousEpisodeBlock}
 
 Please structure the script exactly in the following format, broken down into beats (location-wise):
 
