@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
+import { Image as ImageIcon, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 const mock_stories = [
@@ -90,8 +83,9 @@ export default function StoryboardPage() {
   const [prompt, setPrompt] = useState("");
   const [imageCount, setImageCount] = useState(4);
   const [isLoading, setIsLoading] = useState(false);
+  const [images, setImages] = useState<any[]>();
+  const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
 
-  //database values
   const [scripts,setScripts] = useState();
   const [stories,setStories] = useState();
 
@@ -115,21 +109,30 @@ export default function StoryboardPage() {
     setPrompt(promptData?.text ?? "");
   }, [selectedScript]);
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     setIsLoading(true);
 
-    setTimeout(() => {
-      setIsLoading(false);
+    try{
+      const response = await fetch(`https://picsum.photos/v2/list?limit=${imageCount}`);
+      const data = await response.json();
+      setImages(data);
+      
 
+    }catch(err){
+      console.log("some error occurred!")
+    }finally{
+      setIsLoading(false);
       console.log({
-        storyId: selectedStory,
-        scriptId: selectedScript,
-        prompt,
-        imageCount,
-      });
-    }, 1200);
+            storyId: selectedStory,
+            scriptId: selectedScript,
+            prompt,
+            imageCount,
+          });
+
+    }
+
   }
 
   useEffect(()=>{
@@ -138,7 +141,24 @@ export default function StoryboardPage() {
     })
   },[stories])
 
-  //database data fetch
+  async function regenerate(index: number) {
+    const response = await fetch(
+      `https://picsum.photos/seed/${Math.random()}/200/300`
+    );
+  
+    const newImages = images!.map((img: any, i) => {
+      if (i === index) {
+        return {
+          ...img,
+          download_url: response.url,
+        };
+      }
+  
+      return img;
+    });
+  
+    setImages(newImages);
+  }
 
   useEffect(()=>{
     async function main(){
@@ -321,24 +341,89 @@ export default function StoryboardPage() {
           </h2>
 
           <span className="text-sm text-muted-foreground">
-            Images will appear here
+            {images && images.length > 0
+              ? `${images.length} frame${images.length > 1 ? "s" : ""} generated`
+              : "Images will appear here"}
           </span>
         </div>
 
-        <div className="mt-6 flex h-72 items-center justify-center rounded-xl border border-dashed p-4">
-          <div className="text-center">
-            <ImageIcon className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+        {!images || images.length === 0 ? (
+          <div className="mt-6 flex h-72 items-center justify-center rounded-xl border border-dashed p-4">
+            <div className="text-center">
+              <ImageIcon className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
 
-            <p className="font-medium">
-              No images generated yet
-            </p>
+              <p className="font-medium">
+                No images generated yet
+              </p>
 
-            <p className="mt-1 text-sm text-muted-foreground">
-              Select a story, script, edit the prompt and generate
-              your storyboard.
-            </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Select a story, script, edit the prompt and generate
+                your storyboard.
+              </p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {images.map((data: any, index: number) => (
+              <div
+                key={data.id || index}
+                className="group relative flex flex-col rounded-2xl border bg-background overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 border-border/60 hover:border-primary/40"
+              >
+                {/* Image Container */}
+                <div className="relative aspect-video w-full bg-muted overflow-hidden">
+                  <img
+                    className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    src={data.download_url}
+                    alt={`Generated frame ${index + 1}`}
+                    loading="lazy"
+                  />
+
+                  {/* Frame Badge */}
+                  <div className="absolute top-3 left-3 bg-background/80 backdrop-blur-md border border-border/50 text-foreground text-xs font-semibold px-2.5 py-1 rounded-lg shadow-sm">
+                    Frame #{index + 1}
+                  </div>
+
+                  {/* Hover Overlay with Action */}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2 p-4">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setRegeneratingIndex(index);
+                        await regenerate(index);
+                        setRegeneratingIndex(null);
+                      }}
+                      disabled={regeneratingIndex === index}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-background/90 hover:bg-background text-foreground text-xs font-semibold backdrop-blur-md shadow-md hover:scale-105 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${regeneratingIndex === index ? "animate-spin text-primary" : ""}`} />
+                      <span>{regeneratingIndex === index ? "Regenerating..." : "Regenerate"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Card Footer */}
+                <div className="p-3.5 flex items-center justify-between border-t bg-card/50 text-xs">
+                  <span className="text-muted-foreground truncate max-w-[130px]">
+                    {data.author ? `By ${data.author}` : `Scene ${index + 1}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setRegeneratingIndex(index);
+                      await regenerate(index);
+                      setRegeneratingIndex(null);
+                    }}
+                    disabled={regeneratingIndex === index}
+                    className="flex items-center gap-1 text-primary hover:text-primary/80 font-medium transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${regeneratingIndex === index ? "animate-spin" : ""}`} />
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
