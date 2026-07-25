@@ -1,6 +1,7 @@
 'use client';
 
-import { Sparkles, Save, Type, Users, Wand2, FileText, Bot, Loader2, X, LayoutTemplate, Layers, Plus, History, ArrowLeft, Clock } from "lucide-react";
+import { Sparkles, Save, Type, Users, Wand2, FileText, Bot, Loader2, X, LayoutTemplate, Layers, Plus, History, ArrowLeft, Clock, BookOpen, Clapperboard } from "lucide-react";
+import Link from "next/link";
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
 import { MultiEpisodeCards, Episode } from "@/components/MultiEpisodeCards";
 import { BrainstormModal } from "@/components/story/BrainstormModal";
@@ -16,6 +17,14 @@ export interface StoryHistory {
   content?: string;
   generated_at: string; // API uses 'generated_at'
   episodes?: Episode[];
+  status?: string;
+  production_stage?: string;
+}
+
+interface CharacterOption {
+  id: string;
+  name: string;
+  description: string;
 }
 
 export default function StoryGeneratePage() {
@@ -30,6 +39,9 @@ export default function StoryGeneratePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isBrainstormModalOpen, setIsBrainstormModalOpen] = useState(false);
+  const [characters, setCharacters] = useState<CharacterOption[]>([]);
+  const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([]);
+  const [previousEpisodeId, setPreviousEpisodeId] = useState('');
   const editorRef = useRef<any>(null);
 
   const fetchHistory = async () => {
@@ -50,7 +62,9 @@ export default function StoryGeneratePage() {
             mode: story.mode,
             content: content,
             episodes: episodes,
-            generated_at: story.generated_at
+            generated_at: story.generated_at,
+            status: story.status,
+            production_stage: story.production_stage
           };
         });
         setHistory(loadedHistory);
@@ -60,9 +74,26 @@ export default function StoryGeneratePage() {
     }
   };
 
+  const fetchCharacters = async () => {
+    try {
+      const res = await fetch('/api/characters');
+      if (res.ok) {
+        const data = await res.json();
+        setCharacters(data.characters || []);
+      }
+    } catch (e) {
+      console.error("Failed to load characters", e);
+    }
+  };
+
   useEffect(() => {
     fetchHistory();
+    fetchCharacters();
   }, []);
+
+  const toggleCharacter = (id: string) => {
+    setSelectedCharacterIds((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
+  };
 
   const saveToHistory = async (newRecord: Omit<StoryHistory, 'id' | 'generated_at' | 'episodes'>) => {
     try {
@@ -77,6 +108,18 @@ export default function StoryGeneratePage() {
         })
       });
       if (res.ok) {
+        const data = await res.json();
+        const storyId = data.story?.id;
+        if (storyId && (selectedCharacterIds.length > 0 || previousEpisodeId)) {
+          await fetch(`/api/stories/${storyId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              featuredCharacterIds: selectedCharacterIds,
+              previous_story_id: previousEpisodeId || null,
+            }),
+          });
+        }
         fetchHistory(); // refresh history from DB
       }
     } catch (e) {
@@ -128,7 +171,16 @@ export default function StoryGeneratePage() {
 
     try {
       const taskType = mode === 'multi' ? 'multi-episode' : 'story-generate';
-      
+
+      const featuredCharacters = characters
+        .filter((c) => selectedCharacterIds.includes(c.id))
+        .map((c) => ({ name: c.name, description: c.description }));
+
+      const previousEpisode = history.find((h) => h.id === previousEpisodeId);
+      const previousEpisodeSummary = previousEpisode?.content
+        ? previousEpisode.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800)
+        : undefined;
+
       const response = await fetch('/api/ai/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -140,7 +192,9 @@ export default function StoryGeneratePage() {
             tone: localStorage.getItem('tone') || 'educational',
             instructions,
             generationType,
-            episodeCount: mode === 'multi' ? episodeCount : undefined
+            episodeCount: mode === 'multi' ? episodeCount : undefined,
+            featuredCharacters,
+            previousEpisodeSummary
           }
         }),
       });
@@ -275,9 +329,21 @@ export default function StoryGeneratePage() {
                 <h3 className="text-xl font-bold text-foreground mb-3 group-hover:text-primary transition-colors line-clamp-3">
                   {record.topic || "Untitled Story"}
                 </h3>
-                
-                <div className="mt-auto pt-4 border-t border-border/50 flex items-center text-sm font-medium text-primary opacity-80 group-hover:opacity-100 transition-opacity">
-                  Open in Editor &rarr;
+
+                <div className="mt-auto pt-4 border-t border-border/50 flex items-center justify-between gap-3">
+                  <span className="flex items-center text-sm font-medium text-primary opacity-80 group-hover:opacity-100 transition-opacity">
+                    Open in Editor &rarr;
+                  </span>
+                  {record.mode === 'single' && record.status === 'success' && (
+                    <Link
+                      href={`/episode-production/${record.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                    >
+                      <Clapperboard className="w-3 h-3" />
+                      {record.production_stage && record.production_stage !== 'story' ? 'Resume Production' : 'Start Production'}
+                    </Link>
+                  )}
                 </div>
               </div>
             ))}
@@ -405,6 +471,57 @@ export default function StoryGeneratePage() {
                   </div>
                 </div>
               )}
+
+              <div className="space-y-3">
+                <label className={labelClass}>
+                  <Users className="w-4 h-4 text-primary" />
+                  Featured Characters
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {characters.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No characters in your library yet.</p>
+                  )}
+                  {characters.map((c) => {
+                    const selected = selectedCharacterIds.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => toggleCharacter(c.id)}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                          selected
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background border-border text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className={labelClass}>
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  Previous Episode (for continuity)
+                </label>
+                <div className="relative">
+                  <select
+                    value={previousEpisodeId}
+                    onChange={(e) => setPreviousEpisodeId(e.target.value)}
+                    className={selectFieldClass}
+                  >
+                    <option value="">None</option>
+                    {history.filter((h) => h.mode === 'single').map((h) => (
+                      <option key={h.id} value={h.id}>{h.topic || 'Untitled Story'}</option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-muted-foreground">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
+                  </div>
+                </div>
+              </div>
             </div>
             )}
 
