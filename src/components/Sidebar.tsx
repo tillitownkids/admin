@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin } from "lucide-react";
+import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const navItems = [
@@ -12,6 +12,7 @@ export const navItems = [
   { name: "Episode Production", path: "/episode-production", icon: Clapperboard },
   { name: "Characters", path: "/characters", icon: Users },
   { name: "Locations", path: "/locations", icon: MapPin },
+  { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
   { name: "Video Approval", path: "/video-approval", icon: CheckSquare },
   { name: "YouTube Publishing", path: "/youtube-publishing", icon: Tv },
 ];
