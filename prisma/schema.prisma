@@ -10,6 +10,9 @@ datasource db {
 model Story {
   id              String   @id @default(uuid())
   topic           String   @default("")
+  concept         String   @default("")
+  storyOverview   String   @default("")
+  teachLesson     String   @default("")
   episode_number  String
   generation_type String   @default("new") // e.g., "new", "continue"
   mode            String   @default("single") // "single", "multi"
@@ -25,7 +28,7 @@ model Script {
   episode_number  String
   generation_type String   @default("new") // e.g., "new", "continue"
   mode            String   @default("single") // "single", "multi"
-  content         String
+  content         String   @default("{}")
   generated_at    DateTime @default(now())
   status          String   // "pending", "success", "failed"
   storyId         String?
