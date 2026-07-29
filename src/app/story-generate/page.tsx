@@ -31,6 +31,9 @@ export default function StoryGeneratePage() {
   const [viewMode, setViewMode] = useState<'history' | 'create' | 'edit'>('history');
   const [history, setHistory] = useState<StoryHistory[]>([]);
   const [topic, setTopic] = useState('');
+  const [concept, setConcept] = useState('');
+  const [storyOverview, setStoryOverview] = useState('');
+  const [teachLesson, setTeachLesson] = useState('');
   const [generationType, setGenerationType] = useState('new');
   const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [episodeCount, setEpisodeCount] = useState(5);
@@ -102,6 +105,9 @@ export default function StoryGeneratePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           topic: newRecord.topic,
+          concept: concept,
+          storyOverview: storyOverview,
+          teachLesson: teachLesson,
           mode: newRecord.mode,
           content: newRecord.content,
           generation_type: generationType
@@ -147,8 +153,8 @@ export default function StoryGeneratePage() {
   };
 
   const handleGenerate = async () => {
-    if (!topic.trim()) {
-      setError("Please enter a topic or concept before generating.");
+    if (!concept.trim() && !storyOverview.trim() && !topic.trim()) {
+      setError("Please fill in the concept or story overview before generating.");
       setTimeout(() => setError(null), 5000);
       return;
     }
@@ -160,7 +166,6 @@ export default function StoryGeneratePage() {
     let instructions = "";
     if (editorRef.current) {
       const editorText = editorRef.current.getText() || "";
-      // If the editor has only the default starting text, ignore it
       if (
         !editorText.includes("Start writing your script here...") &&
         !editorText.includes("Select this text or place cursor")
@@ -187,7 +192,10 @@ export default function StoryGeneratePage() {
         body: JSON.stringify({
           taskType,
           content: {
-            topic,
+            topic: topic || "Untitled Story",
+            concept: concept || topic,
+            storyOverview,
+            teachLesson,
             audience: localStorage.getItem('targetAudience') || 'kids',
             tone: localStorage.getItem('tone') || 'educational',
             instructions,
@@ -535,17 +543,62 @@ export default function StoryGeneratePage() {
             </div>
           )}
 
-            <div className="space-y-3">
-              <label className={labelClass}>
-                <FileText className="w-4 h-4 text-primary" />
-                Type story details for next episode
-              </label>
-              <textarea
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                className={fieldClass}
-                placeholder="e.g., A magical adventure in the candy forest where friends learn to share..."
-              />
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className={labelClass}>
+                  <Type className="w-4 h-4 text-primary" />
+                  Topic / Episode Title
+                </label>
+                <input
+                  type="text"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  className={fieldClass}
+                  placeholder="e.g., The Great Candy Forest Adventure"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className={labelClass}>
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  Concept
+                </label>
+                <textarea
+                  value={concept}
+                  onChange={(e) => setConcept(e.target.value)}
+                  className={fieldClass}
+                  rows={2}
+                  placeholder="Core idea or premise (e.g., Tilli finds a mysterious map in the library)..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className={labelClass}>
+                  <FileText className="w-4 h-4 text-primary" />
+                  Story Overview
+                </label>
+                <textarea
+                  value={storyOverview}
+                  onChange={(e) => setStoryOverview(e.target.value)}
+                  className={fieldClass}
+                  rows={4}
+                  placeholder="Detailed plot outline and summary of the episode..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className={labelClass}>
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  Teach Lesson
+                </label>
+                <textarea
+                  value={teachLesson}
+                  onChange={(e) => setTeachLesson(e.target.value)}
+                  className={fieldClass}
+                  rows={2}
+                  placeholder="Educational moral or key takeaway for kids (e.g., Always share and work together)..."
+                />
+              </div>
             </div>
           </div>
 

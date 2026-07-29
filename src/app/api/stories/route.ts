@@ -1,14 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 export async function GET(req: NextRequest) {
   try {
-    const { data: stories, error } = await supabase
-      .from('Story')
-      .select('*')
-      .order('generated_at', { ascending: false });
+    let stories;
+    try {
+      const { data, error } = await supabase
+        .from('Story')
+        .select('*')
+        .order('generated_at', { ascending: false });
+      if (!error && data) {
+        stories = data;
+      }
+    } catch (e) {}
 
-    if (error) throw error;
+    if (!stories) {
+      stories = await prisma.story.findMany({
+        orderBy: { generated_at: 'desc' }
+      });
+    }
+
     return NextResponse.json({ stories });
   } catch (error: any) {
     console.error("Error fetching stories:", error);
@@ -19,24 +31,37 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { topic, episode_number, generation_type, mode, content, status } = body;
+    const { topic, concept, storyOverview, teachLesson, episode_number, generation_type, mode, content, status } = body;
 
-    const { data: story, error } = await supabase
-      .from('Story')
-      .insert([
-        {
-          topic: topic || "",
-          episode_number: episode_number?.toString() || "1",
-          generation_type: generation_type || "new",
-          mode: mode || "single",
-          content: content || "",
-          status: status || "success"
-        }
-      ])
-      .select()
-      .single();
+    const payload = {
+      topic: topic || "",
+      concept: concept || "",
+      storyOverview: storyOverview || "",
+      teachLesson: teachLesson || "",
+      episode_number: episode_number?.toString() || "1",
+      generation_type: generation_type || "new",
+      mode: mode || "single",
+      content: content || "",
+      status: status || "success"
+    };
 
-    if (error) throw error;
+    let story;
+    try {
+      const { data, error } = await supabase
+        .from('Story')
+        .insert([payload])
+        .select()
+        .single();
+      if (!error && data) {
+        story = data;
+      }
+    } catch (e) {}
+
+    if (!story) {
+      story = await prisma.story.create({
+        data: payload
+      });
+    }
 
     return NextResponse.json({ story });
   } catch (error: any) {
