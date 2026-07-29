@@ -58,6 +58,15 @@ export function TiptapEditor({ editorRef, initialContent, className = '' }: Tipt
     }
   }, [editor, editorRef]);
 
+  useEffect(() => {
+    if (editor && initialContent !== undefined) {
+      const currentHTML = editor.getHTML();
+      if (currentHTML !== initialContent) {
+        editor.commands.setContent(initialContent);
+      }
+    }
+  }, [editor, initialContent]);
+
   if (!editor) {
     return null;
   }

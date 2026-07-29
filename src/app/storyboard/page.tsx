@@ -383,7 +383,6 @@ export default function StoryboardPage() {
                     Frame #{index + 1}
                   </div>
 
-                  {/* Hover Overlay with Action */}
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2 p-4">
                     <button
                       type="button"
