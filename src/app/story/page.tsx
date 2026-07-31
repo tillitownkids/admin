@@ -24,7 +24,9 @@ import {
   Save,
   MessageSquareText,
   ArrowUp,
-  CheckCircle2
+  CheckCircle2,
+  Clock,
+  Plus
 } from "lucide-react";
 
 interface ScriptInput {
@@ -51,6 +53,7 @@ export default function StoryPage() {
   const [generationType, setGenerationType] = useState<'new' | 'continue'>('new');
   const [previousEpisodeId, setPreviousEpisodeId] = useState<string>('');
   const [previousContext, setPreviousContext] = useState<string>('');
+  const [duration, setDuration] = useState<string>('2-3 minutes');
   const [previousStories, setPreviousStories] = useState<StoryOption[]>([]);
 
   const [data, setData] = useState<ScriptInput>({
@@ -149,6 +152,25 @@ export default function StoryPage() {
       .join('');
   }
 
+  /**
+   * Replaces all content in Tiptap editor with AI response
+   */
+  function handleApplyToEditor(content: string) {
+    if (!editorRef.current || !content) return;
+    const formatted = formatTextToHtml(content);
+    editorRef.current.commands.setContent(formatted);
+    setStoryHtml(formatted);
+  }
+
+  /**
+   * Inserts AI response content at current cursor position in Tiptap editor
+   */
+  function handleInsertAtCursor(content: string) {
+    if (!editorRef.current || !content) return;
+    const formatted = formatTextToHtml(content);
+    editorRef.current.chain().focus().insertContent(formatted).run();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -173,16 +195,19 @@ ${contextToUse ? `- Previous Episode Summary / Context: ${contextToUse}` : ''}`
 You are a creative director and storyteller for the children's animated show "Tilli & Jaksh."
 
 Generation Mode Details: ${continuationHeader}
+Target Story Duration: ${duration || '2-3 minutes'}
 
 Given Inputs:
 - Story Concept: ${data.Concept}
 - Story Overview: ${data.Overview}
 - Lesson to be Taught: ${data.Lesson}
+- Time Duration Target: ${duration || '2-3 minutes'}
 
 Write the complete story for this episode as a warm, flowing bedtime-style narrative suitable for 5-year-olds.
 
 Requirements:
 - Build the story around the provided concept and overview while naturally conveying the given lesson.
+- Keep the narrative length and pacing aligned with the target duration (${duration || '2-3 minutes'}).
 ${generationType === 'continue' ? '- Maintain plot and character continuity from the previous episode events.' : '- Create a clear, engaging standalone story.'}
 - Stay fully consistent with the attached story bible, including all locked character designs, personalities, locations, and world rules.
 - Reuse existing characters and locations whenever possible. If something new is required, introduce it clearly and naturally so it fits the world.
@@ -202,7 +227,7 @@ End the output with a one-paragraph recap of this episode so it can be used to p
         // Switch view mode to editor
         setViewMode('editor');
         setChatHistory([
-          { role: 'ai', content: `Story generated! Use the Tiptap editor on the left or chat with me here to refine dialogue, scenes, or tone.` }
+          { role: 'ai', content: `Story generated! Target duration: ${duration || '2-3 minutes'}. Use the Tiptap editor on the left or chat with me here to refine dialogue, scenes, or tone.` }
         ]);
 
         setTimeout(() => {
@@ -264,6 +289,7 @@ End the output with a one-paragraph recap of this episode so it can be used to p
       concept: data.Concept,
       overview: data.Overview,
       lesson: data.Lesson,
+      duration: duration,
       generationType: generationType,
       previousEpisodeId: previousEpisodeId || null,
       previousContext: previousContext || null,
@@ -293,6 +319,7 @@ End the output with a one-paragraph recap of this episode so it can be used to p
     setGenerationType('new');
     setPreviousEpisodeId('');
     setPreviousContext('');
+    setDuration('2-3 minutes');
     setStoryHtml('');
     setError(null);
   }
@@ -422,9 +449,9 @@ End the output with a one-paragraph recap of this episode so it can be used to p
               </div>
             </div>
 
-            
+            {/* Continuation Episode Options */}
             {generationType === 'continue' && (
-              <div className="p-4 rounded-xl border space-y-4 animate-in fade-in duration-300">
+              <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-4 animate-in fade-in duration-300">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className={labelClass}>
@@ -463,6 +490,42 @@ End the output with a one-paragraph recap of this episode so it can be used to p
                 </div>
               </div>
             )}
+
+            {/* Time Duration Input */}
+            <div className="space-y-2">
+              <label className={labelClass}>
+                <Clock className="w-4 h-4 text-primary" />
+                Time Duration
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    name="Duration"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    className={fieldClass}
+                    placeholder="e.g. 2-3 minutes, 5 minutes, 30 seconds..."
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {['1 min', '2-3 min', '5 min', '10 min'].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setDuration(preset)}
+                      className={`px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all ${
+                        duration === preset
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-background/80 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             <div className="space-y-2">
               <label className={labelClass}>
@@ -555,6 +618,10 @@ End the output with a one-paragraph recap of this episode so it can be used to p
                     <Layers className="w-3 h-3 text-emerald-500" />
                     {generationType === 'continue' ? 'Continuation Episode' : 'New Story'}
                   </span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-primary/10 text-primary">
+                    <Clock className="w-3 h-3 text-primary" />
+                    {duration}
+                  </span>
                 </h3>
               </div>
               <span className="text-xs text-muted-foreground">Original Tiptap Editor & AI Brainstorm Assistant</span>
@@ -562,7 +629,7 @@ End the output with a one-paragraph recap of this episode so it can be used to p
 
             {/* Split layout: Tiptap Editor (Left) & Brainstorm Chat (Right) with compact 380px height & scrolling */}
             <div className="grid grid-cols-1 md:grid-cols-5 gap-6 h-[380px]">
-              {/* Left Column: Original Tiptap Editor (Single clean scrollbar inside Tiptap) */}
+              {/* Left Column: Original Tiptap Editor (Scrollable) */}
               <div className="md:col-span-3 rounded-xl border border-border/60 bg-background/50 flex flex-col overflow-hidden h-[380px] focus-within:ring-1 focus-within:ring-primary/40 transition-colors">
                 <TiptapEditor
                   editorRef={editorRef}
@@ -596,7 +663,33 @@ End the output with a one-paragraph recap of this episode so it can be used to p
                             : 'bg-background text-foreground border border-border/50 rounded-bl-none prose prose-xs dark:prose-invert'
                         }`}>
                           {msg.role === 'ai' ? (
-                            <div dangerouslySetInnerHTML={{ __html: msg.content }} />
+                            <div className="space-y-2">
+                              <div dangerouslySetInnerHTML={{ __html: msg.content }} />
+                              
+                              {/* Quick Action Buttons on AI Messages (only for AI brainstorm responses after initial greeting) */}
+                              {idx > 0 && (
+                                <div className="pt-2 border-t border-border/40 flex items-center gap-1.5 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApplyToEditor(msg.content)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-semibold transition-colors"
+                                    title="Replace all editor content with this AI response"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    Replace All
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleInsertAtCursor(msg.content)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded bg-muted hover:bg-muted/80 text-foreground text-[10px] font-semibold transition-colors border border-border/40"
+                                    title="Insert this AI response at your current editor cursor position"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                    Insert at Cursor
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           ) : (
                             msg.content
                           )}
