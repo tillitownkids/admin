@@ -74,12 +74,15 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
   };
 
   return (
-    <div className="absolute right-0 top-full mt-2 z-[100] w-[1270px] max-w-[90vw] animate-in fade-in duration-200">
-      <div className="w-full bg-card/95 backdrop-blur-2xl border border-border/50 rounded-3xl flex flex-col relative overflow-hidden text-card-foreground">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 animate-in fade-in duration-200">
+      <div className="w-full max-w-[1200px] bg-card border border-border/60 rounded-3xl flex flex-col relative overflow-hidden text-card-foreground shadow-2xl">
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-border/50">
-          <h2 className="text-xl font-bold">Prompt editor</h2>
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-primary" />
+            Brainstorm & Edit Story
+          </h2>
           <button 
             onClick={onClose}
             className="p-2 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground"
@@ -110,7 +113,7 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
                   <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20 text-primary">
                     <MessageSquareText className="w-6 h-6" />
                   </div>
-                  <p className="text-sm">Ask me anything about your prompt</p>
+                  <p className="text-sm">Ask me anything to edit or brainstorm your story</p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
@@ -145,7 +148,7 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleChat(); }}
-                  placeholder="Make it more detailed, add lighting effects..."
+                  placeholder="Make it more detailed, add dialogue..."
                   className="flex-1 bg-transparent px-4 text-sm focus:outline-none text-foreground placeholder:text-muted-foreground"
                 />
                 <button 
@@ -167,7 +170,7 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
             onClick={handleApply}
             className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all duration-300 active:scale-[0.98]"
           >
-            Apply prompt
+            Save Changes
           </button>
         </div>
 

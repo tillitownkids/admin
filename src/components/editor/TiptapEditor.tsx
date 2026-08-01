@@ -58,6 +58,15 @@ export function TiptapEditor({ editorRef, initialContent, className = '' }: Tipt
     }
   }, [editor, editorRef]);
 
+  useEffect(() => {
+    if (editor && initialContent !== undefined) {
+      const currentHTML = editor.getHTML();
+      if (currentHTML !== initialContent) {
+        editor.commands.setContent(initialContent);
+      }
+    }
+  }, [editor, initialContent]);
+
   if (!editor) {
     return null;
   }
@@ -121,10 +130,10 @@ export function TiptapEditor({ editorRef, initialContent, className = '' }: Tipt
   );
 
   return (
-    <div className={`bg-card/40 backdrop-blur-2xl border border-border/50 rounded-3xl overflow-hidden relative flex flex-col min-h-[400px] ${className}`}>
+    <div className={`bg-card/40 backdrop-blur-2xl border border-border/50 rounded-3xl overflow-hidden relative flex flex-col min-h-[250px] ${className}`}>
       
       {/* Editor Content */}
-      <div className="flex-1 relative cursor-text text-foreground overflow-y-auto">
+      <div className="flex-1 relative cursor-text text-foreground overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/50">
         
         {/* Floating Menu for Blocks (Notion style '+') */}
         <FloatingMenu editor={editor} className="flex items-center gap-1 bg-background/95 backdrop-blur-xl border border-border/50 p-1.5 rounded-xl animate-in fade-in zoom-in-95 duration-200">
