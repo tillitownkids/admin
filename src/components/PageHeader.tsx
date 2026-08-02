@@ -3,8 +3,8 @@ import type { LucideIcon } from "lucide-react";
 interface PageHeaderProps {
   icon: LucideIcon;
   title: string;
-  highlight: string;
-  description: string;
+  highlight?: string;
+  description: React.ReactNode;
   action?: React.ReactNode;
 }
 
@@ -18,11 +18,13 @@ export function PageHeader({ icon: Icon, title, highlight, description, action }
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground font-heading">
             {title}{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary/60">
-              {highlight}
-            </span>
+            {highlight && (
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary/60">
+                {highlight}
+              </span>
+            )}
           </h1>
-          <p className="text-muted-foreground mt-1">{description}</p>
+          <div className="text-muted-foreground mt-1">{description}</div>
         </div>
       </div>
       {action}

@@ -123,19 +123,22 @@ export default function StoryPage() {
     if (!text) return "";
     let formatted = text.trim();
 
-    // If text already has HTML block elements, return as is
-    if (/<\/?(p|div|h[1-6]|ul|ol|li)\b[^>]*>/i.test(formatted)) {
-      return formatted;
-    }
-
     // Convert Markdown Headings
-    formatted = formatted.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-    formatted = formatted.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-    formatted = formatted.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+    formatted = formatted.replace(/^### (.*$)/gim, '<h3><strong>$1</strong></h3>');
+    formatted = formatted.replace(/^## (.*$)/gim, '<h2><strong>$1</strong></h2>');
+    formatted = formatted.replace(/^# (.*$)/gim, '<h1><strong>$1</strong></h1>');
 
-    // Convert Markdown Bold and Italic
+    // Explicitly convert any variation of Episode Recap into a bold heading
+    formatted = formatted.replace(/(?:^|\n)(?:###|##|\*\*|)\s*Episode Recap[:\s]*(?:\*\*|)/gim, '\n<h3><strong>Episode Recap</strong></h3>\n');
+
+    // Convert Markdown Bold (**text**) and Italic (*text*)
     formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+    // If already fully wrapped in HTML block tags, return formatted
+    if (/^<(p|div|h[1-6]|ul|ol)[^>]*>[\s\S]*<\/\1>$/i.test(formatted.trim())) {
+      return formatted;
+    }
 
     // Split paragraphs by double line breaks
     const paragraphs = formatted.split(/\n\s*\n/);
@@ -143,7 +146,7 @@ export default function StoryPage() {
       .map((p) => {
         const trimmed = p.trim();
         if (!trimmed) return '';
-        if (trimmed.startsWith('<h') || trimmed.startsWith('<ul') || trimmed.startsWith('<ol')) {
+        if (trimmed.startsWith('<h') || trimmed.startsWith('<ul') || trimmed.startsWith('<ol') || trimmed.startsWith('<p')) {
           return trimmed;
         }
         return `<p>${trimmed.replace(/\n/g, '<br/>')}</p>`;
@@ -216,7 +219,10 @@ ${generationType === 'continue' ? '- Maintain plot and character continuity from
 - Let the lesson emerge naturally through the characters' actions and experiences rather than stating it directly.
 - Do NOT include camera directions, production notes, scene headings, or screenplay formatting. Write only the narrative story.
 
-End the output with a one-paragraph recap of this episode so it can be used to prepare the next episode.`;
+MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include a dedicated recap section structured exactly as:
+
+### Episode Recap
+[A clear 1-paragraph summary recap of this episode summarizing the key events and outcome so it can be used to prepare the next episode.]`;
 
     try {
       const response = await callAi(prompt);
@@ -263,7 +269,8 @@ End the output with a one-paragraph recap of this episode so it can be used to p
           taskType: 'ask',
           content: {
             selectedText: currentEditorText,
-            userQuestion: promptToSend
+            userQuestion: promptToSend,
+            isStoryEdit: true
           }
         }),
       });
@@ -327,23 +334,29 @@ End the output with a one-paragraph recap of this episode so it can be used to p
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
       <PageHeader
-        icon={Wand2}
-        title="Story"
-        highlight={viewMode === 'editor' ? "Editor & Brainstorm" : "Generator"}
-        description={
+        icon={viewMode === 'editor' ? BookOpen : Wand2}
+        title={
           viewMode === 'editor'
-            ? "Refine your narrative with the Tiptap editor and interactive AI brainstorm assistant."
-            : "Craft warm bedtime stories for Tilli & Jaksh driven by custom concepts, overviews, and lessons."
+            ? (data.Concept.trim()
+                ? (data.Concept.length > 45 ? data.Concept.slice(0, 45) + "..." : data.Concept)
+                : "Generated Story")
+            : "Story"
         }
-        action={
-          viewMode === 'editor' && (
-            <button
-              onClick={() => setViewMode('form')}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary/50 hover:bg-secondary text-secondary-foreground transition-colors font-medium text-sm"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Generator
-            </button>
+        highlight={viewMode === 'editor' ? "" : "Generator"}
+        description={
+          viewMode === 'editor' ? (
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                <Layers className="w-3 h-3 text-emerald-500" />
+                {generationType === 'continue' ? 'Continuation Episode' : 'New Story'}
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-primary/10 text-primary border border-primary/20">
+                <Clock className="w-3 h-3 text-primary" />
+                {duration}
+              </span>
+            </div>
+          ) : (
+            "Craft warm bedtime stories for Tilli & Jaksh driven by custom concepts, overviews, and lessons."
           )
         }
       />
@@ -451,7 +464,7 @@ End the output with a one-paragraph recap of this episode so it can be used to p
 
             {/* Continuation Episode Options */}
             {generationType === 'continue' && (
-              <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-4 animate-in fade-in duration-300">
+              <div className="p-4 rounded-xl border space-y-4 animate-in fade-in duration-300">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className={labelClass}>
@@ -574,187 +587,156 @@ End the output with a one-paragraph recap of this episode so it can be used to p
           </form>
         </GlassPanel>
       ) : (
-        /* Full Page Workspace (Clean, Flat, using GlassPanel) */
-        <GlassPanel
-          footer={
-            <div className="flex w-full items-center justify-between gap-4">
+        /* Full Page Workspace (Clean & Direct) */
+        <div className="space-y-4">
+          {/* Action Bar Header */}
+          <div className="flex w-full items-center justify-between gap-4">
+            <button
+              type="button"
+              onClick={() => setViewMode('form')}
+              className={secondaryButtonClass}
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Generator
+            </button>
+            <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setViewMode('form')}
+                onClick={handleCopy}
                 className={secondaryButtonClass}
               >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Generator
+                {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                {copied ? 'Copied' : 'Copy Text'}
               </button>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className={secondaryButtonClass}
-                >
-                  {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                  {copied ? 'Copied' : 'Copy Text'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveChanges}
-                  className={primaryButtonClass}
-                >
-                  <Save className="w-4 h-4" />
-                  Save Changes
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleSaveChanges}
+                className={primaryButtonClass}
+              >
+                <Save className="w-4 h-4" />
+                Save Changes
+              </button>
             </div>
-          }
-        >
-          <div className="space-y-6">
-            {/* Header info */}
-            <div className="flex items-center justify-between pb-4 border-b border-border/50">
-              <div className="flex items-center gap-3">
-                <BookOpen className="w-5 h-5 text-primary" />
-                <h3 className="font-bold text-lg text-foreground flex items-center gap-2">
-                  Generated Narrative Story
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-emerald-500/10 text-emerald-500">
-                    <Layers className="w-3 h-3 text-emerald-500" />
-                    {generationType === 'continue' ? 'Continuation Episode' : 'New Story'}
-                  </span>
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-primary/10 text-primary">
-                    <Clock className="w-3 h-3 text-primary" />
-                    {duration}
-                  </span>
-                </h3>
-              </div>
-              <span className="text-xs text-muted-foreground">Original Tiptap Editor & AI Brainstorm Assistant</span>
+          </div>
+
+          {/* Split layout: Tiptap Editor (Left, Full Length) & Brainstorm Chat (Right, Sticky) */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-start">
+            {/* Left Column: Original Tiptap Editor (Full length, expands naturally) */}
+            <div className="md:col-span-3 rounded-xl border border-border/60 bg-background/50 flex flex-col focus-within:ring-1 focus-within:ring-primary/40 transition-colors p-2">
+              <TiptapEditor
+                editorRef={editorRef}
+                initialContent={storyHtml}
+                className="w-full !bg-transparent !border-none !rounded-none min-h-[400px]"
+              />
             </div>
 
-            {/* Split layout: Tiptap Editor (Left) & Brainstorm Chat (Right) with compact 380px height & scrolling */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-6 h-[380px]">
-              {/* Left Column: Original Tiptap Editor (Scrollable) */}
-              <div className="md:col-span-3 rounded-xl border border-border/60 bg-background/50 flex flex-col overflow-hidden h-[380px] focus-within:ring-1 focus-within:ring-primary/40 transition-colors">
-                <TiptapEditor
-                  editorRef={editorRef}
-                  initialContent={storyHtml}
-                  className="h-full w-full !bg-transparent !border-none !rounded-none !min-h-0"
-                />
+            {/* Right Column: Brainstorm Chat Panel (Sticky scrollable assistant) */}
+            <div className="md:col-span-2 rounded-xl border border-border/60 bg-muted/20 flex flex-col overflow-hidden h-[500px] sticky top-6">
+              <div className="p-2.5 bg-muted/40 border-b border-border/50 flex items-center justify-between shrink-0">
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                  Brainstorm Assistant
+                </span>
+                <span className="text-[11px] text-muted-foreground">Interactive AI</span>
               </div>
 
-              {/* Right Column: Brainstorm Chat Panel (Scrollable) */}
-              <div className="md:col-span-2 rounded-xl border border-border/60 bg-muted/20 flex flex-col overflow-hidden h-[380px]">
-                <div className="p-2.5 bg-muted/40 border-b border-border/50 flex items-center justify-between shrink-0">
-                  <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
-                    Brainstorm Assistant
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">Interactive AI</span>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full">
-                  {chatHistory.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-4 text-muted-foreground gap-1.5">
-                      <MessageSquareText className="w-6 h-6 text-primary/40" />
-                      <p className="text-[11px]">Ask questions or request edits to brainstorm this story with AI.</p>
-                    </div>
-                  ) : (
-                    chatHistory.map((msg, idx) => (
-                      <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`px-3 py-2 rounded-xl text-xs max-w-[90%] ${
-                          msg.role === 'user'
-                            ? 'bg-primary text-primary-foreground rounded-br-none'
-                            : 'bg-background text-foreground border border-border/50 rounded-bl-none prose prose-xs dark:prose-invert'
-                        }`}>
-                          {msg.role === 'ai' ? (
-                            <div className="space-y-2">
-                              <div dangerouslySetInnerHTML={{ __html: msg.content }} />
-                              
-                              {/* Quick Action Buttons on AI Messages (only for AI brainstorm responses after initial greeting) */}
-                              {idx > 0 && (
-                                <div className="pt-2 border-t border-border/40 flex items-center gap-1.5 flex-wrap">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleApplyToEditor(msg.content)}
-                                    className="flex items-center gap-1 px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-semibold transition-colors"
-                                    title="Replace all editor content with this AI response"
-                                  >
-                                    <Check className="w-3 h-3" />
-                                    Replace All
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleInsertAtCursor(msg.content)}
-                                    className="flex items-center gap-1 px-2 py-1 rounded bg-muted hover:bg-muted/80 text-foreground text-[10px] font-semibold transition-colors border border-border/40"
-                                    title="Insert this AI response at your current editor cursor position"
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                    Insert at Cursor
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            msg.content
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                  {isAiChatLoading && (
-                    <div className="flex justify-start">
-                      <div className="px-3 py-2 rounded-xl text-xs bg-background text-foreground border border-border/50 rounded-bl-none flex items-center gap-2">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
-                        Brainstorming...
-                      </div>
-                    </div>
-                  )}
-                  <div ref={chatBottomRef} />
-                </div>
-
-                <div className="px-2.5 py-1 bg-background/50 border-t border-border/30 flex gap-1 overflow-x-auto text-[10px] shrink-0">
-                  <button
-                    onClick={() => handleChatSubmit("Add more dialogue between characters")}
-                    disabled={isAiChatLoading}
-                    className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground shrink-0 border border-border/40"
-                  >
-                    + Dialogue
-                  </button>
-                  <button
-                    onClick={() => handleChatSubmit("Make tone warmer for bedtime")}
-                    disabled={isAiChatLoading}
-                    className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground shrink-0 border border-border/40"
-                  >
-                    + Bedtime tone
-                  </button>
-                  <button
-                    onClick={() => handleChatSubmit("Expand recap & ending")}
-                    disabled={isAiChatLoading}
-                    className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground shrink-0 border border-border/40"
-                  >
-                    + Better ending
-                  </button>
-                </div>
-
-                <div className="p-2.5 bg-background border-t border-border/50 shrink-0">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleChatSubmit(); }}
-                      placeholder="Ask AI for changes..."
-                      className="flex-1 bg-muted/40 border border-input rounded-lg px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
-                    />
-                    <button
-                      onClick={() => handleChatSubmit()}
-                      disabled={isAiChatLoading || !chatInput.trim()}
-                      className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
-                    >
-                      <ArrowUp className="w-3.5 h-3.5" />
-                    </button>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full">
+                {chatHistory.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-4 text-muted-foreground gap-1.5">
+                    <MessageSquareText className="w-6 h-6 text-primary/40" />
+                    <p className="text-[11px]">Ask questions or request edits to brainstorm this story with AI.</p>
                   </div>
+                ) : (
+                  chatHistory.map((msg, idx) => (
+                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`px-3 py-2 rounded-xl text-xs max-w-[90%] ${
+                        msg.role === 'user'
+                          ? 'bg-primary text-primary-foreground rounded-br-none'
+                          : 'bg-background text-foreground border border-border/50 rounded-bl-none prose prose-xs dark:prose-invert'
+                      }`}>
+                        {msg.role === 'ai' ? (
+                          <div className="space-y-2">
+                            <div dangerouslySetInnerHTML={{ __html: msg.content }} />
+                            
+                            {/* Single Merge Changes Button on AI Messages */}
+                            {idx > 0 && (
+                              <div className="pt-2 border-t border-border/40 flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyToEditor(msg.content)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold transition-all shadow-sm active:scale-95"
+                                  title="Merge these AI changes into the story editor"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                                  Merge Changes
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          msg.content
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {isAiChatLoading && (
+                  <div className="flex justify-start">
+                    <div className="px-3 py-2 rounded-xl text-xs bg-background text-foreground border border-border/50 rounded-bl-none flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                      Brainstorming...
+                    </div>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+
+              <div className="px-2.5 py-1 bg-background/50 border-t border-border/30 flex gap-1 overflow-x-auto text-[10px] shrink-0">
+                <button
+                  onClick={() => handleChatSubmit("Add more dialogue between characters")}
+                  disabled={isAiChatLoading}
+                  className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground shrink-0 border border-border/40"
+                >
+                  + Dialogue
+                </button>
+                <button
+                  onClick={() => handleChatSubmit("Make tone warmer for bedtime")}
+                  disabled={isAiChatLoading}
+                  className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground shrink-0 border border-border/40"
+                >
+                  + Bedtime tone
+                </button>
+                <button
+                  onClick={() => handleChatSubmit("Expand recap & ending")}
+                  disabled={isAiChatLoading}
+                  className="px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground shrink-0 border border-border/40"
+                >
+                  + Better ending
+                </button>
+              </div>
+
+              <div className="p-2.5 bg-background border-t border-border/50 shrink-0">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleChatSubmit(); }}
+                    placeholder="Ask AI for changes..."
+                    className="flex-1 bg-muted/40 border border-input rounded-lg px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                  <button
+                    onClick={() => handleChatSubmit()}
+                    disabled={isAiChatLoading || !chatInput.trim()}
+                    className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0"
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             </div>
           </div>
-        </GlassPanel>
+        </div>
       )}
     </div>
   );
