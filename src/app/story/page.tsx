@@ -373,8 +373,8 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
         description={
           viewMode === 'editor' ? (
             <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                <Layers className="w-3 h-3 text-emerald-500" />
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-emerald-500/10 text-primary border border-emerald-500/20">
+                <Layers className="w-3 h-3 text-primary" />
                 {generationType === 'continue' ? 'Continuation Episode' : 'New Story'}
               </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase bg-primary/10 text-primary border border-primary/20">
@@ -401,12 +401,12 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
       )}
 
       {saveSuccess && (
-        <div className="p-4 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-lg flex items-center justify-between animate-in fade-in duration-300">
+        <div className="p-4 bg-emerald-500/10 text-primary border border-emerald-500/20 rounded-lg flex items-center justify-between animate-in fade-in duration-300">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5" />
             <span className="text-sm font-semibold">Story details logged to browser console!</span>
           </div>
-          <button onClick={() => setSaveSuccess(false)} className="text-emerald-500/80 hover:text-emerald-500">
+          <button onClick={() => setSaveSuccess(false)} className="text-primary/80 hover:text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -447,7 +447,6 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
           }
         >
           <form id="story-form" onSubmit={handleSubmit} className="space-y-6">
-            {/* Top Option Selector */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b border-border/40">
               <div className="space-y-1.5">
                 <label className={labelClass}>
@@ -464,7 +463,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <Sparkles className="w-4 h-4 text-emerald-500" />
+                    <Sparkles className="w-4 h-4 text-primary" />
                     Write New Story
                   </button>
                   <button
@@ -476,7 +475,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <Layers className="w-4 h-4 text-emerald-500" />
+                    <Layers className="w-4 h-4 text-primary" />
                     Continuation Episode
                   </button>
                 </div>
@@ -495,7 +494,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className={labelClass}>
-                      <History className="w-4 h-4 text-emerald-500" />
+                      <History className="w-4 h-4 text-primary" />
                       Previous Episode (Optional)
                     </label>
                     <div className="relative">
@@ -516,7 +515,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
 
                   <div className="space-y-2">
                     <label className={labelClass}>
-                      <BookMarked className="w-4 h-4 text-emerald-500" />
+                      <BookMarked className="w-4 h-4 text-primary" />
                       Previous Episode Recap / Context
                     </label>
                     <textarea
@@ -617,22 +616,14 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
         /* Full Page Workspace (Clean & Direct) */
         <div className="space-y-4">
           {/* Action Bar Header */}
-          <div className="flex w-full items-center justify-between gap-4">
-            <button
-              type="button"
-              onClick={() => setViewMode('form')}
-              className={secondaryButtonClass}
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Generator
-            </button>
+          <div className="flex w-full items-center justify-end gap-4">
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={handleCopy}
                 className={secondaryButtonClass}
               >
-                {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                {copied ? <Check className="w-4 h-4 text-primary" /> : <Copy className="w-4 h-4" />}
                 {copied ? 'Copied' : 'Copy Text'}
               </button>
               <button
@@ -661,7 +652,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
             <div className="md:col-span-2 rounded-xl border border-border/60 bg-muted/20 flex flex-col overflow-hidden h-[500px] sticky top-20">
               <div className="p-2.5 bg-muted/40 border-b border-border/50 flex items-center justify-between shrink-0">
                 <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+                  <Sparkles className="w-3.5 h-3.5 text-primary" />
                   Brainstorm Assistant
                 </span>
                 <span className="text-[11px] text-muted-foreground">Interactive AI</span>
@@ -694,7 +685,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
                                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold transition-all shadow-sm active:scale-95"
                                   title="Merge these AI changes into the story editor"
                                 >
-                                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                                  <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
                                   Merge Changes
                                 </button>
                               </div>
@@ -710,7 +701,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
                 {isAiChatLoading && (
                   <div className="flex justify-start">
                     <div className="px-3 py-2 rounded-xl text-xs bg-background text-foreground border border-border/50 rounded-bl-none flex items-center gap-2">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
                       Brainstorming...
                     </div>
                   </div>
