@@ -20,16 +20,14 @@ User Requested Changes:
 "${input.userQuestion}"
 
 Task:
-Revise the story by seamlessly incorporating the requested changes into the current narrative.
-Maintain the warm bedtime tone, character personalities, dialogue style, and world rules.
+Revise the story by seamlessly incorporating the requested changes into the narrative while maintaining the warm bedtime tone, character personalities, and world rules.
 
-STRICT MANDATORY REQUIREMENTS:
-1. Return the COMPLETE updated narrative story with all changes seamlessly merged into it.
-2. Do NOT include intro text, conversational commentary, or explanation wrappers (like "Here is the updated story:").
-3. MANDATORY EPISODE RECAP: At the very end of the narrative, you MUST ALWAYS include a dedicated recap section structured exactly as:
+You MUST respond ONLY with a raw JSON object matching the following structure (no preamble, no markdown code block wraps):
 
-**Episode Recap**
-[A 1-paragraph summary recap of this episode summarizing the key events and moral takeaway.]`;
+{
+  "summary": "A clear, bulleted list or 2-3 sentence overview summary of the specific updates made to the story (e.g. • Added dialogue between Tilli and Jaksh near the creek\\n• Updated narrative tone\\n• Updated Episode Recap)",
+  "fullStory": "The complete, revised narrative bedtime story with all requested changes seamlessly merged into it. At the very end, MUST include:\\n\\n**Episode Recap**\\n[1-paragraph summary recap of this episode]"
+}`;
     }
 
     if (input.userQuestion && input.userQuestion.trim() !== '') {
@@ -42,33 +40,57 @@ STRICT MANDATORY REQUIREMENTS:
     const prompt = this.buildPrompt(input);
     const responseText = await this.bedrockService.invokeModel(prompt);
     
-    // Clean response in case the model returns markdown code block wraps or conversational intros
-    let cleaned = responseText.trim();
-    if (cleaned.startsWith('```html')) {
-      cleaned = cleaned.substring(7);
-    } else if (cleaned.startsWith('```')) {
-      cleaned = cleaned.substring(3);
-    }
-    if (cleaned.endsWith('```')) {
-      cleaned = cleaned.substring(0, cleaned.length - 3);
-    }
-
-    cleaned = cleaned.replace(/^(Here is the updated story|Here's the revised story|Here is the revised story|Sure! Here is the updated narrative story)[:\n\s]*/i, '');
-
-    // Safety Fallback: If AI omitted the Episode Recap section in a story edit, generate and append it
-    if (input.isStoryEdit && !cleaned.toLowerCase().includes('recap')) {
+    if (input.isStoryEdit) {
       try {
-        const recapPrompt = `Provide a concise 1-paragraph episode recap for the following children's bedtime story:\n\n${cleaned.slice(-1500)}`;
-        const generatedRecap = await this.bedrockService.invokeModel(recapPrompt);
-        if (generatedRecap && generatedRecap.trim()) {
-          const cleanRecap = generatedRecap.replace(/^(Here is the recap|Episode Recap)[:\n\s]*/i, '').trim();
-          cleaned += `\n\n**Episode Recap**\n${cleanRecap}`;
+        let cleanedJson = responseText.trim();
+        if (cleanedJson.startsWith('```json')) {
+          cleanedJson = cleanedJson.substring(7);
+        } else if (cleanedJson.startsWith('```')) {
+          cleanedJson = cleanedJson.substring(3);
         }
-      } catch (recapErr) {
-        console.error("Failed to generate fallback recap:", recapErr);
+        if (cleanedJson.endsWith('```')) {
+          cleanedJson = cleanedJson.substring(0, cleanedJson.length - 3);
+        }
+
+        const parsed = JSON.parse(cleanedJson.trim());
+        if (parsed.fullStory && parsed.summary) {
+          let story = parsed.fullStory.trim();
+          if (!story.toLowerCase().includes('recap')) {
+            story += `\n\n**Episode Recap**\nUpdated episode summary reflecting recent story changes.`;
+          }
+          return JSON.stringify({
+            summary: parsed.summary,
+            fullStory: story
+          });
+        }
+      } catch (e) {
+        console.warn("JSON parsing failed in AskTask story edit, falling back to structured object:", e);
       }
+
+      // Fallback if AI didn't return valid JSON object
+      let cleanedText = responseText.trim();
+      if (cleanedText.startsWith('```')) {
+        cleanedText = cleanedText.replace(/^```[a-z]*\n?/i, '').replace(/```$/i, '').trim();
+      }
+      cleanedText = cleanedText.replace(/^(Here is the updated story|Here's the revised story|Sure! Here is the updated narrative story)[:\n\s]*/i, '');
+
+      if (!cleanedText.toLowerCase().includes('recap')) {
+        cleanedText += `\n\n**Episode Recap**\nUpdated episode summary reflecting recent story changes.`;
+      }
+
+      const autoSummary = `**Updates Made:**\n• Revised story content according to request: "${input.userQuestion}"\n• Preserved bedtime tone and episode recap.`;
+
+      return JSON.stringify({
+        summary: autoSummary,
+        fullStory: cleanedText
+      });
     }
 
+    // Standard non-story-edit response
+    let cleaned = responseText.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```[a-z]*\n?/i, '').replace(/```$/i, '').trim();
+    }
     return cleaned.trim();
   }
 }

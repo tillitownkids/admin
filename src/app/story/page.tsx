@@ -46,6 +46,7 @@ interface StoryOption {
 interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
+  fullStory?: string;
 }
 
 export default function StoryPage() {
@@ -278,7 +279,33 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
       if (!res.ok) throw new Error('Failed to process AI chat');
       const json = await res.json();
       if (json.result) {
-        setChatHistory((prev) => [...prev, { role: 'ai', content: json.result }]);
+        let summaryText = json.result;
+        let fullStoryText = json.result;
+
+        try {
+          const parsed = typeof json.result === 'string' && json.result.trim().startsWith('{')
+            ? JSON.parse(json.result)
+            : (typeof json.result === 'object' ? json.result : null);
+
+          if (parsed && parsed.summary && parsed.fullStory) {
+            summaryText = parsed.summary;
+            fullStoryText = parsed.fullStory;
+          }
+        } catch (e) {
+          // Plain text fallback
+        }
+
+        const formattedSummary = formatTextToHtml(summaryText);
+        const formattedFullStory = formatTextToHtml(fullStoryText);
+
+        setChatHistory((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            content: formattedSummary,
+            fullStory: formattedFullStory
+          }
+        ]);
       }
     } catch (err: any) {
       console.error("Brainstorm Chat error:", err);
@@ -630,8 +657,8 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
               />
             </div>
 
-            {/* Right Column: Brainstorm Chat Panel (Sticky scrollable assistant) */}
-            <div className="md:col-span-2 rounded-xl border border-border/60 bg-muted/20 flex flex-col overflow-hidden h-[500px] sticky top-6">
+            {/* Right Column: Brainstorm Chat Panel (Sticky scrollable assistant below navbar) */}
+            <div className="md:col-span-2 rounded-xl border border-border/60 bg-muted/20 flex flex-col overflow-hidden h-[500px] sticky top-20">
               <div className="p-2.5 bg-muted/40 border-b border-border/50 flex items-center justify-between shrink-0">
                 <span className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
@@ -663,7 +690,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
                               <div className="pt-2 border-t border-border/40 flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleApplyToEditor(msg.content)}
+                                  onClick={() => handleApplyToEditor(msg.fullStory || msg.content)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold transition-all shadow-sm active:scale-95"
                                   title="Merge these AI changes into the story editor"
                                 >
