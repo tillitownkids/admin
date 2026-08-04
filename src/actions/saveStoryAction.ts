@@ -23,6 +23,45 @@ export interface SaveStoryInput {
   previousContext?: string | null;
 }
 
+export async function getStoriesAction() {
+  try {
+    const { data, error } = await supabase
+      .from('Story')
+      .select('*')
+      .order('generated_at', { ascending: false });
+
+    if (error) {
+      console.error("Error fetching stories from Supabase:", error);
+      return { success: false, stories: [], error: error.message };
+    }
+
+    return { success: true, stories: data || [] };
+  } catch (err: any) {
+    console.error("Failed to fetch stories:", err);
+    return { success: false, stories: [], error: err?.message || "Failed to fetch stories" };
+  }
+}
+
+export async function getStoryByIdAction(id: string) {
+  try {
+    const { data, error } = await supabase
+      .from('Story')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !data) {
+      console.error("Error fetching story by ID from Supabase:", error);
+      return { success: false, story: null, error: error?.message || "Story not found" };
+    }
+
+    return { success: true, story: data };
+  } catch (err: any) {
+    console.error("Failed to fetch story by ID:", err);
+    return { success: false, story: null, error: err?.message || "Failed to fetch story" };
+  }
+}
+
 export async function saveGeneratedStoryAction(input: SaveStoryInput) {
   try {
     const topic = input.topic || (input.concept ? (input.concept.length > 50 ? input.concept.slice(0, 50) + "..." : input.concept) : "Untitled Story");
