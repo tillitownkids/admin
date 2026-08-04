@@ -120,7 +120,6 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
       return { success: true, data };
     }
 
-    // 2. Insert new story: Try extended payload first
     const { data, error } = await supabase
       .from('Story')
       .insert([extendedPayload])
