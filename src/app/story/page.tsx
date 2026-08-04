@@ -1,6 +1,7 @@
 "use client";
 
 import { callAi } from "@/actions/actions";
+import { saveGeneratedStoryAction } from "@/actions/saveStoryAction";
 import { PageHeader } from "@/components/PageHeader";
 import { GlassPanel } from "@/components/GlassPanel";
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
@@ -64,6 +65,8 @@ export default function StoryPage() {
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
@@ -242,6 +245,23 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
             editorRef.current.commands.setContent(formatted);
           }
         }, 100);
+
+        // Auto-save generated story record to Supabase via server action
+        saveGeneratedStoryAction({
+          concept: data.Concept,
+          overview: data.Overview,
+          lesson: data.Lesson,
+          duration: duration,
+          generationType: generationType,
+          contentHtml: formatted,
+          topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
+        }).then((res) => {
+          if (res.success && res.data?.id) {
+            setCurrentStoryId(res.data.id);
+          }
+        }).catch((err) => {
+          console.warn("Auto-save to Supabase failed:", err);
+        });
       } else {
         setError("No response text returned from AI.");
       }
@@ -315,29 +335,43 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
     }
   };
 
-  function handleSaveChanges() {
+  async function handleSaveChanges() {
     const currentHtml = editorRef.current?.getHTML() || storyHtml;
     const currentText = editorRef.current?.getText() || "";
 
-    const storyPayload = {
-      concept: data.Concept,
-      overview: data.Overview,
-      lesson: data.Lesson,
-      duration: duration,
-      generationType: generationType,
-      previousEpisodeId: previousEpisodeId || null,
-      previousContext: previousContext || null,
-      contentHtml: currentHtml,
-      contentText: currentText,
-      savedAt: new Date().toISOString()
-    };
+    setIsSaving(true);
+    setError(null);
 
-    console.log("================ LOGGING STORY DATA TO BROWSER ================");
-    console.log("Story Payload Data:", storyPayload);
-    console.log("==============================================================");
+    try {
+      const res = await saveGeneratedStoryAction({
+        id: currentStoryId || undefined,
+        concept: data.Concept,
+        overview: data.Overview,
+        lesson: data.Lesson,
+        duration: duration,
+        generationType: generationType,
+        previousEpisodeId: previousEpisodeId || null,
+        previousContext: previousContext || null,
+        contentHtml: currentHtml,
+        contentText: currentText,
+        topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
+      });
 
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 4000);
+      if (res.success) {
+        if (res.data?.id) {
+          setCurrentStoryId(res.data.id);
+        }
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 4000);
+      } else {
+        setError(res.error || "Failed to save story to database.");
+      }
+    } catch (err: any) {
+      console.error("Error saving story to Supabase:", err);
+      setError(err?.message || "An error occurred while saving the story.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleCopy() {
@@ -404,7 +438,7 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
         <div className="p-4 bg-emerald-500/10 text-primary border border-emerald-500/20 rounded-lg flex items-center justify-between animate-in fade-in duration-300">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-5 h-5" />
-            <span className="text-sm font-semibold">Story details logged to browser console!</span>
+            <span className="text-sm font-semibold">Story saved to database successfully!</span>
           </div>
           <button onClick={() => setSaveSuccess(false)} className="text-primary/80 hover:text-primary">
             <X className="w-4 h-4" />
@@ -629,10 +663,20 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
               <button
                 type="button"
                 onClick={handleSaveChanges}
+                disabled={isSaving}
                 className={primaryButtonClass}
               >
-                <Save className="w-4 h-4" />
-                Save Changes
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    Save Changes
+                  </>
+                )}
               </button>
             </div>
           </div>
