@@ -233,15 +233,6 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link
-              href="/story-generate"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors bg-muted/40 px-2.5 py-1 rounded-lg border border-border/40"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Back to Stories
-            </Link>
-          </div>
           <PageHeader
             icon={BookOpen}
             title={story?.topic || story?.concept?.slice(0, 40) || "Story Editor"}
