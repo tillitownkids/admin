@@ -169,7 +169,6 @@ export default function LocationNewPage() {
                 {stories.map((story) => (
                   <option key={story.id} value={story.id}>
                     {story.topic || story.concept?.slice(0, 40) || "Untitled Story"}
-                    {story.generation_type ? ` (${story.generation_type})` : ''}
                   </option>
                 ))}
               </select>
@@ -184,11 +183,7 @@ export default function LocationNewPage() {
                   <Sparkles className="w-4.5 h-4.5 text-primary" />
                   {selectedStory.topic || "Selected Story Narrative"}
                 </h3>
-                {selectedStory.generation_type && (
-                  <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
-                    {selectedStory.generation_type}
-                  </span>
-                )}
+                
               </div>
 
               <p className="text-xs sm:text-sm text-muted-foreground line-clamp-3 leading-relaxed text-left">
@@ -228,17 +223,14 @@ export default function LocationNewPage() {
         </div>
       </GlassPanel>
 
-      {/* Generated Locations Grid Display */}
+      
       {detectedLocations.length > 0 && (
         <div className="space-y-4 text-left animate-in fade-in slide-in-from-bottom-4 duration-400 pt-4">
           <div className="flex items-center justify-between flex-wrap gap-2 text-left">
             <h2 className="text-xl font-bold text-foreground flex items-center gap-2 text-left">
-              <Building className="w-5 h-5 text-primary" />
+              
               Generated Locations ({detectedLocations.length})
             </h2>
-            <Link href="/locations" className={secondaryButtonClass + " text-xs"}>
-              View Locations Library <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-left">
