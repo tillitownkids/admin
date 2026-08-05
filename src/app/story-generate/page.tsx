@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { GlassPanel } from "@/components/GlassPanel";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass, selectFieldClass } from "@/lib/styles";
 import { useState, useEffect } from "react";
-import Link from "next/link";
+
 import { useRouter } from "next/navigation";
 import { 
   Sparkles, 
@@ -154,10 +154,14 @@ ${generationType === 'continue' ? '- Maintain plot and character continuity from
 - Let the lesson emerge naturally through the characters' actions and experiences rather than stating it directly.
 - Do NOT include camera directions, production notes, scene headings, or screenplay formatting. Write only the narrative story.
 
-MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include a dedicated recap section structured exactly as:
+FORMATTING REQUIREMENTS:
+- Start the story with a clear heading:
+  # **[Story Title]**
 
-### Episode Recap
-[A clear 1-paragraph summary recap of this episode summarizing the key events and outcome so it can be used to prepare the next episode.]`;
+- At the very end of the generated output, you MUST include a dedicated recap section structured as:
+
+### **Episode Recap**
+**Summary:** [A clear 1-paragraph summary recap of this episode summarizing the key events and outcome so it can be used to prepare the next episode.]`;
 
     try {
       const response = await callAi(prompt);
@@ -174,7 +178,6 @@ MANDATORY FINAL RECAP: At the very end of the generated output, you MUST include
         });
 
         if (saveRes.success && saveRes.data?.id) {
-          // Redirect directly to the story editor page
           router.push(`/story-generate/${saveRes.data.id}`);
         } else {
           setError(saveRes.error || "Failed to save generated story to database.");

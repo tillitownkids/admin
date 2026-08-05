@@ -18,9 +18,7 @@ export async function callAi(prompt:string,maxTokens: number = 2000){
             ],
           },
         ],
-        // inferenceConfig : {
-        //     maxTokens
-        // }
+
     });
       
     const response = await client.send(command);

@@ -6,6 +6,7 @@ import { Plus, Save, Sparkles, Upload, Loader2, ArrowLeft, X, Image as ImageIcon
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
+import { getStoriesAction } from '@/actions/saveStoryAction';
 
 export interface LibraryItem {
   id: string;
@@ -98,8 +99,20 @@ export function LibraryManager({
     }
   };
 
+  const loadStoriesFromDatabase = async () => {
+    try {
+      const res = await getStoriesAction();
+      if (res.success && res.stories && res.stories.length > 0) {
+        setStoriesList(res.stories as any);
+      }
+    } catch (e) {
+      console.error('Failed to fetch stories for library manager:', e);
+    }
+  };
+
   useEffect(() => {
     fetchItems();
+    loadStoriesFromDatabase();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -111,31 +124,33 @@ export function LibraryManager({
     setImagePrompt('');
     setGeneratedImages(undefined);
     setCurrent(null);
+    loadStoriesFromDatabase();
     setViewMode('create');
   };
 
   const startCreateFromStory = async () => {
     setCreateType('from_story');
-    const defaultStory = mock_story_locations[0];
-    setSelectedStoryId(defaultStory.id);
-    setName(defaultStory.locationName);
-    setItemDescription(defaultStory.description);
-    setImagePrompt(defaultStory.prompt);
     setGeneratedImages(undefined);
     setCurrent(null);
-    setViewMode('create');
+    await loadStoriesFromDatabase();
 
-    try {
-      const res = await fetch('/api/stories');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.stories && data.stories.length > 0) {
-          setStoriesList(data.stories);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch stories for library manager:', e);
+    if (storiesList.length > 0) {
+      const first = storiesList[0];
+      setSelectedStoryId(first.id);
+      const title = first.topic || (first as any).concept?.slice(0, 40) || 'Untitled Story';
+      setName(`${title} Location`);
+      const rawText = first.content ? first.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ((first as any).concept || '');
+      setItemDescription(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText);
+      setImagePrompt(`Wide establishing shot of ${title} location, vibrant 3D animation style.`);
+    } else {
+      const defaultStory = mock_story_locations[0];
+      setSelectedStoryId(defaultStory.id);
+      setName(defaultStory.locationName);
+      setItemDescription(defaultStory.description);
+      setImagePrompt(defaultStory.prompt);
     }
+
+    setViewMode('create');
   };
 
   const openItem = (item: LibraryItem) => {
@@ -379,11 +394,11 @@ export function LibraryManager({
             }
           >
             
-            {viewMode === 'create' && createType === 'from_story' && (
-              <div className="space-y-3 p-4 rounded-xl border border-primary/20 mb-6">
-                <label className={labelClass + " text-primary flex items-center gap-2"}>
-                  <BookOpen className="w-4 h-4" />
-                  Select Story
+            {viewMode === 'create' && (
+              <div className="space-y-3 p-4 rounded-xl border border-primary/20 mb-6 bg-primary/5">
+                <label className={labelClass + " text-primary flex items-center gap-2 font-semibold"}>
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  Select Story from Database
                 </label>
                 <div className="relative">
                   <select
@@ -391,14 +406,16 @@ export function LibraryManager({
                     onChange={(e) => {
                       const val = e.target.value;
                       setSelectedStoryId(val);
+                      if (!val) return;
 
-                      // Check in user stories
+                      // Check in user stories from Supabase
                       const userStory = storiesList.find((s) => s.id === val);
                       if (userStory) {
-                        const storyTitle = userStory.topic || "Untitled Story";
+                        const storyTitle = userStory.topic || (userStory as any).concept?.slice(0, 40) || "Untitled Story";
                         setName(`${storyTitle} Location`);
-                        const desc = userStory.content ? userStory.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) : "Location setting for " + storyTitle;
-                        setItemDescription(desc);
+                        const rawText = userStory.content ? userStory.content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ((userStory as any).concept || "");
+                        const desc = rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText;
+                        setItemDescription(desc || `Location setting for ${storyTitle}`);
                         setImagePrompt(`Wide establishing shot of ${storyTitle} location, vibrant 3D animation style.`);
                         return;
                       }
@@ -413,6 +430,16 @@ export function LibraryManager({
                     }}
                     className="w-full appearance-none bg-background border border-input rounded-xl px-4 py-3 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer text-foreground"
                   >
+                    <option value="">-- Choose a story from database to autofill --</option>
+                    {storiesList.length > 0 && (
+                      <optgroup label="Fetched Stories from Database">
+                        {storiesList.map((story: any) => (
+                          <option key={story.id} value={story.id}>
+                            {story.topic || story.concept?.slice(0, 40) || 'Untitled Story'}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                     <optgroup label="Story Presets">
                       {mock_story_locations.map((story) => (
                         <option key={story.id} value={story.id}>
@@ -420,15 +447,6 @@ export function LibraryManager({
                         </option>
                       ))}
                     </optgroup>
-                    {storiesList.length > 0 && (
-                      <optgroup label="Your Stories">
-                        {storiesList.map((story) => (
-                          <option key={story.id} value={story.id}>
-                            {story.topic || 'Untitled Story'}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
                   </select>
                   <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-muted-foreground">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>

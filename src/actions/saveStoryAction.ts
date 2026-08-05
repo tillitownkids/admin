@@ -74,7 +74,6 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
     const content = input.contentHtml || input.content || input.contentText || "";
     const status = input.status || "success";
 
-    // Standard core payload matching existing database schema (topic, content, episode_number, generation_type, mode, status, generated_at)
     const corePayload: Record<string, any> = {
       topic,
       content,
@@ -85,7 +84,6 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
       generated_at: new Date().toISOString()
     };
 
-    // Extended payload with additional fields
     const extendedPayload: Record<string, any> = {
       ...corePayload,
       concept,
@@ -94,7 +92,6 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
     };
 
     if (input.id) {
-      // 1. Try updating with extended payload first
       const { data, error } = await supabase
         .from('Story')
         .update(extendedPayload)
@@ -103,7 +100,6 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
         .single();
 
       if (error) {
-        // Fallback to core payload if schema lacks extra columns
         const coreRes = await supabase
           .from('Story')
           .update(corePayload)
@@ -129,7 +125,6 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
     if (error) {
       console.warn("Supabase insert with extended columns failed ('" + error.message + "'), falling back to core schema columns...");
 
-      // Fallback insert with core schema columns (topic, content, episode_number, generation_type, mode, status)
       const coreRes = await supabase
         .from('Story')
         .insert([corePayload])

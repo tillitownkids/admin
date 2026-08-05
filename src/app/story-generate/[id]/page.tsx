@@ -83,27 +83,80 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, isAiChatLoading]);
 
+  function cleanMarkdownTitle(str: string): string {
+    return str
+      .replace(/^#+\s*/, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/<u>(.*?)<\/u>/gi, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .trim();
+  }
+
   function formatTextToHtml(text: string): string {
     if (!text) return '';
-    if (text.trim().startsWith('<p>') || text.trim().startsWith('<h1>') || text.trim().startsWith('<h3>')) {
-      return text;
+
+    let cleaned = text.trim();
+    if (cleaned.startsWith('```html')) cleaned = cleaned.slice(7);
+    else if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
+    if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
+    cleaned = cleaned.trim();
+
+    if (/^<(p|h1|h2|h3|div|ul|ol)\b/i.test(cleaned)) {
+      return cleaned;
     }
 
-    const paragraphs = text.split(/\n\s*\n/);
-    return paragraphs
-      .map(p => {
-        const trimmed = p.trim();
-        if (!trimmed) return '';
-        if (trimmed.toLowerCase().includes('episode recap') || trimmed.toLowerCase().includes('recap')) {
-          const cleanRecap = trimmed.replace(/^[#*-\s]+/g, '');
-          return `<h3 class="text-base font-bold mt-4 mb-2"><strong>${cleanRecap}</strong></h3>`;
+    const lines = cleaned.split('\n');
+    let html = '';
+    let inList = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) {
+        if (inList) {
+          html += '</ul>';
+          inList = false;
         }
-        if (trimmed.startsWith('# ')) return `<h1 class="text-xl font-bold mt-4 mb-2">${trimmed.replace(/^#\s*/, '')}</h1>`;
-        if (trimmed.startsWith('## ')) return `<h2 class="text-lg font-bold mt-3 mb-2">${trimmed.replace(/^##\s*/, '')}</h2>`;
-        if (trimmed.startsWith('### ')) return `<h3 class="text-base font-bold mt-3 mb-1">${trimmed.replace(/^###\s*/, '')}</h3>`;
-        return `<p class="mb-3 leading-relaxed">${trimmed.replace(/\n/g, '<br/>')}</p>`;
-      })
-      .join('');
+        continue;
+      }
+
+      if (line.startsWith('# ')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h1 class="text-xl font-bold mt-4 mb-2"><strong>${cleanMarkdownTitle(line)}</strong></h1>`;
+      } else if (line.startsWith('## ')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h2 class="text-lg font-bold mt-3 mb-2"><strong>${cleanMarkdownTitle(line)}</strong></h2>`;
+      } else if (line.startsWith('### ')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h3 class="text-base font-bold text-foreground mt-4 mb-2"><strong>${cleanMarkdownTitle(line)}</strong></h3>`;
+      } else if (line.startsWith('• ') || line.startsWith('- ') || line.startsWith('* ')) {
+        if (!inList) {
+          html += '<ul class="list-disc ml-5 space-y-1 mb-3">';
+          inList = true;
+        }
+        let listContent = line.replace(/^[•\-\*]\s*/, '').trim();
+        listContent = listContent
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/<u>(.*?)<\/u>/gi, '<u>$1</u>')
+          .replace(/\*(.*?)\*/g, '<em>$1</em>');
+        html += `<li>${listContent}</li>`;
+      } else if (line.toLowerCase().includes('episode recap') || line.toLowerCase().includes('recap')) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<h3 class="text-base font-bold text-foreground mt-4 mb-2"><strong>${cleanMarkdownTitle(line)}</strong></h3>`;
+      } else {
+        if (inList) { html += '</ul>'; inList = false; }
+        let paragraphContent = line
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/<u>(.*?)<\/u>/gi, '<u>$1</u>')
+          .replace(/\*(.*?)\*/g, '<em>$1</em>');
+        html += `<p class="mb-3 leading-relaxed">${paragraphContent}</p>`;
+      }
+    }
+
+    if (inList) {
+      html += '</ul>';
+    }
+
+    return html;
   }
 
   async function handleSaveChanges() {
@@ -183,20 +236,32 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
       if (!res.ok) throw new Error('Failed to process AI chat');
       const json = await res.json();
       if (json.result) {
-        let summaryText = json.result;
-        let fullStoryText = json.result;
+        let summaryText = '';
+        let fullStoryText = '';
 
+        let parsed: any = null;
         try {
-          const parsed = typeof json.result === 'string' && json.result.trim().startsWith('{')
-            ? JSON.parse(json.result)
-            : (typeof json.result === 'object' ? json.result : null);
-
-          if (parsed && parsed.summary && parsed.fullStory) {
-            summaryText = parsed.summary;
-            fullStoryText = parsed.fullStory;
+          if (typeof json.result === 'object' && json.result !== null) {
+            parsed = json.result;
+          } else if (typeof json.result === 'string') {
+            const match = json.result.match(/\{[\s\S]*\}/);
+            if (match) {
+              parsed = JSON.parse(match[0]);
+            }
           }
         } catch (e) {
-          // Plain text fallback
+          console.warn("Failed to extract JSON in chat submit:", e);
+        }
+
+        if (parsed && (parsed.fullStory || parsed.summary)) {
+          summaryText = parsed.summary || '**Updates Made:**\n• Story updated according to your request.';
+          fullStoryText = parsed.fullStory || parsed.summary;
+        } else {
+          summaryText = '**Updates Made:**\n• Revised story based on your request.';
+          let raw = typeof json.result === 'string' ? json.result : JSON.stringify(json.result);
+          // Strip any residual raw JSON wrapper keys if present
+          raw = raw.replace(/^\{[\s\S]*?"fullStory"\s*:\s*"/i, '').replace(/"\s*\}\s*$/i, '');
+          fullStoryText = raw;
         }
 
         const formattedSummary = formatTextToHtml(summaryText);
