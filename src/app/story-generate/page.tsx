@@ -20,7 +20,6 @@ import {
   Layers, 
   History, 
   BookMarked,
-  ArrowLeft,
   Clock,
   Plus,
   ArrowRight,
@@ -206,16 +205,6 @@ FORMATTING REQUIREMENTS:
               : "Explore all generated bedtime stories or create a new story for Tilli & Jaksh."
           }
         />
-        {viewMode === 'form' && (
-          <button
-            type="button"
-            onClick={() => setViewMode('list')}
-            className={secondaryButtonClass}
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Stories
-          </button>
-        )}
       </div>
 
       {error && (
