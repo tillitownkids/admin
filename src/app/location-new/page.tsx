@@ -165,7 +165,7 @@ export default function LocationNewPage() {
                 onChange={(e) => handleStorySelect(e.target.value)}
                 className={selectFieldClass}
               >
-                <option value="">-- Choose a fetched story from database --</option>
+                <option value="">Choose a fetched story from database</option>
                 {stories.map((story) => (
                   <option key={story.id} value={story.id}>
                     {story.topic || story.concept?.slice(0, 40) || "Untitled Story"}
