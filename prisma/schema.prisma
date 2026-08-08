@@ -14,11 +14,11 @@ model Story {
   storyOverview   String   @default("")
   teachLesson     String   @default("")
   episode_number  String
-  generation_type String   @default("new") // e.g., "new", "continue"
-  mode            String   @default("single") // "single", "multi"
+  generation_type String   @default("new")
+  mode            String   @default("single")
   content         String
   generated_at    DateTime @default(now())
-  status          String   // "pending", "success", "failed"
+  status          String
   scripts         Script[]
 }
 
@@ -26,11 +26,11 @@ model Script {
   id              String   @id @default(uuid())
   topic           String   @default("")
   episode_number  String
-  generation_type String   @default("new") // e.g., "new", "continue"
-  mode            String   @default("single") // "single", "multi"
+  generation_type String   @default("new")
+  mode            String   @default("single")
   content         String   @default("{}")
   generated_at    DateTime @default(now())
-  status          String   // "pending", "success", "failed"
+  status          String
   storyId         String?
   story           Story?   @relation(fields: [storyId], references: [id])
 }
