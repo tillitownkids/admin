@@ -1,27 +1,26 @@
 "use server"
 
-import { client } from "@/services/aiService";
-import {  ConverseCommand } from "@aws-sdk/client-bedrock-runtime"
+import Anthropic from "@anthropic-ai/sdk"
 
 
-export async function callAi(prompt:string,maxTokens: number = 2000){
+const Client = new Anthropic({apiKey : process.env.CLAUDE_API_KEY})
 
-    const command = new ConverseCommand({
-        modelId: process.env.BEDROCK_MODEL_ID!,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                text: prompt,
-              },
-            ],
-          },
-        ],
+export async function callAi(prompt:string,maxTokens: number = 5000){
 
-    });
-      
-    const response = await client.send(command);
+  const message = await Client.messages.create({
+    model: "claude-sonnet-4-5-20250929",
+    max_tokens: maxTokens,
+    messages: [
+      {
+        role: "user",
+        content: prompt
+      }
+    ]
+  });
 
-    return response.output?.message?.content?.[0]
+  const textBlock = message.content.find(
+    (block) => block.type === "text"
+  );
+
+  return { text: textBlock?.text ?? "" };
 }

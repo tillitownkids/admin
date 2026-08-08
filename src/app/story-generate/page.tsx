@@ -164,15 +164,16 @@ FORMATTING REQUIREMENTS:
 
     try {
       const response = await callAi(prompt);
-      if (response?.text) {
-        // Save story to Supabase
+      const storyText = typeof response === "string" ? response : response?.text;
+      if (storyText) {
+        
         const saveRes = await saveGeneratedStoryAction({
           concept: data.Concept,
           overview: data.Overview,
           lesson: data.Lesson,
           duration: duration,
           generationType: generationType,
-          contentHtml: response.text,
+          contentHtml: storyText,
           topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
         });
 
