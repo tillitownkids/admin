@@ -13,7 +13,8 @@ import {
   MapPin, 
   Loader2, 
   ExternalLink,
-  Sparkles 
+  Sparkles,
+  ArrowRight 
 } from "lucide-react";
 import { ScriptEditor } from "@/components/script/ScriptEditor";
 import { ScriptContent } from "@/types/script";
@@ -21,7 +22,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { GlassPanel } from "@/components/GlassPanel";
 import { labelClass, selectFieldClass, primaryButtonClass } from "@/lib/styles";
 import { getStoriesAction, getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
+import { saveGeneratedScriptAction } from "@/actions/saveScriptAction";
+import { callAi } from "@/actions/actions";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 export interface ScriptHistory {
   id: string;
@@ -105,6 +109,8 @@ function formatTextToHtml(text: string): string {
 }
 
 export default function ScriptGeneratePage() {
+  const router = useRouter();
+
   const [viewMode, setViewMode] = useState<'create' | 'history' | 'edit'>('history');
   const [stories, setStories] = useState<any[]>([]);
   const [selectedStoryId, setSelectedStoryId] = useState<string>('');
@@ -113,6 +119,7 @@ export default function ScriptGeneratePage() {
   const [storyLocations, setStoryLocations] = useState<any[]>([]);
   const [isFetchingStories, setIsFetchingStories] = useState<boolean>(true);
   const [isDetailsLoading, setIsDetailsLoading] = useState<boolean>(false);
+  const [isGeneratingScript, setIsGeneratingScript] = useState<boolean>(false);
   const [history, setHistory] = useState<ScriptHistory[]>([]);
   const [scriptContent, setScriptContent] = useState<ScriptContent>({ recap: '', scenes: [] });
   const [error, setError] = useState<string | null>(null);
@@ -184,14 +191,208 @@ export default function ScriptGeneratePage() {
     }
   };
 
-  const loadHistoryRecord = (record: ScriptHistory) => {
-    try {
-      const parsed = typeof record.content === 'string' ? JSON.parse(record.content) : record.content;
-      setScriptContent(parsed || { recap: record.topic || '', scenes: [] });
-    } catch {
-      setScriptContent({ recap: record.topic || '', scenes: [] });
+  const handleGenerateScript = async () => {
+    if (!selectedStory) {
+      setError("Please select a story from the database before generating a script.");
+      setTimeout(() => setError(null), 5000);
+      return;
     }
-    setViewMode('edit');
+
+    setIsGeneratingScript(true);
+    setError(null);
+
+    const storyContentText = selectedStory.content || selectedStory.overview || selectedStory.concept || '';
+
+    const prompt = `You are a professional storyboard and animation script writer for a children's animated series.
+
+Your task is to convert the provided narrative story into a structured beat script for an animation/storyboard pipeline.
+
+STORY:
+${storyContentText}
+
+---
+
+## OUTPUT FORMAT
+
+Break the story into sequential beats.
+
+For every beat, use exactly this structure:
+
+### BEAT N — [Short descriptive beat title]
+
+[LOCATION HEADER]
+
+**[ACTION]** What happens in this beat.
+
+**[DIALOGUE]** Spoken dialogue, if any. If there is no dialogue, omit this tag.
+
+**[CAMERA]** Describe the camera shot, framing, movement, and angle.
+
+**[MOTION]** Describe the important physical movements or visual changes that occur during the beat.
+
+**[SFX]** Describe relevant sound effects.
+
+---
+
+## LOCATION HEADER FORMAT
+
+Every beat must begin with a location header:
+
+EXT/INT — LOCATION — TIME OF DAY — brief environmental description
+
+Use:
+- EXT for exterior/outdoor scenes.
+- INT for interior/indoor scenes.
+
+Examples:
+EXT — DUBAI CREEK — GOLDEN HOUR — Boats move gently across the water as the city glows in the setting sun.
+
+INT — OLD HOUSE — EVENING — Warm lantern light fills the room.
+
+---
+
+## BEAT RULES
+
+1. ONE BEAT = ONE PHYSICAL IDEA.
+
+A beat should represent one clear physical action or state change.
+
+If a moment contains multiple meaningful physical changes, split it into separate beats.
+
+Bad:
+"Jaksh runs to the window, looks outside, sees the desert, and calls Tilli."
+
+Better:
+- Beat 1: Jaksh runs to the window.
+- Beat 2: Jaksh looks through the window and sees the desert.
+- Beat 3: Jaksh calls Tilli.
+
+2. Preserve the original story.
+
+Do not change the plot, character motivations, lesson, setting, or ending.
+
+Do not invent new events that are not supported by the story.
+
+3. Preserve dialogue.
+
+Keep important dialogue from the original story as closely as possible.
+
+Do not unnecessarily rewrite dialogue.
+
+4. Make every beat visually actionable.
+
+The beat should describe things that can actually be shown or animated.
+
+Avoid abstract descriptions unless they can be represented visually.
+
+5. ACTION describes WHAT happens.
+
+Do not put camera directions, sound effects, or animation instructions inside ACTION.
+
+6. CAMERA describes HOW the scene is filmed.
+
+Include useful information such as:
+- wide shot
+- close-up
+- medium shot
+- over-the-shoulder
+- tracking shot
+- crane shot
+- pan
+- tilt
+- push-in
+- pull-back
+- orbit
+- low angle
+- high angle
+
+Do not use unnecessary camera movements. Choose the camera direction that best communicates the beat.
+
+7. MOTION describes PHYSICAL MOVEMENT.
+
+Describe character movement, environmental movement, transformations, or important visual changes.
+
+Do not repeat the ACTION word-for-word.
+
+8. SFX describes SOUND EFFECTS only.
+
+Do not describe music unless specifically required by the story.
+
+9. Maintain character consistency.
+
+Use the exact character names from the story.
+
+Do not introduce new characters unless they already exist in the story.
+
+10. Maintain environmental continuity.
+
+If the story moves from one location to another, make the transition logical.
+
+Keep the time of day and environment consistent between consecutive beats unless the story explicitly changes them.
+
+11. Keep beats concise.
+
+Each beat should contain enough detail for a storyboard or video-generation system, but should not become a paragraph of prose.
+
+12. Do not add explanations outside the beat script.
+
+Return ONLY the completed beat script.
+
+---
+
+## IMPORTANT
+
+The output will be used by a downstream storyboard/image/video generation system.
+
+Therefore:
+- Be visually specific.
+- Keep each beat independently understandable.
+- Avoid vague phrases such as "something magical happens."
+- Describe what the characters and environment actually do.
+- Do not combine multiple physical actions into one beat.
+- Do not omit important visual events from the original story.
+
+Now convert the provided story into the beat script format.`;
+
+    try {
+      const response = await callAi(prompt);
+      const generatedScriptText = typeof response === "string" ? response : response?.text;
+
+      if (!generatedScriptText) {
+        throw new Error("No script content was returned from AI.");
+      }
+
+      const saveRes = await saveGeneratedScriptAction({
+        topic: selectedStory.topic || selectedStory.concept || "Beat Script",
+        generationType: selectedStory.generation_type || "new",
+        contentHtml: generatedScriptText
+      });
+
+      if (saveRes.success && saveRes.data?.id) {
+        router.push(`/script-generate/${saveRes.data.id}`);
+      } else {
+        setError(saveRes.error || "Failed to save generated script to database.");
+      }
+    } catch (err: any) {
+      console.error("Error generating script:", err);
+      setError(err?.message || "An error occurred while generating the script.");
+    } finally {
+      setIsGeneratingScript(false);
+    }
+  };
+
+  const loadHistoryRecord = (record: ScriptHistory) => {
+    if (record.id) {
+      router.push(`/script-generate/${record.id}`);
+    } else {
+      try {
+        const parsed = typeof record.content === 'string' ? JSON.parse(record.content) : record.content;
+        setScriptContent(parsed || { recap: record.topic || '', scenes: [] });
+      } catch {
+        setScriptContent({ recap: record.topic || '', scenes: [] });
+      }
+      setViewMode('edit');
+    }
   };
 
   return (
@@ -216,11 +417,21 @@ export default function ScriptGeneratePage() {
             <div className="flex w-full sm:w-auto items-center justify-end gap-3">
               <button
                 type="button"
-                onClick={() => console.log("Generate Script clicked (temporary)")}
+                onClick={handleGenerateScript}
+                disabled={isGeneratingScript || !selectedStory}
                 className={primaryButtonClass}
               >
-                <Sparkles className="w-4 h-4" />
-                Generate Script
+                {isGeneratingScript ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-primary-foreground" />
+                    Generating Script...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-emerald-500" />
+                    Generate Script
+                  </>
+                )}
               </button>
             </div>
           }
@@ -237,7 +448,7 @@ export default function ScriptGeneratePage() {
                   value={selectedStoryId}
                   onChange={(e) => handleStorySelect(e.target.value)}
                   className={selectFieldClass}
-                  disabled={isFetchingStories}
+                  disabled={isFetchingStories || isGeneratingScript}
                 >
                   <option value="">
                     {isFetchingStories ? "Loading stories from database..." : "Select a Story from Database"}
@@ -438,8 +649,8 @@ export default function ScriptGeneratePage() {
               <h3 className="text-xl font-bold text-foreground mb-3 line-clamp-3">
                 {record.topic || "Untitled Script"}
               </h3>
-              <div className="mt-auto pt-4 border-t border-border/50 text-sm font-medium text-primary">
-                Open in Editor &rarr;
+              <div className="mt-auto pt-4 border-t border-border/50 text-sm font-medium text-primary flex items-center gap-1.5 group-hover:translate-x-0.5 transition-transform">
+                Open in Editor <ArrowRight className="w-3.5 h-3.5" />
               </div>
             </div>
           ))}
