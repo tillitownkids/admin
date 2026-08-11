@@ -441,7 +441,7 @@ Now convert the provided story into the beat script format.`;
             <div className="space-y-3">
               <label className={labelClass}>
                 <BookOpen className="w-4 h-4 text-primary" />
-                Select Story from Database
+                Story
               </label>
               <div className="relative">
                 <select
