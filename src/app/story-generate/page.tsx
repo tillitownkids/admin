@@ -103,14 +103,12 @@ export default function StoryPage() {
         const locData = await locationsRes.json();
         const locs = locData.locations || [];
         setLocations(locs);
-        console.log("Fetched Locations:", locs);
       }
 
       if (charactersRes.ok) {
         const charData = await charactersRes.json();
         const chars = charData.characters || [];
         setCharacters(chars);
-        console.log("Fetched Characters:", chars);
       }
     } catch (err) {
       console.error("Error fetching locations and characters:", err);
@@ -279,9 +277,6 @@ export default function StoryPage() {
 
     setIsLoading(true);
     setError(null);
-
-    console.log("Generating story with locations:", locations);
-    console.log("Generating story with characters:", characters);
 
     const selectedPreviousStory = stories.find((s) => s.id === previousEpisodeId);
     const contextToUse = previousContext.trim() || (selectedPreviousStory?.content ? selectedPreviousStory.content.replace(/<[^>]+>/g, ' ').slice(0, 600) : "");

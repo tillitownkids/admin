@@ -85,18 +85,14 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
           if (detailsRes.success) {
             setStoryCharacters(detailsRes.characters || []);
             setStoryLocations(detailsRes.locations || []);
-            console.log("Fetched Story Characters for Episode:", detailsRes.characters);
-            console.log("Fetched Story Locations for Episode:", detailsRes.locations);
           }
 
           if (locRes.ok) {
             const locData = await locRes.json();
-            console.log("Fetched Global Locations:", locData.locations);
           }
 
           if (charRes.ok) {
             const charData = await charRes.json();
-            console.log("Fetched Global Characters:", charData.characters);
           }
         } catch (err) {
           console.error("Error loading story characters/locations:", err);
