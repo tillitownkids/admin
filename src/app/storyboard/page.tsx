@@ -391,7 +391,7 @@ ${prompt}`;
               disabled={!selectedScript}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Select a script to load its prompt..."
-              className="min-h-[380px] w-full resize-y rounded-xl border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary font-mono text-xs leading-relaxed"
+              className="min-h-[380px] w-full resize-y rounded-xl border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary font-sans leading-relaxed"
             />
           </div>
 
@@ -504,7 +504,7 @@ ${prompt}`;
                       </button>
                     </div>
 
-                    <div className="bg-background border border-input rounded-xl p-4 text-xs font-mono leading-relaxed text-foreground whitespace-pre-wrap select-all">
+                    <div className="bg-background border border-input rounded-xl p-4 text-sm font-sans leading-relaxed text-foreground whitespace-pre-wrap select-all">
                       {scene.storyboard_prompt}
                     </div>
                   </div>
