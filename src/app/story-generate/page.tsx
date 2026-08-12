@@ -24,7 +24,9 @@ import {
   Plus,
   ArrowRight,
   Clapperboard,
-  LayoutTemplate
+  LayoutTemplate,
+  MapPin,
+  Check
 } from "lucide-react";
 
 interface ScriptInput {
@@ -45,6 +47,13 @@ interface StoryRecord {
   episode_number?: string;
   generated_at?: string;
   status?: string;
+}
+
+interface PendingLocation {
+  name: string;
+  description: string;
+  added?: boolean;
+  rejected?: boolean;
 }
 
 export default function StoryPage() {
@@ -68,9 +77,47 @@ export default function StoryPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [locations, setLocations] = useState<any[]>([]);
+  const [characters, setCharacters] = useState<any[]>([]);
+  const [isFetchingDetails, setIsFetchingDetails] = useState<boolean>(false);
+
+  const [pendingLocations, setPendingLocations] = useState<PendingLocation[]>([]);
+  const [pendingStoryText, setPendingStoryText] = useState<string>('');
+  const [showLocationModal, setShowLocationModal] = useState<boolean>(false);
+  const [isSavingLocation, setIsSavingLocation] = useState<string | null>(null);
+
   useEffect(() => {
     loadStories();
+    loadLocationsAndCharacters();
   }, []);
+
+  async function loadLocationsAndCharacters() {
+    setIsFetchingDetails(true);
+    try {
+      const [locationsRes, charactersRes] = await Promise.all([
+        fetch('/api/locations'),
+        fetch('/api/characters'),
+      ]);
+
+      if (locationsRes.ok) {
+        const locData = await locationsRes.json();
+        const locs = locData.locations || [];
+        setLocations(locs);
+        console.log("Fetched Locations:", locs);
+      }
+
+      if (charactersRes.ok) {
+        const charData = await charactersRes.json();
+        const chars = charData.characters || [];
+        setCharacters(chars);
+        console.log("Fetched Characters:", chars);
+      }
+    } catch (err) {
+      console.error("Error fetching locations and characters:", err);
+    } finally {
+      setIsFetchingDetails(false);
+    }
+  }
 
   async function loadStories() {
     setIsFetchingStories(true);
@@ -108,6 +155,97 @@ export default function StoryPage() {
     }
   }
 
+  const [isAcceptingAll, setIsAcceptingAll] = useState<boolean>(false);
+
+  async function handleAddLocationToDb(loc: PendingLocation, index: number) {
+    setIsSavingLocation(loc.name);
+    try {
+      const res = await fetch('/api/locations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: loc.name, description: loc.description || '' }),
+      });
+
+      if (res.ok) {
+        const resData = await res.json();
+        const createdLoc = resData.location || { name: loc.name, description: loc.description };
+        setLocations((prev) => [...prev, createdLoc]);
+        setPendingLocations((prev) =>
+          prev.map((item, idx) => (idx === index ? { ...item, added: true, rejected: false } : item))
+        );
+      }
+    } catch (err) {
+      console.error("Error adding location:", err);
+    } finally {
+      setIsSavingLocation(null);
+    }
+  }
+
+  function handleRejectLocation(index: number) {
+    setPendingLocations((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, rejected: true, added: false } : item))
+    );
+  }
+
+  async function handleAcceptAllLocations() {
+    setIsAcceptingAll(true);
+    try {
+      const unaddedLocations = pendingLocations.filter((l) => !l.added && !l.rejected);
+      
+      await Promise.all(
+        unaddedLocations.map(async (loc) => {
+          try {
+            const res = await fetch('/api/locations', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: loc.name, description: loc.description || '' }),
+            });
+            if (res.ok) {
+              const resData = await res.json();
+              const createdLoc = resData.location || { name: loc.name, description: loc.description };
+              setLocations((prev) => [...prev, createdLoc]);
+            }
+          } catch (e) {
+            console.error("Failed to add location:", loc.name, e);
+          }
+        })
+      );
+
+      setPendingLocations((prev) => prev.map((item) => ({ ...item, added: true, rejected: false })));
+      await finalizeSaveStory(pendingStoryText);
+    } catch (err) {
+      console.error("Error accepting all locations:", err);
+    } finally {
+      setIsAcceptingAll(false);
+    }
+  }
+
+  async function finalizeSaveStory(storyContent: string, targetRedirect?: string) {
+    setIsLoading(true);
+    try {
+      const saveRes = await saveGeneratedStoryAction({
+        concept: data.Concept,
+        overview: data.Overview,
+        lesson: data.Lesson,
+        duration: duration,
+        generationType: generationType,
+        contentHtml: storyContent,
+        topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
+      });
+
+      if (saveRes.success && saveRes.data?.id) {
+        setShowLocationModal(false);
+        router.push(targetRedirect || `/story-generate/${saveRes.data.id}`);
+      } else {
+        setError(saveRes.error || "Failed to save generated story to database.");
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to save story.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -120,6 +258,9 @@ export default function StoryPage() {
     setIsLoading(true);
     setError(null);
 
+    console.log("Generating story with locations:", locations);
+    console.log("Generating story with characters:", characters);
+
     const selectedPreviousStory = stories.find((s) => s.id === previousEpisodeId);
     const contextToUse = previousContext.trim() || (selectedPreviousStory?.content ? selectedPreviousStory.content.replace(/<[^>]+>/g, ' ').slice(0, 600) : "");
 
@@ -128,11 +269,31 @@ export default function StoryPage() {
 ${contextToUse ? `- Previous Episode Summary / Context: ${contextToUse}` : ''}`
       : `\n- Generation Mode: New Story (Standalone story episode)`;
 
+    const charactersListStr = characters.length > 0
+      ? characters.map((c: any) => `- Name: ${c.name}${c.description ? ` (${c.description})` : ''}`).join('\n')
+      : 'None in database';
+
+    const locationsListStr = locations.length > 0
+      ? locations.map((l: any) => `- Name: ${l.name}${l.description ? ` (${l.description})` : ''}`).join('\n')
+      : 'None in database';
+
     const prompt = `
 You are a creative director and storyteller for the children's animated show "Tilli & Jaksh."
 
 Generation Mode Details: ${continuationHeader}
 Target Story Duration: ${duration || '2-3 minutes'}
+
+CHARACTERS RULE (STRICT CRITICAL):
+- You MUST strictly use ONLY the characters present in the database listed below.
+- Do NOT introduce, create, or invent any new characters under any circumstances.
+- Available Database Characters:
+${charactersListStr}
+
+LOCATIONS RULE:
+- Prefer using the existing locations present in the database listed below whenever possible.
+- If a new setting/location is necessary for the plot, describe it in the story and list it in the locationsUsed output array.
+- Available Database Locations:
+${locationsListStr}
 
 Given Inputs:
 - Story Concept: ${data.Concept}
@@ -140,55 +301,77 @@ Given Inputs:
 - Lesson to be Taught: ${data.Lesson}
 - Time Duration Target: ${duration || '2-3 minutes'}
 
-Write the complete story for this episode as a warm, flowing bedtime-style narrative suitable for 5-year-olds.
+STORY FORMATTING RULES (STRICT & MANDATORY):
+- Write a single, continuous, warm bedtime narrative story.
+- Do NOT divide or split the story into "Part 1", "Part 2", "Part 3", chapters, or sub-sections.
+- Do NOT use horizontal divider lines ("---") inside the story text.
+- Do NOT include screenplay directions, camera cues, or dialogue lists.
+- Write in clean, flowing narrative paragraphs with natural character dialogue.
 
 Requirements:
 - Build the story around the provided concept and overview while naturally conveying the given lesson.
 - Keep the narrative length and pacing aligned with the target duration (${duration || '2-3 minutes'}).
 ${generationType === 'continue' ? '- Maintain plot and character continuity from the previous episode events.' : '- Create a clear, engaging standalone story.'}
-- Stay fully consistent with the attached story bible, including all locked character designs, personalities, locations, and world rules.
-- Reuse existing characters and locations whenever possible. If something new is required, introduce it clearly and naturally so it fits the world.
-- Include natural dialogue for every character involved, matching each character's established personality and speaking style.
+- Use ONLY characters from the database list above.
+- Include natural dialogue for every character involved.
 - Give the story a clear beginning, middle, and satisfying ending.
-- Let the lesson emerge naturally through the characters' actions and experiences rather than stating it directly.
-- Do NOT include camera directions, production notes, scene headings, or screenplay formatting. Write only the narrative story.
+- Let the lesson emerge naturally through the characters' actions and experiences.
 
-FORMATTING REQUIREMENTS:
-- Start the story with a clear heading:
-  # **[Story Title]**
+OUTPUT FORMAT:
+Return ONLY valid JSON matching this exact structure:
 
-- At the very end of the generated output, you MUST include a dedicated recap section structured as:
-
-### **Episode Recap**
-**Summary:** [A clear 1-paragraph summary recap of this episode summarizing the key events and outcome so it can be used to prepare the next episode.]`;
+{
+  "story": "# **[Story Title]**\\n\\n[Single continuous bedtime narrative story in paragraphs without Part headings or --- dividers]\\n\\n### **Episode Recap**\\n**Summary:** [1-paragraph summary recap of this episode]",
+  "locationsUsed": [
+    {
+      "name": "Location Name",
+      "description": "Short description of the location setting"
+    }
+  ]
+}`;
 
     try {
       const response = await callAi(prompt);
-      const storyText = typeof response === "string" ? response : response?.text;
-      if (storyText) {
-        
-        const saveRes = await saveGeneratedStoryAction({
-          concept: data.Concept,
-          overview: data.Overview,
-          lesson: data.Lesson,
-          duration: duration,
-          generationType: generationType,
-          contentHtml: storyText,
-          topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
-        });
+      const rawText = typeof response === "string" ? response : response?.text || "";
 
-        if (saveRes.success && saveRes.data?.id) {
-          router.push(`/story-generate/${saveRes.data.id}`);
+      if (!rawText) {
+        throw new Error("No response text returned from AI.");
+      }
+
+      let storyText = "";
+      let locationsUsed: { name: string; description: string }[] = [];
+
+      try {
+        const cleanedJson = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        const parsed = JSON.parse(cleanedJson);
+        if (parsed.story) {
+          storyText = parsed.story;
         } else {
-          setError(saveRes.error || "Failed to save generated story to database.");
+          storyText = rawText;
         }
+        if (Array.isArray(parsed.locationsUsed)) {
+          locationsUsed = parsed.locationsUsed;
+        }
+      } catch {
+        storyText = rawText;
+      }
+
+      const existingLocNames = new Set(locations.map((l: any) => l.name.toLowerCase().trim()));
+      const detectedNewLocs = locationsUsed.filter(
+        (loc) => loc.name && !existingLocNames.has(loc.name.toLowerCase().trim())
+      );
+
+      if (detectedNewLocs.length > 0) {
+        setPendingLocations(detectedNewLocs.map((l) => ({ name: l.name, description: l.description })));
+        setPendingStoryText(storyText);
+        setShowLocationModal(true);
+        setIsLoading(false);
       } else {
-        setError("No response text returned from AI.");
+        await finalizeSaveStory(storyText);
       }
     } catch (err: any) {
       console.error("Error generating story:", err);
       setError(err?.message || "An error occurred while generating the story.");
-    } finally {
       setIsLoading(false);
     }
   }
@@ -490,6 +673,123 @@ FORMATTING REQUIREMENTS:
             </div>
           </form>
         </GlassPanel>
+      )}
+
+      {/* New Location Modal Dialog */}
+      {showLocationModal && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="max-w-lg w-full bg-card border border-border rounded-2xl p-6 shadow-2xl space-y-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
+                  <MapPin className="w-5 h-5 text-primary" />
+                  New Location Detected
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  The generated story introduced new location(s) not currently in your database. Would you like to add them to your location library?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLocationModal(false)}
+                className="text-muted-foreground hover:text-foreground p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+              {pendingLocations.map((loc, idx) => (
+                <div
+                  key={idx}
+                  className="p-4 rounded-xl border border-border bg-muted/30 space-y-3"
+                >
+                  <div>
+                    <h4 className="font-bold text-foreground text-sm">{loc.name}</h4>
+                    {loc.description && (
+                      <p className="text-xs text-muted-foreground mt-0.5">{loc.description}</p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {loc.added ? (
+                      <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1">
+                        <Check className="w-4 h-4" /> Added to Database
+                      </span>
+                    ) : loc.rejected ? (
+                      <span className="text-xs text-muted-foreground font-medium italic">
+                        Rejected (Will not be saved)
+                      </span>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          disabled={isSavingLocation === loc.name}
+                          onClick={() => handleAddLocationToDb(loc, idx)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
+                        >
+                          {isSavingLocation === loc.name ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Plus className="w-3.5 h-3.5" />
+                          )}
+                          Add Location
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectLocation(idx)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground text-xs font-medium transition cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={handleAcceptAllLocations}
+                disabled={isLoading || isAcceptingAll}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition disabled:opacity-50 cursor-pointer"
+              >
+                {isAcceptingAll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Accepting All...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Accept All
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => finalizeSaveStory(pendingStoryText)}
+                disabled={isLoading || isAcceptingAll}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving Story...
+                  </>
+                ) : (
+                  <>
+                    <span>Continue to Story</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
