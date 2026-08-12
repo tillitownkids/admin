@@ -20,7 +20,6 @@ import {
   Layers, 
   History, 
   BookMarked,
-  ArrowLeft,
   Clock,
   Plus,
   ArrowRight,
@@ -165,15 +164,16 @@ FORMATTING REQUIREMENTS:
 
     try {
       const response = await callAi(prompt);
-      if (response?.text) {
-        // Save story to Supabase
+      const storyText = typeof response === "string" ? response : response?.text;
+      if (storyText) {
+        
         const saveRes = await saveGeneratedStoryAction({
           concept: data.Concept,
           overview: data.Overview,
           lesson: data.Lesson,
           duration: duration,
           generationType: generationType,
-          contentHtml: response.text,
+          contentHtml: storyText,
           topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
         });
 
@@ -206,16 +206,6 @@ FORMATTING REQUIREMENTS:
               : "Explore all generated bedtime stories or create a new story for Tilli & Jaksh."
           }
         />
-        {viewMode === 'form' && (
-          <button
-            type="button"
-            onClick={() => setViewMode('list')}
-            className={secondaryButtonClass}
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Stories
-          </button>
-        )}
       </div>
 
       {error && (

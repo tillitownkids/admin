@@ -25,7 +25,8 @@ export class BedrockService {
     
     if (anthropicKey) {
       const models = [
-        'claude-3-5-sonnet-20241022'
+        'claude-3-5-sonnet-20241022',
+        'claude-sonnet-4-5-20250929'
       ];
       
       for (const model of models) {

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { DashboardSettings } from "@/components/DashboardSettings";
 import { PageHeader } from "@/components/PageHeader";
 
-export default function Home() {
+export default function Home() {  
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
       <PageHeader
