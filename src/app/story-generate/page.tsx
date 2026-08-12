@@ -156,6 +156,8 @@ export default function StoryPage() {
   }
 
   const [isAcceptingAll, setIsAcceptingAll] = useState<boolean>(false);
+  const [activeCharacterIds, setActiveCharacterIds] = useState<string[]>([]);
+  const [activeLocationIds, setActiveLocationIds] = useState<string[]>([]);
 
   async function handleAddLocationToDb(loc: PendingLocation, index: number) {
     setIsSavingLocation(loc.name);
@@ -170,6 +172,9 @@ export default function StoryPage() {
         const resData = await res.json();
         const createdLoc = resData.location || { name: loc.name, description: loc.description };
         setLocations((prev) => [...prev, createdLoc]);
+        if (createdLoc.id) {
+          setActiveLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
+        }
         setPendingLocations((prev) =>
           prev.map((item, idx) => (idx === index ? { ...item, added: true, rejected: false } : item))
         );
@@ -191,7 +196,8 @@ export default function StoryPage() {
     setIsAcceptingAll(true);
     try {
       const unaddedLocations = pendingLocations.filter((l) => !l.added && !l.rejected);
-      
+      const newLocIds: string[] = [];
+
       await Promise.all(
         unaddedLocations.map(async (loc) => {
           try {
@@ -204,6 +210,9 @@ export default function StoryPage() {
               const resData = await res.json();
               const createdLoc = resData.location || { name: loc.name, description: loc.description };
               setLocations((prev) => [...prev, createdLoc]);
+              if (createdLoc.id) {
+                newLocIds.push(createdLoc.id);
+              }
             }
           } catch (e) {
             console.error("Failed to add location:", loc.name, e);
@@ -211,8 +220,11 @@ export default function StoryPage() {
         })
       );
 
+      const allLocIds = Array.from(new Set([...activeLocationIds, ...newLocIds]));
+      setActiveLocationIds(allLocIds);
       setPendingLocations((prev) => prev.map((item) => ({ ...item, added: true, rejected: false })));
-      await finalizeSaveStory(pendingStoryText);
+
+      await finalizeSaveStory(pendingStoryText, undefined, activeCharacterIds, allLocIds);
     } catch (err) {
       console.error("Error accepting all locations:", err);
     } finally {
@@ -220,9 +232,17 @@ export default function StoryPage() {
     }
   }
 
-  async function finalizeSaveStory(storyContent: string, targetRedirect?: string) {
+  async function finalizeSaveStory(
+    storyContent: string, 
+    targetRedirect?: string,
+    overrideCharIds?: string[],
+    overrideLocIds?: string[]
+  ) {
     setIsLoading(true);
     try {
+      const charIdsToSave = overrideCharIds || activeCharacterIds;
+      const locIdsToSave = overrideLocIds || activeLocationIds;
+
       const saveRes = await saveGeneratedStoryAction({
         concept: data.Concept,
         overview: data.Overview,
@@ -230,7 +250,9 @@ export default function StoryPage() {
         duration: duration,
         generationType: generationType,
         contentHtml: storyContent,
-        topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story"
+        topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story",
+        characterIds: charIdsToSave,
+        locationIds: locIdsToSave,
       });
 
       if (saveRes.success && saveRes.data?.id) {
@@ -356,6 +378,29 @@ Return ONLY valid JSON matching this exact structure:
         storyText = rawText;
       }
 
+      // Collect all character IDs available in the DB
+      const charIds = characters.map((c: any) => c.id).filter(Boolean);
+      setActiveCharacterIds(charIds);
+
+      // Collect matched existing location IDs from DB
+      const existingLocMap = new Map<string, string>();
+      locations.forEach((l: any) => {
+        if (l.name && l.id) {
+          existingLocMap.set(l.name.toLowerCase().trim(), l.id);
+        }
+      });
+
+      const initialLocIds: string[] = [];
+      locationsUsed.forEach((loc) => {
+        if (loc.name) {
+          const matchedId = existingLocMap.get(loc.name.toLowerCase().trim());
+          if (matchedId) initialLocIds.push(matchedId);
+        }
+      });
+
+      const uniqueInitialLocIds = Array.from(new Set(initialLocIds));
+      setActiveLocationIds(uniqueInitialLocIds);
+
       const existingLocNames = new Set(locations.map((l: any) => l.name.toLowerCase().trim()));
       const detectedNewLocs = locationsUsed.filter(
         (loc) => loc.name && !existingLocNames.has(loc.name.toLowerCase().trim())
@@ -367,7 +412,7 @@ Return ONLY valid JSON matching this exact structure:
         setShowLocationModal(true);
         setIsLoading(false);
       } else {
-        await finalizeSaveStory(storyText);
+        await finalizeSaveStory(storyText, undefined, charIds, uniqueInitialLocIds);
       }
     } catch (err: any) {
       console.error("Error generating story:", err);
