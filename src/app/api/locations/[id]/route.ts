@@ -71,8 +71,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   try {
     const { id } = await params;
     try {
-      await prisma.location.delete({ where: { id } });
+      // 1. Delete associated EpisodeLocation entries first to satisfy foreign key constraint
+      await prisma.episodeLocation.deleteMany({
+        where: { location_id: id }
+      });
+      // 2. Delete the location
+      await prisma.location.delete({
+        where: { id }
+      });
     } catch {
+      // Supabase fallback
+      await supabase
+        .from('EpisodeLocation')
+        .delete()
+        .eq('location_id', id);
+
       const { error } = await supabase
         .from('Location')
         .delete()
