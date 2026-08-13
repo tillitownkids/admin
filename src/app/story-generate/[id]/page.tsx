@@ -1,7 +1,7 @@
 "use client";
 
 import { callAi } from "@/actions/actions";
-import { getStoryByIdAction, saveGeneratedStoryAction } from "@/actions/saveStoryAction";
+import { getStoryByIdAction, saveGeneratedStoryAction, getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
 import { PageHeader } from "@/components/PageHeader";
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/lib/styles";
@@ -44,6 +44,9 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
   const [userQuery, setUserQuery] = useState<string>('');
   const [isAiChatLoading, setIsAiChatLoading] = useState<boolean>(false);
 
+  const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
+  const [storyLocations, setStoryLocations] = useState<any[]>([]);
+
   const editorRef = useRef<any>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
@@ -54,7 +57,14 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
       const res = await getStoryByIdAction(id);
       if (res.success && res.story) {
         setStory(res.story);
-        const rawContent = res.story.content || '';
+        let rawContent = res.story.content || '';
+        try {
+          const parsed = typeof rawContent === "string" && (rawContent.trim().startsWith('{') || rawContent.trim().startsWith('[')) ? JSON.parse(rawContent) : null;
+          if (parsed && typeof parsed === "object") {
+            rawContent = parsed.story || parsed.text || parsed.content || rawContent;
+          }
+        } catch {}
+
         const formatted = formatTextToHtml(rawContent);
         setStoryHtml(formatted);
         
@@ -64,6 +74,29 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
             content: `Welcome to the Brainstorm Assistant! Use the editor on the left to revise your narrative story or ask me questions here to refine scenes, dialogue, and tone.` 
           }
         ]);
+
+        try {
+          const [detailsRes, locRes, charRes] = await Promise.all([
+            getStoryCharactersAndLocationsAction(id),
+            fetch('/api/locations'),
+            fetch('/api/characters')
+          ]);
+
+          if (detailsRes.success) {
+            setStoryCharacters(detailsRes.characters || []);
+            setStoryLocations(detailsRes.locations || []);
+          }
+
+          if (locRes.ok) {
+            const locData = await locRes.json();
+          }
+
+          if (charRes.ok) {
+            const charData = await charRes.json();
+          }
+        } catch (err) {
+          console.error("Error loading story characters/locations:", err);
+        }
 
         setTimeout(() => {
           if (editorRef.current) {
@@ -96,10 +129,30 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
     if (!text) return '';
 
     let cleaned = text.trim();
+
+    try {
+      if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
+        const parsed = JSON.parse(cleaned);
+        if (parsed && typeof parsed === 'object') {
+          cleaned = (parsed.story || parsed.text || parsed.content || cleaned).trim();
+        }
+      }
+    } catch {}
+
     if (cleaned.startsWith('```html')) cleaned = cleaned.slice(7);
+    else if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7);
     else if (cleaned.startsWith('```')) cleaned = cleaned.slice(3);
     if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
     cleaned = cleaned.trim();
+
+    try {
+      if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
+        const parsed = JSON.parse(cleaned);
+        if (parsed && typeof parsed === 'object') {
+          cleaned = (parsed.story || parsed.text || parsed.content || cleaned).trim();
+        }
+      }
+    } catch {}
 
     if (/^<(p|h1|h2|h3|div|ul|ol)\b/i.test(cleaned)) {
       return cleaned;

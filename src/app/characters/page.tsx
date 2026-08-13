@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Loader2, AlertCircle } from "lucide-react";
+import { Users, Loader2, AlertCircle, ExternalLink } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 
 interface Character {
@@ -81,20 +81,32 @@ export default function CharactersPage() {
           {characters.map((character) => (
             <div
               key={character.id}
-              className="flex flex-col rounded-2xl border border-border bg-card overflow-hidden min-h-[220px] shadow-sm"
+              className="flex flex-col rounded-2xl border border-border bg-card overflow-hidden min-h-[220px] shadow-sm hover:border-primary/40 transition-all"
             >
-              <div className="aspect-video w-full bg-muted flex items-center justify-center overflow-hidden">
-                {character.reference_image_url ? (
-                  
+              {character.reference_image_url ? (
+                <a
+                  href={character.reference_image_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="aspect-video w-full bg-muted flex items-center justify-center overflow-hidden relative group cursor-pointer"
+                  title="Click to view image in full screen"
+                >
                   <img
                     src={character.reference_image_url}
                     alt={character.name}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
-                ) : (
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-3">
+                    <span className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-lg flex items-center gap-2 group-hover:scale-105 transition-transform">
+                      <ExternalLink className="w-4 h-4" /> View Fullscreen
+                    </span>
+                  </div>
+                </a>
+              ) : (
+                <div className="aspect-video w-full bg-muted flex items-center justify-center">
                   <Users className="w-8 h-8 text-muted-foreground" />
-                )}
-              </div>
+                </div>
+              )}
               <div className="p-4 flex-1 flex flex-col">
                 <h3 className="text-lg font-bold text-foreground">
                   {character.name}
@@ -110,4 +122,3 @@ export default function CharactersPage() {
     </div>
   );
 }
-

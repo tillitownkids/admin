@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { BedrockService } from '@/lib/services/ai/BedrockService';
 import { AITaskFactory } from '@/lib/services/ai/AITaskFactory';
 
-console.log("==== AI ROUTE LOADED ====");
-
 export async function POST(req: NextRequest) {
-   console.log("==== POST HIT ====");
   try {
     const body = await req.json();
     const { taskType, content } = body;

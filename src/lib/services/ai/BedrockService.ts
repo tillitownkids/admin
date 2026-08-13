@@ -31,7 +31,6 @@ export class BedrockService {
       
       for (const model of models) {
         try {
-          console.log(`Using direct Anthropic Claude API with model ${model}...`);
           const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -62,7 +61,6 @@ export class BedrockService {
 
           const parsed = await response.json();
           if (parsed.content && parsed.content.length > 0 && parsed.content[0].text) {
-            console.log(`Successfully generated response using model ${model}.`);
             return parsed.content[0].text;
           }
           throw new Error("Unexpected response format from direct Anthropic API");
@@ -76,7 +74,6 @@ export class BedrockService {
       }
     }
 
-    console.log("Attempting Bedrock invokeModel as fallback...");
     const payload = {
       anthropic_version: 'bedrock-2023-05-31',
       max_tokens: 4096,

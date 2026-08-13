@@ -164,15 +164,12 @@ export default function ScriptGeneratePage() {
     setSelectedStory(story);
 
     if (story) {
-      console.log("Selected Story Data:", story);
       setIsDetailsLoading(true);
       try {
         const detailsRes = await getStoryCharactersAndLocationsAction(storyId);
         if (detailsRes.success) {
           setStoryCharacters(detailsRes.characters || []);
           setStoryLocations(detailsRes.locations || []);
-          console.log("Fetched Story Characters:", detailsRes.characters);
-          console.log("Fetched Episode Locations:", detailsRes.locations);
         } else {
           setStoryCharacters([]);
           setStoryLocations([]);
@@ -185,7 +182,6 @@ export default function ScriptGeneratePage() {
         setIsDetailsLoading(false);
       }
     } else {
-      console.log("No story selected");
       setStoryCharacters([]);
       setStoryLocations([]);
     }

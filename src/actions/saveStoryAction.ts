@@ -1,5 +1,6 @@
-"use server"
+"use server";
 
+import { prisma } from "@/lib/prisma";
 import { supabase } from "@/lib/supabase";
 
 export interface SaveStoryInput {
@@ -21,6 +22,8 @@ export interface SaveStoryInput {
   status?: string;
   previousEpisodeId?: string | null;
   previousContext?: string | null;
+  characterIds?: string[];
+  locationIds?: string[];
 }
 
 export async function getStoriesAction() {
@@ -91,6 +94,8 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
       teachLesson
     };
 
+    let savedStory: any = null;
+
     if (input.id) {
       const { data, error } = await supabase
         .from('Story')
@@ -111,38 +116,125 @@ export async function saveGeneratedStoryAction(input: SaveStoryInput) {
           console.error("Supabase update error:", coreRes.error);
           return { success: false, error: coreRes.error.message };
         }
-        return { success: true, data: coreRes.data };
+        savedStory = coreRes.data;
+      } else {
+        savedStory = data;
       }
-      return { success: true, data };
-    }
-
-    const { data, error } = await supabase
-      .from('Story')
-      .insert([extendedPayload])
-      .select()
-      .single();
-
-    if (error) {
-      console.warn("Supabase insert with extended columns failed ('" + error.message + "'), falling back to core schema columns...");
-
-      const coreRes = await supabase
+    } else {
+      const { data, error } = await supabase
         .from('Story')
-        .insert([corePayload])
+        .insert([extendedPayload])
         .select()
         .single();
 
-      if (coreRes.error) {
-        console.error("Supabase core story insert error:", coreRes.error);
-        return { success: false, error: coreRes.error.message };
-      }
+      if (error) {
+        console.warn("Supabase insert with extended columns failed ('" + error.message + "'), falling back to core schema columns...");
 
-      return { success: true, data: coreRes.data };
+        const coreRes = await supabase
+          .from('Story')
+          .insert([corePayload])
+          .select()
+          .single();
+
+        if (coreRes.error) {
+          console.error("Supabase core story insert error:", coreRes.error);
+          return { success: false, error: coreRes.error.message };
+        }
+
+        savedStory = coreRes.data;
+      } else {
+        savedStory = data;
+      }
     }
 
-    return { success: true, data };
+    if (savedStory?.id) {
+      await linkStoryCharactersAndLocationsAction(
+        savedStory.id,
+        input.characterIds || [],
+        input.locationIds || []
+      );
+    }
+
+    return { success: true, data: savedStory };
   } catch (err: any) {
     console.error("Failed to execute saveGeneratedStoryAction:", err);
     return { success: false, error: err?.message || "Internal server action error" };
+  }
+}
+
+export async function linkStoryCharactersAndLocationsAction(
+  storyId: string,
+  characterIds: string[] = [],
+  locationIds: string[] = []
+) {
+  try {
+    if (!storyId) return { success: false, error: "Missing storyId" };
+
+    // 1. Link StoryCharacters with Prisma
+    if (characterIds && characterIds.length > 0) {
+      for (const charId of characterIds) {
+        if (!charId) continue;
+        try {
+          await prisma.storyCharacter.upsert({
+            where: {
+              story_id_character_id: {
+                story_id: storyId,
+                character_id: charId,
+              },
+            },
+            create: {
+              story_id: storyId,
+              character_id: charId,
+            },
+            update: {},
+          });
+        } catch (e) {
+          try {
+            await supabase
+              .from('StoryCharacter')
+              .upsert([{ story_id: storyId, character_id: charId }]);
+          } catch (supaErr) {}
+        }
+      }
+    }
+
+    // 2. Link EpisodeLocations with Prisma
+    if (locationIds && locationIds.length > 0) {
+      for (let i = 0; i < locationIds.length; i++) {
+        const locId = locationIds[i];
+        if (!locId) continue;
+        try {
+          await prisma.episodeLocation.upsert({
+            where: {
+              story_id_location_id: {
+                story_id: storyId,
+                location_id: locId,
+              },
+            },
+            create: {
+              story_id: storyId,
+              location_id: locId,
+              order_index: i,
+              status: "pending",
+            },
+            update: {
+              order_index: i,
+            },
+          });
+        } catch (e) {
+          try {
+            await supabase
+              .from('EpisodeLocation')
+              .upsert([{ story_id: storyId, location_id: locId, order_index: i, status: "pending" }]);
+          } catch (supaErr) {}
+        }
+      }
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error("Error in linkStoryCharactersAndLocationsAction:", err);
+    return { success: false, error: err?.message || "Failed to link" };
   }
 }
 
