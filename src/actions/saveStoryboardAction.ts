@@ -1,7 +1,6 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { supabase } from "@/lib/supabase";
 
 export interface ConfirmSceneInput {
   scriptId: string;
@@ -18,47 +17,35 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
     }
 
     const inputScriptId = scenes[0].scriptId;
-    let validStoryId = inputScriptId;
+    let validStoryId: string | null = null;
 
-    // 1. Ensure targetStory exists in Story table to satisfy EpisodeLocation_story_id_fkey constraint
+    // 1. Find existing story matching ID or script topic/episode
     let targetStory = await prisma.story.findUnique({
       where: { id: inputScriptId }
     }).catch(() => null);
 
     if (!targetStory) {
-      try {
-        const scriptObj = await prisma.script.findUnique({
-          where: { id: inputScriptId }
-        }).catch(() => null);
+      const scriptObj = await prisma.script.findUnique({
+        where: { id: inputScriptId }
+      }).catch(() => null);
 
-        targetStory = await prisma.story.create({
-          data: {
-            id: inputScriptId,
-            topic: scriptObj?.topic || "Storyboard Episode",
-            episode_number: scriptObj?.episode_number || "1",
-            content: scriptObj?.content || "Generated Script",
-            status: "active",
-            generation_type: scriptObj?.generation_type || "new"
-          }
-        });
-      } catch {
-        // Fallback: get any existing story or create a new story
-        targetStory = await prisma.story.findFirst();
-        if (!targetStory) {
-          targetStory = await prisma.story.create({
-            data: {
-              topic: "Storyboard Episode",
-              episode_number: "1",
-              content: "Generated Script",
-              status: "active"
-            }
-          });
-        }
+      if (scriptObj?.topic) {
+        targetStory = await prisma.story.findFirst({
+          where: { topic: scriptObj.topic }
+        }).catch(() => null);
+      }
+
+      if (!targetStory) {
+        targetStory = await prisma.story.findFirst().catch(() => null);
       }
     }
 
     if (targetStory?.id) {
       validStoryId = targetStory.id;
+    }
+
+    if (!validStoryId) {
+      return { success: false, error: "No associated story found to link storyboard scenes." };
     }
 
     // 2. Check if an episode location exists for this story
