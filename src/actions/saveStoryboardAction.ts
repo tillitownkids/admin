@@ -76,6 +76,17 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
 
     const savedScenes = [];
 
+    // If batch updating all scenes, clean up any old leftover scenes with scene_number > maxSceneNum
+    if (scenes.length > 1) {
+      const maxSceneNum = Math.max(...scenes.map((s) => s.sceneNumber));
+      await prisma.scene.deleteMany({
+        where: {
+          episode_location_id: episodeLocation.id,
+          scene_number: { gt: maxSceneNum }
+        }
+      });
+    }
+
     for (const sceneInput of scenes) {
       const existingScene = await prisma.scene.findFirst({
         where: {
