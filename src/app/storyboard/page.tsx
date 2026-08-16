@@ -1,9 +1,10 @@
 "use client";
 
-import { Image as ImageIcon, Loader2, Sparkles, Copy, Check, LayoutGrid } from "lucide-react";
+import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { callAi } from "@/actions/actions";
+import { saveStoryboardScenesAction } from "@/actions/saveStoryboardAction";
 
 interface DatabaseScript {
   id: string;
@@ -24,6 +25,7 @@ interface StoryboardScene {
 }
 
 export default function StoryboardPage() {
+  const [viewMode, setViewMode] = useState<'form' | 'storyboard'>('form');
   const [selectedScript, setSelectedScript] = useState("");
   const [prompt, setPrompt] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -32,7 +34,11 @@ export default function StoryboardPage() {
   const [scripts, setScripts] = useState<DatabaseScript[]>([]);
   const [isFetchingScripts, setIsFetchingScripts] = useState(true);
   const [generatedScenes, setGeneratedScenes] = useState<StoryboardScene[]>([]);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  
+  // Confirmation state
+  const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
+  const [isConfirmingAll, setIsConfirmingAll] = useState(false);
+  const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
   function getScriptLabel(script: DatabaseScript) {
     if (script.title) return script.title;
@@ -77,6 +83,7 @@ export default function StoryboardPage() {
     if (!selectedScript) {
       setPrompt("");
       setGeneratedScenes([]);
+      setSuccessBanner(null);
       return;
     }
 
@@ -93,19 +100,85 @@ export default function StoryboardPage() {
       }
       setPrompt(text);
       setGeneratedScenes([]);
+      setSuccessBanner(null);
     }
   }, [selectedScript, scripts]);
 
-  async function handleCopy(text: string, index: number) {
-    await navigator.clipboard.writeText(text);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
+  function handlePromptChange(index: number, newPrompt: string) {
+    setGeneratedScenes((prev) =>
+      prev.map((sc, i) => (i === index ? { ...sc, storyboard_prompt: newPrompt } : sc))
+    );
+  }
+
+  async function handleConfirmSingle(index: number) {
+    if (!selectedScript) return;
+    const scene = generatedScenes[index];
+    if (!scene) return;
+
+    setConfirmingIndex(index);
+    setError(null);
+    setSuccessBanner(null);
+
+    try {
+      const res = await saveStoryboardScenesAction([
+        {
+          scriptId: selectedScript,
+          sceneNumber: scene.scene_number || index + 1,
+          title: scene.title,
+          description: scene.description,
+          storyboardPrompt: scene.storyboard_prompt,
+        },
+      ]);
+
+      if (res.success) {
+        setSuccessBanner(`Scene #${scene.scene_number || index + 1} prompt confirmed and saved!`);
+        setTimeout(() => setSuccessBanner(null), 4000);
+      } else {
+        setError(res.error || "Failed to confirm scene prompt.");
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to save confirmed prompt.");
+    } finally {
+      setConfirmingIndex(null);
+    }
+  }
+
+  async function handleConfirmAll() {
+    if (!selectedScript || generatedScenes.length === 0) return;
+
+    setIsConfirmingAll(true);
+    setError(null);
+    setSuccessBanner(null);
+
+    try {
+      const payload = generatedScenes.map((scene, idx) => ({
+        scriptId: selectedScript,
+        sceneNumber: scene.scene_number || idx + 1,
+        title: scene.title,
+        description: scene.description,
+        storyboardPrompt: scene.storyboard_prompt,
+      }));
+
+      const res = await saveStoryboardScenesAction(payload);
+
+      if (res.success) {
+        setSuccessBanner(`All ${generatedScenes.length} storyboard scene prompts confirmed and saved!`);
+        setTimeout(() => setSuccessBanner(null), 5000);
+      } else {
+        setError(res.error || "Failed to confirm all scene prompts.");
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to save confirmed prompts.");
+    } finally {
+      setIsConfirmingAll(false);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
+    setSuccessBanner(null);
 
     const storyboardAiPrompt = `You are a professional storyboard artist for a 3D animated children's series.
 
@@ -197,31 +270,6 @@ Choose the grid based on the number of beats in the scene:
 
 If a scene contains more than 6 beats, split the scene into
 multiple storyboard sheets while preserving beat order.
-
----
-
-## VISUAL DESCRIPTION
-
-Because no reference images are available, describe characters using
-only details provided in the script.
-
-For each panel, include when relevant:
-
-- Character identity
-- Character position
-- Pose
-- Facial expression
-- Action
-- Interaction with other characters
-- Environment
-- Important props
-- Lighting
-- Time of day
-- Camera framing
-- Camera angle
-- Camera movement if visually relevant
-
-Use the CAMERA field from the beat as the primary basis for framing.
 
 ---
 
@@ -321,6 +369,7 @@ ${prompt}`;
 
       if (scenesList.length > 0) {
         setGeneratedScenes(scenesList);
+        setViewMode('storyboard'); // Swaps the script form for the full page storyboard editor view!
       } else {
         setError("Could not parse storyboard scenes from the AI response.");
       }
@@ -333,67 +382,101 @@ ${prompt}`;
 
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
-      <PageHeader
-        icon={ImageIcon}
-        title="Storyboard"
-        highlight="Generation"
-        description="Generate storyboard images for your episodes."
-      />
+      {/* FORM VIEW MODE: Script Selection & Prompt */}
+      {viewMode === 'form' && (
+        <>
+          <PageHeader
+            icon={ImageIcon}
+            title="Storyboard"
+            highlight="Generation"
+            description="Select an episode script to generate and edit production storyboard scene prompts."
+          />
 
-      <div className="rounded-2xl border bg-card p-6 shadow-sm">
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-6"
-        >
-          <div className="space-y-2">
-            <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
-              Script
-            </label>
-            <div className="relative">
-              <select 
-                value={selectedScript}
-                onChange={(e) => {
-                  setSelectedScript(e.target.value);
-                }}
-                disabled={isFetchingScripts}
-                className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground disabled:opacity-50"
-              > 
-                <option value="">
-                  {isFetchingScripts
-                    ? "Loading scripts from database..."
-                    : scripts.length === 0
-                    ? "No scripts found in database"
-                    : "Select a script"}
-                </option>
-                {scripts.map((script) => (
-                  <option key={script.id} value={script.id}>
-                    {getScriptLabel(script)}
-                  </option>
-                ))}
-              </select>
-              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-muted-foreground">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
+          <div className="rounded-2xl border bg-card p-6 shadow-sm">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-2">
+                <label className="text-sm font-bold tracking-wider uppercase text-foreground/80 flex items-center gap-2">
+                  Script
+                </label>
+                <div className="relative">
+                  <select 
+                    value={selectedScript}
+                    onChange={(e) => setSelectedScript(e.target.value)}
+                    disabled={isFetchingScripts}
+                    className="w-full appearance-none bg-background/60 border border-input rounded-2xl px-5 py-4 text-base transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary cursor-pointer hover:bg-background text-foreground disabled:opacity-50"
+                  > 
+                    <option value="">
+                      {isFetchingScripts
+                        ? "Loading scripts from database..."
+                        : scripts.length === 0
+                        ? "No scripts found in database"
+                        : "Select a script"}
+                    </option>
+                    {scripts.map((script) => (
+                      <option key={script.id} value={script.id}>
+                        {getScriptLabel(script)}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none text-muted-foreground">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m8 9 4-4 4 4m0 6-4 4-4-4"></path></svg>
+                  </div>
+                </div>
               </div>
-            </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-end">
+                  <span className="text-xs text-muted-foreground">Editable</span>
+                </div>
+
+                <textarea
+                  rows={14}
+                  value={prompt}
+                  disabled={!selectedScript}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Select a script to load its prompt..."
+                  className="min-h-[300px] w-full resize-y rounded-xl border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary font-sans leading-relaxed"
+                />
+              </div>
+
+              {error && (
+                <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-xl text-sm font-medium">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoading || !selectedScript || !prompt.trim()}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Generating Storyboard Prompts...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Generate Storyboard Prompt
+                  </>
+                )}
+              </button>
+            </form>
           </div>
+        </>
+      )}
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-end">
+      {/* STORYBOARD FULL-PAGE VIEW MODE */}
+      {viewMode === 'storyboard' && generatedScenes.length > 0 && (
+        <div className="space-y-6">
 
-              <span className="text-xs text-muted-foreground">
-                Editable
-              </span>
-            </div>
-
-            <textarea
-              rows={16}
-              value={prompt}
-              disabled={!selectedScript}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Select a script to load its prompt..."
-              className="min-h-[380px] w-full resize-y rounded-xl border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary font-sans leading-relaxed"
-            />
-          </div>
+          <PageHeader
+            icon={ImageIcon}
+            title="Storyboard"
+            highlight="Brainstorm"
+            description="Refine complete prompt specifications for each scene and confirm them to save to database."
+          />
 
           {error && (
             <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-xl text-sm font-medium">
@@ -401,116 +484,119 @@ ${prompt}`;
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={
-              isLoading ||
-              !selectedScript ||
-              !prompt.trim()
-            }
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generating Storyboard Prompt...
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" />
-                Generate Storyboard Prompt
-              </>
-            )}
-          </button>
-        </form>
-      </div>
+          {successBanner && (
+            <div className="p-4 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl text-sm font-medium flex items-center gap-2">
+              <Check className="w-4 h-4" />
+              {successBanner}
+            </div>
+          )}
 
-      {generatedScenes.length > 0 && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              Generated Storyboard Sheets{" "}
-              <span className="text-sm font-normal text-muted-foreground">
-                ({generatedScenes.length} {generatedScenes.length === 1 ? "scene sheet" : "scene sheets"})
-              </span>
-            </h2>
+          {/* Top Control Bar */}
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={handleConfirmAll}
+              disabled={isConfirmingAll || confirmingIndex !== null}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold shadow-sm hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer shrink-0"
+            >
+              {isConfirmingAll ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Confirming All Prompts...
+                </>
+              ) : (
+                <>
+                  <CheckCheck className="w-4 h-4" />
+                  Confirm All Prompts ({generatedScenes.length})
+                </>
+              )}
+            </button>
           </div>
 
+          {/* Scenes Full Page Grid */}
           <div className="grid grid-cols-1 gap-6">
-            {generatedScenes.map((scene, idx) => (
-              <div
-                key={idx}
-                className="bg-card border border-border/80 rounded-2xl p-6 shadow-sm space-y-4 transition-all hover:border-primary/30"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-4">
-                  <div className="flex items-center gap-3">
-                    <span className="px-3 py-1 bg-primary/10 text-primary border border-primary/20 text-xs font-bold rounded-lg shrink-0">
-                      Scene #{scene.scene_number || idx + 1}
-                    </span>
-                    <h3 className="text-lg font-bold text-foreground">
-                      {scene.title || `Scene ${scene.scene_number || idx + 1}`}
-                    </h3>
+            {generatedScenes.map((scene, idx) => {
+              const sceneNum = scene.scene_number || idx + 1;
+              const isSavingThis = confirmingIndex === idx;
+
+              return (
+                <div
+                  key={idx}
+                  className="bg-card border border-border/80 hover:border-primary/30 rounded-2xl p-6 shadow-sm space-y-4 transition-all"
+                >
+                  {/* Scene Card Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 pb-4">
+                    <div className="flex items-center gap-3">
+                      <span className="px-3 py-1 bg-primary/10 text-primary border border-primary/20 text-xs font-bold rounded-lg shrink-0">
+                        Scene #{sceneNum}
+                      </span>
+                      <h3 className="text-lg font-bold text-foreground">
+                        {scene.title || `Scene ${sceneNum}`}
+                      </h3>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {scene.beat_numbers && scene.beat_numbers.length > 0 && (
+                        <>
+                          <span className="text-xs bg-muted text-muted-foreground px-3 py-1 rounded-full font-medium">
+                            Beats: {scene.beat_numbers.join(", ")}
+                          </span>
+                          <span className="text-xs bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
+                            <LayoutGrid className="w-3 h-3" />
+                            {getGridBadge(scene.beat_numbers.length)}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {scene.beat_numbers && scene.beat_numbers.length > 0 && (
-                      <>
-                        <span className="text-xs bg-muted text-muted-foreground px-3 py-1 rounded-full font-medium">
-                          Beats: {scene.beat_numbers.join(", ")}
-                        </span>
-                        <span className="text-xs bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
-                          <LayoutGrid className="w-3 h-3" />
-                          {getGridBadge(scene.beat_numbers.length)}
-                        </span>
-                      </>
-                    )}
+                  {/* Storyboard Prompt Editor */}
+                  <div className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-primary block">
+                      Storyboard Prompt
+                    </span>
+                    <textarea
+                      ref={(el) => {
+                        if (el) {
+                          el.style.height = "auto";
+                          el.style.height = `${el.scrollHeight}px`;
+                        }
+                      }}
+                      value={scene.storyboard_prompt}
+                      onChange={(e) => {
+                        e.target.style.height = "auto";
+                        e.target.style.height = `${e.target.scrollHeight}px`;
+                        handlePromptChange(idx, e.target.value);
+                      }}
+                      placeholder="Refine complete prompt specification for generating this storyboard sheet..."
+                      className="w-full overflow-hidden resize-none rounded-xl border bg-background px-4 py-3 text-sm font-sans leading-relaxed text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+
+                  {/* Scene Card Footer Actions */}
+                  <div className="flex items-center justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmSingle(idx)}
+                      disabled={isSavingThis || isConfirmingAll}
+                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingThis ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Confirming & Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          Confirm 1 Prompt
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
-
-                {scene.description && (
-                  <div className="space-y-1">
-                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
-                      Visual Description
-                    </span>
-                    <p className="text-sm text-foreground/90 leading-relaxed">
-                      {scene.description}
-                    </p>
-                  </div>
-                )}
-
-                {scene.storyboard_prompt && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary block">
-                        Storyboard Prompt
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(scene.storyboard_prompt, idx)}
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1 rounded-md bg-muted/50 hover:bg-muted"
-                      >
-                        {copiedIndex === idx ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-emerald-500" />
-                            <span className="text-emerald-500 font-medium">Copied!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>Copy Prompt</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-
-                    <div className="bg-background border border-input rounded-xl p-4 text-sm font-sans leading-relaxed text-foreground whitespace-pre-wrap select-all">
-                      {scene.storyboard_prompt}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
