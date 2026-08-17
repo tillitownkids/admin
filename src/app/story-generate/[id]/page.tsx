@@ -223,12 +223,12 @@ export default function StoryEditorPage({ params }: { params: Promise<{ id: stri
       const res = await saveGeneratedStoryAction({
         id: id,
         topic: story?.topic || "Untitled Story",
-        concept: story?.concept || "",
-        overview: story?.storyOverview || story?.overview || "",
-        lesson: story?.teachLesson || story?.lesson || "",
-        generationType: story?.generation_type || "new",
-        contentHtml: currentHtml,
-        contentText: currentText
+        episode_number: story?.episode_number || "1",
+        generation_type: story?.generation_type || "new",
+        content: currentHtml,
+        status: story?.status || "active",
+        characterIds: storyCharacters.map((c: any) => c.id).filter(Boolean),
+        locationIds: storyLocations.map((l: any) => l.location_id || l.id).filter(Boolean)
       });
 
       if (res.success) {

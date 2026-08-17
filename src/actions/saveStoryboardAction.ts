@@ -8,6 +8,8 @@ export interface ConfirmSceneInput {
   title?: string;
   description?: string;
   storyboardPrompt: string;
+  episodeLocationId?: string;
+  locationName?: string;
 }
 
 export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
@@ -48,13 +50,14 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       return { success: false, error: "No associated story found to link storyboard scenes." };
     }
 
-    // 2. Check if an episode location exists for this story
-    let episodeLocation = await prisma.episodeLocation.findFirst({
-      where: { story_id: validStoryId }
+    // 2. Fetch all episode locations linked to this story
+    let episodeLocations = await prisma.episodeLocation.findMany({
+      where: { story_id: validStoryId },
+      include: { Location: true }
     });
 
-    if (!episodeLocation) {
-      // Find or create default location
+    let defaultEpisodeLocation = episodeLocations[0];
+    if (!defaultEpisodeLocation) {
       let location = await prisma.location.findFirst();
       if (!location) {
         location = await prisma.location.create({
@@ -65,32 +68,51 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         });
       }
 
-      episodeLocation = await prisma.episodeLocation.create({
+      defaultEpisodeLocation = await prisma.episodeLocation.create({
         data: {
           story_id: validStoryId,
           location_id: location.id,
           status: "active"
-        }
+        },
+        include: { Location: true }
       });
+      episodeLocations.push(defaultEpisodeLocation);
     }
 
+    const allEpLocIds = episodeLocations.map(el => el.id);
     const savedScenes = [];
 
-    // If batch updating all scenes, clean up any old leftover scenes with scene_number > maxSceneNum
+    // If batch updating all scenes, clean up old leftover scenes across the story's episode locations
     if (scenes.length > 1) {
       const maxSceneNum = Math.max(...scenes.map((s) => s.sceneNumber));
       await prisma.scene.deleteMany({
         where: {
-          episode_location_id: episodeLocation.id,
+          episode_location_id: { in: allEpLocIds },
           scene_number: { gt: maxSceneNum }
         }
       });
     }
 
     for (const sceneInput of scenes) {
+      // Determine specific EpisodeLocation ID for this scene
+      let targetEpLocId = defaultEpisodeLocation.id;
+
+      if (sceneInput.episodeLocationId && allEpLocIds.includes(sceneInput.episodeLocationId)) {
+        targetEpLocId = sceneInput.episodeLocationId;
+      } else if (sceneInput.locationName) {
+        const matched = episodeLocations.find(
+          el => el.Location?.name?.toLowerCase().includes(sceneInput.locationName!.toLowerCase()) ||
+                sceneInput.locationName!.toLowerCase().includes(el.Location?.name?.toLowerCase() || "")
+        );
+        if (matched) {
+          targetEpLocId = matched.id;
+        }
+      }
+
+      // Check if scene exists under any of the story's episode locations
       const existingScene = await prisma.scene.findFirst({
         where: {
-          episode_location_id: episodeLocation.id,
+          episode_location_id: { in: allEpLocIds },
           scene_number: sceneInput.sceneNumber
         }
       });
@@ -100,6 +122,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         updatedScene = await prisma.scene.update({
           where: { id: existingScene.id },
           data: {
+            episode_location_id: targetEpLocId,
             storyboard_prompt: sceneInput.storyboardPrompt,
             description: sceneInput.description || existingScene.description,
             storyboard_status: "confirmed",
@@ -109,7 +132,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       } else {
         updatedScene = await prisma.scene.create({
           data: {
-            episode_location_id: episodeLocation.id,
+            episode_location_id: targetEpLocId,
             scene_number: sceneInput.sceneNumber,
             description: sceneInput.description || "",
             storyboard_prompt: sceneInput.storyboardPrompt,

@@ -326,6 +326,12 @@ If the story moves from one location to another, make the transition logical.
 
 Keep the time of day and environment consistent between consecutive beats unless the story explicitly changes them.
 
+${storyLocations.length > 0 ? `STRICT LOCATION CONSTRAINTS:
+The story has these exact linked locations:
+${storyLocations.map((l: any) => `- "${l.name}"`).join("\n")}
+
+You MUST strictly use these location names in your beat location headers (e.g. INT. ${storyLocations[0]?.name || "LOCATION"} - DAY).` : ""}
+
 11. Keep beats concise.
 
 Each beat should contain enough detail for a storyboard or video-generation system, but should not become a paragraph of prose.

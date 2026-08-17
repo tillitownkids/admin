@@ -1,11 +1,12 @@
 "use client";
 
-import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText } from "lucide-react";
+import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
+import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
 
 interface DatabaseScript {
   id: string;
@@ -23,6 +24,8 @@ interface StoryboardScene {
   beat_numbers?: number[];
   description?: string;
   storyboard_prompt: string;
+  location_name?: string;
+  episodeLocationId?: string;
 }
 
 interface ChatMessage {
@@ -42,6 +45,7 @@ export default function StoryboardPage() {
   const [scripts, setScripts] = useState<DatabaseScript[]>([]);
   const [isFetchingScripts, setIsFetchingScripts] = useState(true);
   const [generatedScenes, setGeneratedScenes] = useState<StoryboardScene[]>([]);
+  const [storyLocations, setStoryLocations] = useState<any[]>([]);
   
   // Confirmation state
   const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
@@ -97,6 +101,7 @@ export default function StoryboardPage() {
     if (!selectedScript) {
       setPrompt("");
       setGeneratedScenes([]);
+      setStoryLocations([]);
       setSuccessBanner(null);
       setChatHistory([]);
       return;
@@ -117,6 +122,15 @@ export default function StoryboardPage() {
       setGeneratedScenes([]);
       setSuccessBanner(null);
       setChatHistory([]);
+
+      // Fetch linked locations for this script/story
+      getStoryCharactersAndLocationsAction(selectedScript)
+        .then((res) => {
+          if (res.success && res.locations) {
+            setStoryLocations(res.locations);
+          }
+        })
+        .catch(() => setStoryLocations([]));
     }
   }, [selectedScript, scripts]);
 
@@ -127,6 +141,13 @@ export default function StoryboardPage() {
   function handlePromptChange(index: number, newPrompt: string) {
     setGeneratedScenes((prev) =>
       prev.map((sc, i) => (i === index ? { ...sc, storyboard_prompt: newPrompt } : sc))
+    );
+  }
+
+  function handleLocationChange(index: number, locationName: string) {
+    const matched = storyLocations.find(l => l.name === locationName);
+    setGeneratedScenes((prev) =>
+      prev.map((sc, i) => (i === index ? { ...sc, location_name: locationName, episodeLocationId: matched?.id || matched?.location_id } : sc))
     );
   }
 
@@ -147,6 +168,8 @@ export default function StoryboardPage() {
           title: scene.title,
           description: scene.description,
           storyboardPrompt: scene.storyboard_prompt,
+          locationName: scene.location_name,
+          episodeLocationId: scene.episodeLocationId,
         },
       ]);
 
@@ -177,6 +200,8 @@ export default function StoryboardPage() {
         title: scene.title,
         description: scene.description,
         storyboardPrompt: scene.storyboard_prompt,
+        locationName: scene.location_name,
+        episodeLocationId: scene.episodeLocationId,
       }));
 
       const res = await saveStoryboardScenesAction(payload);
@@ -236,11 +261,9 @@ export default function StoryboardPage() {
     if (!aiScenes || aiScenes.length === 0) return;
 
     setGeneratedScenes((prevScenes) => {
-      // If AI returned all scenes, or partial scene updates, merge them safely
       return prevScenes.map((existingScene, idx) => {
         const existingNum = existingScene.scene_number || idx + 1;
 
-        // Try to find matching AI scene by scene_number or single scene match
         const matchingAiScene = aiScenes.find((aiSc, aiIdx) => {
           const aiNum = aiSc.scene_number || (aiScenes.length === 1 ? existingNum : aiIdx + 1);
           return aiNum === existingNum;
@@ -267,6 +290,13 @@ export default function StoryboardPage() {
     setIsLoading(true);
     setError(null);
     setSuccessBanner(null);
+
+    const locationPromptSection = storyLocations.length > 0
+      ? `AVAILABLE LOCATIONS FOR THIS EPISODE:
+${storyLocations.map(l => `- "${l.name}"`).join("\n")}
+
+Assign the exact matching location name in the "location_name" field for each scene.`
+      : "";
 
     const storyboardAiPrompt = `You are a professional storyboard artist for a 3D animated children's series.
 
@@ -311,38 +341,20 @@ Start a new scene when there is:
 - A major environmental change.
 - A new dramatic sequence.
 
-Do NOT create a new scene simply because:
-
-- The camera changes.
-- A character speaks.
-- A new physical action begins.
-- The beat number changes.
-
 Every beat must belong to exactly one scene.
 
 Never reorder, skip, duplicate, or modify beats.
 
 ---
 
+## LOCATION ASSIGNMENT
+${locationPromptSection}
+
+---
+
 ## STORYBOARD PANELS
 
 Each beat becomes exactly ONE storyboard panel.
-
-The panel should visually represent the most important moment of that beat.
-
-Use the beat's:
-
-- ACTION
-- CAMERA
-- MOTION
-- LOCATION HEADER
-- DIALOGUE when visually relevant
-
-to construct the panel.
-
-Do not combine multiple beats into one panel.
-
-Do not invent events that are not present in the beat.
 
 ---
 
@@ -361,42 +373,6 @@ multiple storyboard sheets while preserving beat order.
 
 ---
 
-## CONTINUITY
-
-Maintain consistency across all panels in the same scene.
-
-Characters should retain the same appearance, clothing, proportions,
-and physical characteristics described in the script.
-
-The location should remain visually consistent across panels unless
-the script explicitly changes the environment.
-
-Lighting and time of day should remain consistent unless the script
-explicitly indicates a transition.
-
----
-
-## STORYBOARD STYLE
-
-Generate a storyboard for a full-color 3D animated children's film.
-
-The storyboard should be visually clear, cinematic, expressive,
-and suitable for downstream image/video generation.
-
-Do not add:
-
-- Speech bubbles
-- Captions
-- Text inside the scene
-- UI elements
-- Unspecified characters
-- Unspecified props
-- Unspecified events
-
-Number each storyboard panel in the corner.
-
----
-
 ## OUTPUT FORMAT
 
 Return ONLY valid JSON.
@@ -408,6 +384,7 @@ Use exactly this structure:
     {
       "scene_number": 1,
       "title": "Short descriptive scene title",
+      "location_name": "Location Name",
       "beat_numbers": [1, 2, 3],
       "storyboard_prompt": "Complete prompt for generating this storyboard sheet."
     }
@@ -428,8 +405,6 @@ Characters: [characters present and their appearance as described in the script]
 Panel 1: [visual description based on Beat 1]
 
 Panel 2: [visual description based on Beat 2]
-
-Panel 3: [visual description based on Beat 3]
 
 ...
 
@@ -631,6 +606,23 @@ ${prompt}`;
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {storyLocations.length > 0 && (
+                          <div className="flex items-center gap-1.5 bg-muted/60 px-3 py-1 rounded-full border border-border/50 text-xs">
+                            <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
+                            <select
+                              value={scene.location_name || storyLocations[0]?.name || ""}
+                              onChange={(e) => handleLocationChange(idx, e.target.value)}
+                              className="bg-transparent font-medium text-foreground outline-none cursor-pointer"
+                            >
+                              {storyLocations.map((loc) => (
+                                <option key={loc.id} value={loc.name}>
+                                  {loc.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
                         {scene.beat_numbers && scene.beat_numbers.length > 0 && (
                           <>
                             <span className="text-xs bg-muted text-muted-foreground px-3 py-1 rounded-full font-medium">
