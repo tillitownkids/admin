@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Plus, Save, Upload, Loader2, X } from 'lucide-react';
+import { Plus, Save, Upload, Loader2, X, Trash2, ArrowLeft } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
@@ -46,6 +46,7 @@ export function LibraryManager({
   const [name, setName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,6 +95,31 @@ export function LibraryManager({
   const showError = (message: string) => {
     setError(message);
     setTimeout(() => setError(null), 6000);
+  };
+
+  const handleDelete = async () => {
+    if (!current) return;
+    if (!confirm(`Are you sure you want to delete "${current.name}"? This action cannot be undone.`)) {
+      return;
+    }
+    setIsDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiPath}/${current.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to delete ${resourceName.toLowerCase()}.`);
+      }
+      setCurrent(null);
+      await fetchItems();
+      setViewMode('list');
+    } catch (err: any) {
+      showError(err.message || 'Failed to delete item.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -286,14 +312,44 @@ export function LibraryManager({
         <div className="space-y-6">
           <GlassPanel
             footer={
-              <button
-                onClick={viewMode === 'create' ? handleCreate : handleSaveDetails}
-                disabled={isSaving}
-                className={primaryButtonClass}
-              >
-                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                {viewMode === 'create' ? `Create ${resourceName}` : 'Save Changes'}
-              </button>
+              <div className="flex items-center justify-between w-full">
+                {viewMode === 'edit' ? (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={isDeleting || isSaving}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-destructive/10 text-destructive hover:bg-destructive/20 text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
+                  >
+                    {isDeleting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    Delete {resourceName}
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    className={secondaryButtonClass}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={viewMode === 'create' ? handleCreate : handleSaveDetails}
+                    disabled={isSaving || isDeleting}
+                    className={primaryButtonClass}
+                  >
+                    {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {viewMode === 'create' ? `Create ${resourceName}` : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
             }
           >
             <div className="space-y-3">
