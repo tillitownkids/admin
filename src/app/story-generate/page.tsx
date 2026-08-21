@@ -242,20 +242,18 @@ export default function StoryPage() {
       const locIdsToSave = overrideLocIds || activeLocationIds;
 
       const saveRes = await saveGeneratedStoryAction({
-        concept: data.Concept,
-        overview: data.Overview,
-        lesson: data.Lesson,
-        duration: duration,
-        generationType: generationType,
-        contentHtml: storyContent,
         topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story",
+        episode_number: "1",
+        generation_type: generationType || "new",
+        content: storyContent,
+        status: "active",
         characterIds: charIdsToSave,
         locationIds: locIdsToSave,
       });
 
-      if (saveRes.success && saveRes.data?.id) {
+      if (saveRes.success && saveRes.story?.id) {
         setShowLocationModal(false);
-        router.push(targetRedirect || `/story-generate/${saveRes.data.id}`);
+        router.push(targetRedirect || `/story-generate/${saveRes.story.id}`);
       } else {
         setError(saveRes.error || "Failed to save generated story to database.");
       }
