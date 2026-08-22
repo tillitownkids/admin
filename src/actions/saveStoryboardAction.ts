@@ -87,7 +87,10 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       const maxSceneNum = Math.max(...scenes.map((s) => s.sceneNumber));
       await prisma.scene.deleteMany({
         where: {
-          episode_location_id: { in: allEpLocIds },
+          OR: [
+            { episode_location_id: { in: allEpLocIds } },
+            { story_id: validStoryId }
+          ],
           scene_number: { gt: maxSceneNum }
         }
       });
@@ -109,10 +112,13 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         }
       }
 
-      // Check if scene exists under any of the story's episode locations
+      // Check if scene exists under any of the story's episode locations or story_id
       const existingScene = await prisma.scene.findFirst({
         where: {
-          episode_location_id: { in: allEpLocIds },
+          OR: [
+            { episode_location_id: { in: allEpLocIds } },
+            { story_id: validStoryId }
+          ],
           scene_number: sceneInput.sceneNumber
         }
       });
@@ -122,6 +128,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         updatedScene = await prisma.scene.update({
           where: { id: existingScene.id },
           data: {
+            story_id: validStoryId,
             episode_location_id: targetEpLocId,
             storyboard_prompt: sceneInput.storyboardPrompt,
             description: sceneInput.description || existingScene.description,
@@ -132,6 +139,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       } else {
         updatedScene = await prisma.scene.create({
           data: {
+            story_id: validStoryId,
             episode_location_id: targetEpLocId,
             scene_number: sceneInput.sceneNumber,
             description: sceneInput.description || "",
