@@ -544,13 +544,14 @@ Now convert the provided story into the beat script format.`;
                       {storyLocations.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                           {storyLocations.map((loc: any, i: number) => {
-                            const hasImage = Boolean(loc.reference_image_url);
+                            const locImageUrl = loc.generated_image_url || loc.reference_image_url;
+                            const hasImage = Boolean(locImageUrl);
                             return (
                               <div 
                                 key={loc.id || i}
                                 onClick={() => {
                                   if (hasImage) {
-                                    window.open(loc.reference_image_url, '_blank', 'noopener,noreferrer');
+                                    window.open(locImageUrl, '_blank', 'noopener,noreferrer');
                                   }
                                 }}
                                 className={`group p-3 rounded-xl bg-background/60 border border-border/60 flex items-center gap-3 transition-all ${
@@ -562,7 +563,7 @@ Now convert the provided story into the beat script format.`;
                               >
                                 {hasImage ? (
                                   <img 
-                                    src={loc.reference_image_url} 
+                                    src={locImageUrl} 
                                     alt={loc.name || 'Location'} 
                                     className="w-12 h-10 rounded-lg object-cover border border-emerald-500/30 shrink-0 group-hover:border-emerald-500 transition-colors"
                                   />

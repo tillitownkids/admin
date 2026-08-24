@@ -12,7 +12,7 @@ export interface ConfirmSceneInput {
   locationName?: string;
 }
 
-export async function buildStoryboardPayloadAction(scriptId: string, scenes: ConfirmSceneInput[]) {
+export async function buildStoryboardPayloadAction(scriptId: string, scenes: ConfirmSceneInput[], videoPrompt?: string) {
   try {
     if (!scriptId || !scenes || scenes.length === 0) {
       return { success: false, error: "Missing scriptId or scenes" };
@@ -42,7 +42,7 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
     const spaceName = targetStory?.topic || "Storyboard Episode";
     const validStoryId = targetStory?.id;
 
-    // 2. Fetch Characters for this story
+    // 2. Fetch Characters for this story (STRICTLY magnific_identifier, no fallbacks)
     const characterRefs: Record<string, string> = {};
     if (validStoryId) {
       const storyChars = await prisma.storyCharacter.findMany({
@@ -51,21 +51,14 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
       }).catch(() => []);
 
       for (const sc of storyChars) {
-        if (sc.Character?.name && sc.Character?.id) {
-          characterRefs[sc.Character.name] = sc.Character.id;
+        const identifier = (sc.Character as any)?.magnific_identifier;
+        if (sc.Character?.name && identifier) {
+          characterRefs[sc.Character.name] = identifier;
         }
       }
     }
 
-    // Fallback if storyChars was empty: fetch all active characters
-    if (Object.keys(characterRefs).length === 0) {
-      const allChars = await prisma.character.findMany().catch(() => []);
-      for (const c of allChars) {
-        characterRefs[c.name] = c.id;
-      }
-    }
-
-    // 3. Fetch specific Location ONLY for this scene using episodeLocationId / locationName
+    // 3. Fetch Location for this scene (STRICTLY magnific_identifier, no fallbacks)
     const firstScene = scenes[0];
     const locationRefs: Record<string, string> = {};
     let targetEpLoc = null;
@@ -89,31 +82,35 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
                 firstScene.locationName!.toLowerCase().includes(el.Location?.name?.toLowerCase() || "")
         );
       }
-      if (!targetEpLoc && epLocs.length > 0) {
-        targetEpLoc = epLocs[0];
-      }
     }
 
-    if (targetEpLoc?.Location?.name) {
-      locationRefs[targetEpLoc.Location.name] = targetEpLoc.location_id || targetEpLoc.id;
+    const locIdentifier = (targetEpLoc?.Location as any)?.magnific_identifier;
+    if (targetEpLoc?.Location?.name && locIdentifier) {
+      locationRefs[targetEpLoc.Location.name] = locIdentifier;
     }
 
-    // 4. Construct scenes array (first scene formatted)
-    const formattedScenes = [
-      {
-        id: `scene-${firstScene.sceneNumber || 1}`,
-        imagePrompt: firstScene.storyboardPrompt,
-        videoPrompt: "",
-        references: {
-          characters: characterRefs,
-          locations: locationRefs
-        }
-      }
-    ];
+    // 4. Construct scene object (omit references section if empty)
+    const sceneObj: Record<string, any> = {
+      id: `scene-${firstScene.sceneNumber || 1}`,
+      imagePrompt: firstScene.storyboardPrompt,
+      videoPrompt: videoPrompt || ""
+    };
+
+    const referencesObj: Record<string, any> = {};
+    if (Object.keys(characterRefs).length > 0) {
+      referencesObj.characters = characterRefs;
+    }
+    if (Object.keys(locationRefs).length > 0) {
+      referencesObj.locations = locationRefs;
+    }
+
+    if (Object.keys(referencesObj).length > 0) {
+      sceneObj.references = referencesObj;
+    }
 
     const payload = {
       spaceName,
-      scenes: formattedScenes
+      scenes: [sceneObj]
     };
 
     console.log("=== GENERATED STORYBOARD PAYLOAD ===");

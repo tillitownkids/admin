@@ -1,6 +1,6 @@
 "use client";
 
-import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin } from "lucide-react";
+import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin, Video } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { callAi } from "@/actions/actions";
@@ -50,6 +50,7 @@ export default function StoryboardPage() {
   // Confirmation state
   const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
   // Brainstorm Chat Assistant State
@@ -439,26 +440,6 @@ ${prompt}`;
           }
         ]);
         setViewMode('storyboard');
-
-        // Build and log requested input payload
-        const payloadInput = scenesList.map((sc, idx) => ({
-          scriptId: selectedScript,
-          sceneNumber: sc.scene_number || idx + 1,
-          title: sc.title,
-          description: sc.description,
-          storyboardPrompt: sc.storyboard_prompt,
-          locationName: sc.location_name,
-          episodeLocationId: sc.episodeLocationId,
-        }));
-
-        buildStoryboardPayloadAction(selectedScript, payloadInput)
-          .then((res) => {
-            if (res.success && res.payload) {
-              console.log("=== STORYBOARD INPUT PAYLOAD ===");
-              console.log(JSON.stringify(res.payload, null, 2));
-            }
-          })
-          .catch(console.error);
       } else {
         setError("Could not parse storyboard scenes from the AI response.");
       }
@@ -466,6 +447,82 @@ ${prompt}`;
       setError(err?.message || "An error occurred while generating storyboard prompts.");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleGenerateVideo() {
+    if (!selectedScript || generatedScenes.length === 0) return;
+
+    setIsGeneratingVideo(true);
+    setError(null);
+    setSuccessBanner(null);
+
+    try {
+      // 1. Generate video animation prompt using callAi taking the reference of imagePrompt
+      const firstImagePrompt = generatedScenes[0]?.storyboard_prompt || "";
+      const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the following storyboard image prompt and generate a concise, cinematic video animation description for video generation AI.
+
+Storyboard Image Prompt:
+"${firstImagePrompt}"
+
+Requirements:
+- Begin with camera movement (e.g. gentle wide camera push, tracking shot).
+- Describe sequential character actions, motion, and expressions.
+- End with a strong cinematic shot composition.
+- Include instructions to preserve character visual identity from reference images, maintain 3D animated children's film style, smooth natural character motion, consistent lighting, and magical cinematic atmosphere.
+- Output ONLY the plain text video animation prompt without headers, markdown, or commentary.
+
+Example format:
+Animate this storyboard as a cinematic children's film sequence. Begin with a gentle wide camera push across Tillitown's sunset town square as the great festival lantern flickers, sputters, and slowly dies, with warm evening light fading into dramatic shadows. Transition into a smooth tracking shot following Jaksh running through the market stalls, his curly hair bouncing and linen shirt fluttering, before he reaches Tilli and they share an emotional two-shot. Move into an intimate macro close-up of Tilli's glowing chest compass spinning rapidly with magical golden light trails before suddenly locking and pointing toward the distant Whispering Willow Forest. End with a subtle low-angle cinematic shot of Jaksh straightening his posture with determination and beginning to walk toward the dark forest path while Tilli floats beside him. Preserve the exact visual identity of Tilli and Jaksh from the reference images, maintain the same 3D animated children's film style, smooth natural character motion, consistent sunset lighting, and magical cinematic atmosphere.`;
+
+      const generatedVideoResponse = await callAi(videoAiInstruction);
+      const videoPromptText = (typeof generatedVideoResponse === "string"
+        ? generatedVideoResponse
+        : (generatedVideoResponse as any)?.text || ""
+      ).trim();
+
+      // 2. Build input payload with videoPrompt
+      const payloadInput = generatedScenes.map((sc, idx) => ({
+        scriptId: selectedScript,
+        sceneNumber: sc.scene_number || idx + 1,
+        title: sc.title,
+        description: sc.description,
+        storyboardPrompt: sc.storyboard_prompt,
+        locationName: sc.location_name,
+        episodeLocationId: sc.episodeLocationId,
+      }));
+
+      const res = await buildStoryboardPayloadAction(selectedScript, payloadInput, videoPromptText);
+
+      if (res.success && res.payload) {
+        console.log("=== GENERATE VIDEO INPUT PAYLOAD ===");
+        console.log(JSON.stringify(res.payload, null, 2));
+
+        // 3. Hit the webhook endpoint
+        const webhookRes = await fetch("https://n8n.roastnest.com/webhook-test/generate-video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(res.payload),
+        });
+
+        const webhookData = await webhookRes.json().catch(() => ({}));
+        console.log("=== GENERATE VIDEO WEBHOOK RESPONSE ===");
+        console.log(JSON.stringify(webhookData, null, 2));
+
+        if (webhookRes.ok) {
+          setSuccessBanner("Video generation payload sent to webhook successfully!");
+        } else {
+          setSuccessBanner(`Video payload sent to webhook (Status: ${webhookRes.status})`);
+        }
+        setTimeout(() => setSuccessBanner(null), 5000);
+      } else {
+        setError(res.error || "Failed to generate video payload.");
+      }
+    } catch (err: any) {
+      console.error("Error generating video payload:", err);
+      setError(err?.message || "Failed to generate video payload.");
+    } finally {
+      setIsGeneratingVideo(false);
     }
   }
 
@@ -583,19 +640,19 @@ ${prompt}`;
           <div className="flex items-center justify-end gap-3">
             <button
               type="button"
-              onClick={(e: any) => handleSubmit(e)}
-              disabled={isLoading || !selectedScript || !prompt.trim()}
+              onClick={handleGenerateVideo}
+              disabled={isGeneratingVideo || !selectedScript || generatedScenes.length === 0}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold shadow-sm hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer shrink-0"
             >
-              {isLoading ? (
+              {isGeneratingVideo ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating Storyboard...
+                  Generating Video...
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4" />
-                  Generate Storyboard
+                  <Video className="w-4 h-4" />
+                  Generate Video
                 </>
               )}
             </button>
