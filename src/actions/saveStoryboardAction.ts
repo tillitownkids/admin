@@ -12,6 +12,120 @@ export interface ConfirmSceneInput {
   locationName?: string;
 }
 
+export async function buildStoryboardPayloadAction(scriptId: string, scenes: ConfirmSceneInput[]) {
+  try {
+    if (!scriptId || !scenes || scenes.length === 0) {
+      return { success: false, error: "Missing scriptId or scenes" };
+    }
+
+    // 1. Resolve Story
+    let targetStory = await prisma.story.findUnique({
+      where: { id: scriptId }
+    }).catch(() => null);
+
+    if (!targetStory) {
+      const scriptObj = await prisma.script.findUnique({
+        where: { id: scriptId }
+      }).catch(() => null);
+
+      if (scriptObj?.topic) {
+        targetStory = await prisma.story.findFirst({
+          where: { topic: scriptObj.topic }
+        }).catch(() => null);
+      }
+
+      if (!targetStory) {
+        targetStory = await prisma.story.findFirst().catch(() => null);
+      }
+    }
+
+    const spaceName = targetStory?.topic || "Storyboard Episode";
+    const validStoryId = targetStory?.id;
+
+    // 2. Fetch Characters for this story
+    const characterRefs: Record<string, string> = {};
+    if (validStoryId) {
+      const storyChars = await prisma.storyCharacter.findMany({
+        where: { story_id: validStoryId },
+        include: { Character: true }
+      }).catch(() => []);
+
+      for (const sc of storyChars) {
+        if (sc.Character?.name && sc.Character?.id) {
+          characterRefs[sc.Character.name] = sc.Character.id;
+        }
+      }
+    }
+
+    // Fallback if storyChars was empty: fetch all active characters
+    if (Object.keys(characterRefs).length === 0) {
+      const allChars = await prisma.character.findMany().catch(() => []);
+      for (const c of allChars) {
+        characterRefs[c.name] = c.id;
+      }
+    }
+
+    // 3. Fetch specific Location ONLY for this scene using episodeLocationId / locationName
+    const firstScene = scenes[0];
+    const locationRefs: Record<string, string> = {};
+    let targetEpLoc = null;
+
+    if (firstScene.episodeLocationId) {
+      targetEpLoc = await prisma.episodeLocation.findUnique({
+        where: { id: firstScene.episodeLocationId },
+        include: { Location: true }
+      }).catch(() => null);
+    }
+
+    if (!targetEpLoc && validStoryId) {
+      const epLocs = await prisma.episodeLocation.findMany({
+        where: { story_id: validStoryId },
+        include: { Location: true }
+      }).catch(() => []);
+
+      if (firstScene.locationName) {
+        targetEpLoc = epLocs.find(
+          el => el.Location?.name?.toLowerCase().includes(firstScene.locationName!.toLowerCase()) ||
+                firstScene.locationName!.toLowerCase().includes(el.Location?.name?.toLowerCase() || "")
+        );
+      }
+      if (!targetEpLoc && epLocs.length > 0) {
+        targetEpLoc = epLocs[0];
+      }
+    }
+
+    if (targetEpLoc?.Location?.name) {
+      locationRefs[targetEpLoc.Location.name] = targetEpLoc.location_id || targetEpLoc.id;
+    }
+
+    // 4. Construct scenes array (first scene formatted)
+    const formattedScenes = [
+      {
+        id: `scene-${firstScene.sceneNumber || 1}`,
+        imagePrompt: firstScene.storyboardPrompt,
+        videoPrompt: "",
+        references: {
+          characters: characterRefs,
+          locations: locationRefs
+        }
+      }
+    ];
+
+    const payload = {
+      spaceName,
+      scenes: formattedScenes
+    };
+
+    console.log("=== GENERATED STORYBOARD PAYLOAD ===");
+    console.log(JSON.stringify(payload, null, 2));
+
+    return { success: true, payload };
+  } catch (err: any) {
+    console.error("Error in buildStoryboardPayloadAction:", err);
+    return { success: false, error: err?.message || "Failed to generate payload" };
+  }
+}
+
 export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
   try {
     if (!scenes || scenes.length === 0) {
@@ -58,15 +172,12 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
 
     let defaultEpisodeLocation = episodeLocations[0];
     if (!defaultEpisodeLocation) {
-      let location = await prisma.location.findFirst();
-      if (!location) {
-        location = await prisma.location.create({
-          data: {
-            name: "Main Scene Setting",
-            description: "Default scene setting"
-          }
-        });
-      }
+      let location = await prisma.location.create({
+        data: {
+          name: "Main Scene Setting",
+          description: "Default scene setting"
+        }
+      });
 
       defaultEpisodeLocation = await prisma.episodeLocation.create({
         data: {

@@ -28,28 +28,30 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, description } = body;
+    const { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
 
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
     }
 
+    const dataPayload: Record<string, any> = {
+      name,
+      description: description || '',
+    };
+    if (reference_image_url !== undefined) dataPayload.reference_image_url = reference_image_url;
+    if (magnific_identifier !== undefined) dataPayload.magnific_identifier = magnific_identifier;
+    if (generated_image_url !== undefined) dataPayload.generated_image_url = generated_image_url;
+
     let location;
     try {
       location = await prisma.location.create({
-        data: {
-          name,
-          description: description || '',
-        }
+        data: dataPayload as any
       });
     } catch (prismaErr) {
       console.warn("Prisma location creation failed, falling back to Supabase:", prismaErr);
       const { data, error } = await supabase
         .from('Location')
-        .insert([{
-          name,
-          description: description || '',
-        }])
+        .insert([dataPayload])
         .select()
         .single();
 

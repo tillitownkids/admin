@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Plus, Save, Upload, Loader2, X, Trash2, ArrowLeft } from 'lucide-react';
+import { Plus, Save, Upload, Loader2, X, Trash2, ArrowLeft, Sparkles, RefreshCw, Image as ImageIcon, ExternalLink } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
@@ -13,6 +13,8 @@ export interface LibraryItem {
   description: string;
   reference_image_url: string | null;
   created_at: string;
+  magnific_identifier?: string | null;
+  generated_image_url?: string | null;
 }
 
 interface LibraryManagerProps {
@@ -45,9 +47,15 @@ export function LibraryManager({
   const [current, setCurrent] = useState<LibraryItem | null>(null);
   const [name, setName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
+  const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  const [magnificIdentifier, setMagnificIdentifier] = useState<string | null>(null);
+
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isGeneratingSheet, setIsGeneratingSheet] = useState(false);
+  const [hasGeneratedSheet, setHasGeneratedSheet] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Drag & drop reference image state
@@ -77,6 +85,10 @@ export function LibraryManager({
   const startCreate = () => {
     setName('');
     setItemDescription('');
+    setReferenceImageUrl(null);
+    setGeneratedImageUrl(null);
+    setMagnificIdentifier(null);
+    setHasGeneratedSheet(false);
     setPendingFile(null);
     setPendingPreviewUrl(null);
     setCurrent(null);
@@ -87,6 +99,10 @@ export function LibraryManager({
     setCurrent(item);
     setName(item.name);
     setItemDescription(item.description);
+    setReferenceImageUrl(item.reference_image_url || null);
+    setGeneratedImageUrl(item.generated_image_url || null);
+    setMagnificIdentifier(item.magnific_identifier || null);
+    setHasGeneratedSheet(Boolean(item.generated_image_url || item.magnific_identifier));
     setPendingFile(null);
     setPendingPreviewUrl(null);
     setViewMode('edit');
@@ -160,6 +176,67 @@ export function LibraryManager({
     }
   };
 
+  const manualUploadImageUrl = pendingPreviewUrl || referenceImageUrl || current?.reference_image_url || null;
+
+  const handleGenerateReferenceSheet = async () => {
+    if (!itemDescription.trim()) {
+      showError(`Please enter a prompt description for this ${resourceName.toLowerCase()} first.`);
+      return;
+    }
+
+    setIsGeneratingSheet(true);
+    setError(null);
+
+    try {
+      const payload = {
+        prompt: itemDescription,
+        reference_url: manualUploadImageUrl || ''
+      };
+
+      const res = await fetch('https://n8n.roastnest.com/webhook-test/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.message || `Webhook error (${res.status})`);
+      }
+
+      const resData = await res.json();
+
+      let returnedUrl: string | null = null;
+      let returnedIdentifier: string | null = null;
+
+      if (Array.isArray(resData) && resData.length > 0) {
+        const first = resData[0];
+        returnedUrl = first.url || first.generated_image_url || first.image_url || first.image || null;
+        returnedIdentifier = first.identifier || first.magnific_identifier || first.magnific_id || first.id || null;
+      } else if (typeof resData === 'object' && resData !== null) {
+        returnedUrl = resData.url || resData.generated_image_url || resData.image_url || resData.image || null;
+        returnedIdentifier = resData.identifier || resData.magnific_identifier || resData.magnific_id || resData.id || null;
+      } else if (typeof resData === 'string' && resData.startsWith('http')) {
+        returnedUrl = resData;
+      }
+
+      if (returnedUrl) {
+        setGeneratedImageUrl(returnedUrl);
+      }
+
+      if (returnedIdentifier) {
+        setMagnificIdentifier(returnedIdentifier);
+      }
+
+      setHasGeneratedSheet(true);
+    } catch (err: any) {
+      console.error('Error generating location reference sheet:', err);
+      showError(err.message || 'Failed to generate reference sheet.');
+    } finally {
+      setIsGeneratingSheet(false);
+    }
+  };
+
   const handleCreate = async () => {
     if (!name.trim()) {
       showError(`Please enter a name for this ${resourceName.toLowerCase()}.`);
@@ -171,7 +248,13 @@ export function LibraryManager({
       const res = await fetch(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: itemDescription }),
+        body: JSON.stringify({
+          name,
+          description: itemDescription,
+          reference_image_url: manualUploadImageUrl,
+          generated_image_url: generatedImageUrl,
+          magnific_identifier: magnificIdentifier
+        }),
       });
       if (!res.ok) throw new Error(`Failed to create ${resourceName.toLowerCase()}.`);
       const data = await res.json();
@@ -213,7 +296,13 @@ export function LibraryManager({
       const res = await fetch(`${apiPath}/${current.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: itemDescription }),
+        body: JSON.stringify({
+          name,
+          description: itemDescription,
+          reference_image_url: manualUploadImageUrl,
+          generated_image_url: generatedImageUrl,
+          magnific_identifier: magnificIdentifier
+        }),
       });
       if (!res.ok) throw new Error('Failed to save changes.');
       const data = await res.json();
@@ -243,6 +332,7 @@ export function LibraryManager({
         throw new Error(data.error || 'Failed to upload image.');
       }
       const data = await res.json();
+      setReferenceImageUrl(data.publicUrl);
       setCurrent({ ...current, reference_image_url: data.publicUrl });
       await fetchItems();
     } catch (err: any) {
@@ -251,8 +341,6 @@ export function LibraryManager({
       setIsUploadingImage(false);
     }
   };
-
-  const displayImageUrl = current?.reference_image_url || pendingPreviewUrl;
 
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
@@ -285,26 +373,29 @@ export function LibraryManager({
             <p className="text-sm text-muted-foreground mt-1 text-center">Create a new reusable {resourceName.toLowerCase()}</p>
           </div>
 
-          {items.map((item) => (
-            <div
-              key={item.id}
-              onClick={() => openItem(item)}
-              className="cursor-pointer group flex flex-col rounded-2xl border border-border bg-card overflow-hidden min-h-[220px]"
-            >
-              <div className="aspect-video w-full bg-muted flex items-center justify-center overflow-hidden">
-                {item.reference_image_url ? (
-                  
-                  <img src={item.reference_image_url} alt={item.name} className="w-full h-full object-cover" />
-                ) : (
-                  <Icon className="w-8 h-8 text-muted-foreground" />
-                )}
+          {items.map((item) => {
+            const cardImageUrl = item.generated_image_url || item.reference_image_url;
+            return (
+              <div
+                key={item.id}
+                onClick={() => openItem(item)}
+                className="cursor-pointer group flex flex-col rounded-2xl border border-border bg-card overflow-hidden min-h-[220px]"
+              >
+                <div className="aspect-video w-full bg-muted flex items-center justify-center overflow-hidden">
+                  {cardImageUrl ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={cardImageUrl} alt={item.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Icon className="w-8 h-8 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="p-4 flex-1 flex flex-col">
+                  <h3 className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">{item.name}</h3>
+                  <p className="text-sm text-muted-foreground mt-1 line-clamp-2 flex-1">{item.description || 'No description yet.'}</p>
+                </div>
               </div>
-              <div className="p-4 flex-1 flex flex-col">
-                <h3 className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">{item.name}</h3>
-                <p className="text-sm text-muted-foreground mt-1 line-clamp-2 flex-1">{item.description || 'No description yet.'}</p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -317,7 +408,7 @@ export function LibraryManager({
                   <button
                     type="button"
                     onClick={handleDelete}
-                    disabled={isDeleting || isSaving}
+                    disabled={isDeleting || isSaving || isGeneratingSheet}
                     className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-destructive/10 text-destructive hover:bg-destructive/20 text-xs font-semibold transition disabled:opacity-50 cursor-pointer"
                   >
                     {isDeleting ? (
@@ -332,6 +423,33 @@ export function LibraryManager({
                 )}
 
                 <div className="flex items-center gap-3">
+                  {/* Location Reference Sheet Generation Button */}
+                  {ownerType === 'location_reference' && (
+                    <button
+                      type="button"
+                      onClick={handleGenerateReferenceSheet}
+                      disabled={isGeneratingSheet || isSaving || isDeleting || !itemDescription.trim()}
+                      className={primaryButtonClass}
+                    >
+                      {isGeneratingSheet ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : hasGeneratedSheet ? (
+                        <>
+                          <RefreshCw className="w-4 h-4" />
+                          Regenerate
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          Generate Location Reference Sheet
+                        </>
+                      )}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => setViewMode('list')}
@@ -342,7 +460,7 @@ export function LibraryManager({
                   <button
                     type="button"
                     onClick={viewMode === 'create' ? handleCreate : handleSaveDetails}
-                    disabled={isSaving || isDeleting}
+                    disabled={isSaving || isDeleting || isGeneratingSheet}
                     className={primaryButtonClass}
                   >
                     {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -374,6 +492,7 @@ export function LibraryManager({
               />
             </div>
 
+            {/* SECTION 1: Upload Reference Image (User Manual Upload / reference_image_url) */}
             <div className="space-y-3 pt-4 border-t border-border/50">
               <label className={labelClass}>Upload Reference Image</label>
 
@@ -407,12 +526,12 @@ export function LibraryManager({
                   </div>
                 )}
 
-                {displayImageUrl ? (
+                {manualUploadImageUrl ? (
                   <div className="relative w-full max-w-md aspect-video rounded-xl overflow-hidden border border-border shadow-sm">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={displayImageUrl}
-                      alt="Reference Preview"
+                      src={manualUploadImageUrl}
+                      alt="User Reference Upload Preview"
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
@@ -438,10 +557,45 @@ export function LibraryManager({
                 )}
               </div>
             </div>
+
+            {/* SECTION 2: Generated Location Reference Sheet (generated_image_url & magnific_identifier) */}
+            {ownerType === 'location_reference' && (generatedImageUrl || hasGeneratedSheet || isGeneratingSheet) && (
+              <div className="space-y-3 pt-4 border-t border-border/50">
+                <label className={labelClass}>Generated Location Reference Sheet</label>
+
+                <div className="relative w-full max-w-md aspect-video rounded-xl overflow-hidden border border-border shadow-sm bg-muted/30 flex items-center justify-center">
+                  {isGeneratingSheet ? (
+                    <div className="flex flex-col items-center justify-center space-y-2 text-primary p-6 text-center">
+                      <Loader2 className="w-8 h-8 animate-spin" />
+                      <p className="text-xs font-semibold">Generating reference sheet with AI...</p>
+                    </div>
+                  ) : generatedImageUrl ? (
+                    <a
+                      href={generatedImageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group/img relative w-full h-full block cursor-pointer"
+                      title="Click to open in new tab"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={generatedImageUrl}
+                        alt="Generated Location Reference Sheet"
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover/img:scale-105"
+                      />
+                    </a>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-6 text-muted-foreground text-center space-y-1">
+                      <ImageIcon className="w-8 h-8 text-muted-foreground/50" />
+                      <p className="text-xs">No reference sheet generated yet.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </GlassPanel>
         </div>
       )}
     </div>
   );
 }
-

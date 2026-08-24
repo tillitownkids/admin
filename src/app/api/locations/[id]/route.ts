@@ -35,12 +35,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
-    const { name, description, reference_image_url } = body;
+    const { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date().toISOString() };
     if (name !== undefined) updatePayload.name = name;
     if (description !== undefined) updatePayload.description = description;
     if (reference_image_url !== undefined) updatePayload.reference_image_url = reference_image_url;
+    if (magnific_identifier !== undefined) updatePayload.magnific_identifier = magnific_identifier;
+    if (generated_image_url !== undefined) updatePayload.generated_image_url = generated_image_url;
 
     let location;
     try {

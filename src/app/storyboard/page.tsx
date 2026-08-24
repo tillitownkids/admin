@@ -4,7 +4,7 @@ import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, S
 import { useEffect, useState, useRef } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { callAi } from "@/actions/actions";
-import { saveStoryboardScenesAction } from "@/actions/saveStoryboardAction";
+import { saveStoryboardScenesAction, buildStoryboardPayloadAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
 import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
 
@@ -439,6 +439,26 @@ ${prompt}`;
           }
         ]);
         setViewMode('storyboard');
+
+        // Build and log requested input payload
+        const payloadInput = scenesList.map((sc, idx) => ({
+          scriptId: selectedScript,
+          sceneNumber: sc.scene_number || idx + 1,
+          title: sc.title,
+          description: sc.description,
+          storyboardPrompt: sc.storyboard_prompt,
+          locationName: sc.location_name,
+          episodeLocationId: sc.episodeLocationId,
+        }));
+
+        buildStoryboardPayloadAction(selectedScript, payloadInput)
+          .then((res) => {
+            if (res.success && res.payload) {
+              console.log("=== STORYBOARD INPUT PAYLOAD ===");
+              console.log(JSON.stringify(res.payload, null, 2));
+            }
+          })
+          .catch(console.error);
       } else {
         setError("Could not parse storyboard scenes from the AI response.");
       }
@@ -560,7 +580,26 @@ ${prompt}`;
           )}
 
           {/* Top Control Bar */}
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={(e: any) => handleSubmit(e)}
+              disabled={isLoading || !selectedScript || !prompt.trim()}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold shadow-sm hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer shrink-0"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating Storyboard...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Generate Storyboard
+                </>
+              )}
+            </button>
+
             <button
               type="button"
               onClick={handleConfirmAll}
