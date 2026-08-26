@@ -298,15 +298,19 @@ You are a creative director and storyteller for the children's animated show "Ti
 Generation Mode Details: ${continuationHeader}
 Target Story Duration: ${duration || '2-3 minutes'}
 
-CHARACTERS RULE (STRICT CRITICAL):
+CHARACTERS RULE & STRICT CHARACTER FIDELITY (STRICT CRITICAL):
 - You MUST strictly use ONLY the characters present in the database listed below.
 - Do NOT introduce, create, or invent any new characters under any circumstances.
+- STRICT CHARACTER FIDELITY: NEVER INVENT, ASSUME, OR FABRICATE physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character.
+- DO NOT describe any character as a robot, machine, mechanical companion, or as having wheels, engines, metallic parts, glowing eyes, or spinning compasses UNLESS those exact traits are explicitly stated in their official database character description below.
+- For example: If a character is named "Tilli", describe Tilli strictly as defined in their character profile below. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
 - Available Database Characters:
 ${charactersListStr}
 
 LOCATIONS RULE:
-- Prefer using the existing locations present in the database listed below whenever possible.
-- If a new setting/location is necessary for the plot, describe it in the story and list it in the locationsUsed output array.
+- Prefer using existing locations from the database listed below when appropriate for the scene.
+- YOU ARE FREELY ALLOWED TO INVENT AND INTRODUCE NEW LOCATIONS whenever the story plot or adventure requires new settings!
+- Whenever a new setting is introduced, describe it vividly in the narrative and list it in the locationsUsed output array so it can be added to the database.
 - Available Database Locations:
 ${locationsListStr}
 

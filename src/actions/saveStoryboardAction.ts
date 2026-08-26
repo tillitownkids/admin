@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { supabase } from "@/lib/supabase";
 
 export interface ConfirmSceneInput {
   scriptId: string;
@@ -10,6 +11,7 @@ export interface ConfirmSceneInput {
   storyboardPrompt: string;
   episodeLocationId?: string;
   locationName?: string;
+  characterNames?: string[];
 }
 
 export async function buildStoryboardPayloadAction(scriptId: string, scenes: ConfirmSceneInput[], videoPrompt?: string) {
@@ -42,24 +44,49 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
     const spaceName = targetStory?.topic || "Storyboard Episode";
     const validStoryId = targetStory?.id;
 
-    // 2. Fetch Characters for this story (STRICTLY magnific_identifier, no fallbacks)
+    const firstScene = scenes[0];
+
+    // 2. Fetch Characters ONLY for this scene (STRICTLY magnific_identifier)
     const characterRefs: Record<string, string> = {};
-    if (validStoryId) {
+    if (validStoryId && firstScene) {
       const storyChars = await prisma.storyCharacter.findMany({
         where: { story_id: validStoryId },
         include: { Character: true }
       }).catch(() => []);
 
-      for (const sc of storyChars) {
-        const identifier = (sc.Character as any)?.magnific_identifier;
-        if (sc.Character?.name && identifier) {
-          characterRefs[sc.Character.name] = identifier;
+      const availableCharacters = storyChars.length > 0
+        ? storyChars.map(sc => sc.Character)
+        : await prisma.character.findMany().catch(() => []);
+
+      // Determine which character names belong to firstScene
+      let sceneCharNames = firstScene.characterNames || [];
+
+      // Fallback: if characterNames array is empty, search storyboardPrompt and description for character names
+      if (sceneCharNames.length === 0) {
+        const promptText = (firstScene.storyboardPrompt + " " + (firstScene.description || "")).toLowerCase();
+        sceneCharNames = availableCharacters
+          .filter(c => c && promptText.includes(c.name.toLowerCase()))
+          .map(c => c.name);
+      }
+
+      for (const charObj of availableCharacters) {
+        if (!charObj?.name) continue;
+        const charName = charObj.name;
+
+        const isPresent = sceneCharNames.some(
+          name => name.toLowerCase().includes(charName.toLowerCase()) || charName.toLowerCase().includes(name.toLowerCase())
+        );
+
+        if (isPresent) {
+          const identifier = (charObj as any)?.magnific_identifier;
+          if (identifier) {
+            characterRefs[charName] = identifier;
+          }
         }
       }
     }
 
     // 3. Fetch Location for this scene (STRICTLY magnific_identifier, no fallbacks)
-    const firstScene = scenes[0];
     const locationRefs: Record<string, string> = {};
     let targetEpLoc = null;
 
@@ -188,6 +215,17 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
     }
 
     const allEpLocIds = episodeLocations.map(el => el.id);
+
+    // Fetch story characters to link to SceneCharacter
+    const storyChars = await prisma.storyCharacter.findMany({
+      where: { story_id: validStoryId },
+      include: { Character: true }
+    }).catch(() => []);
+
+    const availableCharacters = storyChars.length > 0
+      ? storyChars.map(sc => sc.Character)
+      : await prisma.character.findMany().catch(() => []);
+
     const savedScenes = [];
 
     // If batch updating all scenes, clean up old leftover scenes across the story's episode locations
@@ -257,6 +295,47 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
           }
         });
       }
+
+      // Resolve character IDs for this scene
+      let matchedCharIds: string[] = [];
+
+      if (sceneInput.characterNames && sceneInput.characterNames.length > 0) {
+        matchedCharIds = availableCharacters
+          .filter(c => c && sceneInput.characterNames!.some(name => name.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(name.toLowerCase())))
+          .map(c => c.id);
+      }
+
+      if (matchedCharIds.length === 0) {
+        const promptText = (sceneInput.storyboardPrompt + " " + (sceneInput.description || "")).toLowerCase();
+        matchedCharIds = availableCharacters
+          .filter(c => c && promptText.includes(c.name.toLowerCase()))
+          .map(c => c.id);
+
+        if (matchedCharIds.length === 0 && availableCharacters.length > 0) {
+          matchedCharIds = availableCharacters.map(c => c.id);
+        }
+      }
+
+      if (updatedScene?.id && matchedCharIds.length > 0) {
+        try {
+          await prisma.sceneCharacter.deleteMany({
+            where: { scene_id: updatedScene.id }
+          });
+          await prisma.sceneCharacter.createMany({
+            data: matchedCharIds.map(charId => ({
+              scene_id: updatedScene.id,
+              character_id: charId
+            })),
+            skipDuplicates: true
+          });
+        } catch (scErr) {
+          console.warn("Prisma SceneCharacter insert failed, attempting Supabase fallback:", scErr);
+          await supabase.from('SceneCharacter').delete().eq('scene_id', updatedScene.id);
+          const rows = matchedCharIds.map(charId => ({ scene_id: updatedScene.id, character_id: charId }));
+          await supabase.from('SceneCharacter').insert(rows);
+        }
+      }
+
       savedScenes.push(updatedScene);
     }
 

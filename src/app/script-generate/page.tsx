@@ -314,13 +314,22 @@ Do not repeat the ACTION word-for-word.
 
 Do not describe music unless specifically required by the story.
 
-9. Maintain character consistency.
+9. Maintain character consistency and strict character fidelity.
 
 Use the exact character names from the story.
 
 Do not introduce new characters unless they already exist in the story.
 
-10. Maintain environmental continuity.
+STRICT CHARACTER FIDELITY & NO FABRICATION RULE (CRITICAL):
+- NEVER INVENT, ASSUME, OR FABRICATE any physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character.
+- DO NOT describe any character as a robot, machine, mechanical companion, or as having wheels, engines, metallic parts, glowing eyes, or spinning compasses UNLESS those exact traits are explicitly stated in their official character profile or story.
+- For example: If a character is named "Tilli", describe Tilli strictly as defined in the official character profile or story. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
+- Keep all character actions and motion 100% faithful to their official character profiles.
+
+${storyCharacters.length > 0 ? `OFFICIAL CHARACTER PROFILES FOR THIS STORY:
+${storyCharacters.map((c: any) => `- ${c.name}: ${c.description || 'Standard character'}`).join("\n")}
+
+` : ""}10. Maintain environmental continuity.
 
 If the story moves from one location to another, make the transition logical.
 
