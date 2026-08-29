@@ -193,7 +193,7 @@ export function LibraryManager({
         reference_url: manualUploadImageUrl || ''
       };
 
-      const res = await fetch('https://n8n.roastnest.com/webhook-test/generate-image', {
+      const res = await fetch('https://n8n.roastnest.com/webhook/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

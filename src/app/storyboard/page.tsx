@@ -609,8 +609,8 @@ Animate this storyboard as a cinematic children's film sequence. Begin with a ge
       const res = await buildStoryboardPayloadAction(selectedScript, payloadInput, videoPromptText);
 
       if (res.success && res.payload) {
-        // 3. Hit the webhook endpoint
-        const webhookRes = await fetch("https://n8n.roastnest.com/webhook-test/generate-video", {
+        
+        const webhookRes = await fetch("https://n8n.roastnest.com/webhook/generate-video", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(res.payload),
@@ -986,6 +986,42 @@ Animate this storyboard as a cinematic children's film sequence. Begin with a ge
                   <Send className="w-4 h-4" />
                 </button>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Page Loader Overlay for Storyboard Generation */}
+      {isLoading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-start pt-[180px] bg-background/80 backdrop-blur-md transition-all animate-in fade-in-0 duration-200">
+          <div className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-card border border-border/80 shadow-2xl max-w-sm text-center">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <Loader2 className="w-10 h-10 animate-spin text-primary relative z-10" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-semibold text-base text-foreground">Generating Storyboard</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Converting beat script into production-ready 3D CGI storyboard prompts...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Page Loader Overlay for Video Generation */}
+      {isGeneratingVideo && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-start pt-[180px] bg-background/80 backdrop-blur-md transition-all animate-in fade-in-0 duration-200">
+          <div className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-card border border-border/80 shadow-2xl max-w-sm text-center">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <Loader2 className="w-10 h-10 animate-spin text-primary relative z-10" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-semibold text-base text-foreground">Generating Video Payload</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Extracting scene beats & dialogue to build video animation prompt...
+              </p>
             </div>
           </div>
         </div>

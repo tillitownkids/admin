@@ -1,6 +1,7 @@
 import { FileText, CheckSquare, Image as ImageIcon, Tv, TrendingUp, Users, ArrowRight, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { DashboardSettings } from "@/components/DashboardSettings";
+import { CreditsSection } from "@/components/CreditsSection";
 import { PageHeader } from "@/components/PageHeader";
 
 export default function Home() {  
@@ -35,6 +36,9 @@ export default function Home() {
           </div>
         ))}
       </div>
+
+      {/* Credits & Usage Section */}
+      <CreditsSection />
 
       <DashboardSettings />
 

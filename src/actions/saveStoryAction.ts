@@ -97,7 +97,7 @@ export async function saveGeneratedStoryAction(payload: {
     let story;
 
     if (id) {
-      // Update existing story
+     
       try {
         const { data, error } = await supabase
           .from('Story')
@@ -117,7 +117,7 @@ export async function saveGeneratedStoryAction(payload: {
         });
       }
     } else {
-      // Create new story
+      
       try {
         const { data, error } = await supabase
           .from('Story')
