@@ -9,6 +9,8 @@ import { LocationsStage } from '@/components/episode-production/LocationsStage';
 import { ReferencesStage } from '@/components/episode-production/ReferencesStage';
 import { ScenesStage } from '@/components/episode-production/ScenesStage';
 import { StoryboardsStage } from '@/components/episode-production/StoryboardsStage';
+import { VideoStage } from '@/components/episode-production/VideoStage';
+
 
 import type {
   StoryRow,
@@ -71,19 +73,39 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
   };
 
   const fetchScenes = async (locations: EpisodeLocationRow[]) => {
-    if (locations.length === 0) {
-      setScenes([]);
-      return;
+    try {
+      const res = await fetch(`/api/scenes?storyId=${storyId}`);
+      if (res.ok) {
+        const data = await res.json();
+        const rawScenes = data.scenes || [];
+        if (rawScenes.length > 0) {
+          const formatted = rawScenes.map((s: any) => {
+            const matchedLoc = locations.find((el) => el.id === s.episode_location_id);
+            const locName = matchedLoc?.Location?.name || s.EpisodeLocation?.Location?.name || s.locationName || '';
+            return { ...s, locationName: locName };
+          });
+          setScenes(formatted);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch scenes by storyId:', err);
     }
-    const entries = await Promise.all(
-      locations.map(async (el) => {
-        const res = await fetch(`/api/scenes?episodeLocationId=${el.id}`);
-        const data = res.ok ? await res.json() : { scenes: [] };
-        return (data.scenes || []).map((s: Omit<SceneRow, 'locationName'>) => ({ ...s, locationName: el.Location.name }));
-      })
-    );
-    setScenes(entries.flat());
+
+    if (locations.length > 0) {
+      const entries = await Promise.all(
+        locations.map(async (el) => {
+          const res = await fetch(`/api/scenes?episodeLocationId=${el.id}`);
+          const data = res.ok ? await res.json() : { scenes: [] };
+          return (data.scenes || []).map((s: Omit<SceneRow, 'locationName'>) => ({ ...s, locationName: el.Location.name }));
+        })
+      );
+      setScenes(entries.flat());
+    } else {
+      setScenes([]);
+    }
   };
+
 
   const patchStage = async (stage: string) => {
     const res = await fetch(`/api/stories/${storyId}`, {
@@ -201,11 +223,19 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
 
 
         {activeStage === 'video' && (
-          <div className="p-12 text-center border border-dashed border-border/80 rounded-xl space-y-2 bg-card/40">
-            <h3 className="text-lg font-bold text-foreground">Video Stage</h3>
-            <p className="text-sm text-muted-foreground">Will be configured in the next step.</p>
-          </div>
+          <VideoStage
+            scenes={scenes}
+            characters={characters}
+            episodeLocations={episodeLocations}
+            onRefetchScenes={async () => {
+              await fetchScenes(episodeLocations);
+            }}
+            onConfirmed={async () => {
+              await patchStage('complete');
+            }}
+          />
         )}
+
       </GlassPanel>
     </div>
   );

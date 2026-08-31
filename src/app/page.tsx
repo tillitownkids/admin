@@ -1,10 +1,46 @@
-import { FileText, CheckSquare, Image as ImageIcon, Tv, TrendingUp, Users, ArrowRight, LayoutDashboard } from "lucide-react";
-import Link from "next/link";
-import { DashboardSettings } from "@/components/DashboardSettings";
-import { CreditsSection } from "@/components/CreditsSection";
-import { PageHeader } from "@/components/PageHeader";
+'use client';
 
-export default function Home() {  
+import { useEffect, useState } from 'react';
+import { FileText, CheckSquare, Image as ImageIcon, Tv, ArrowRight, LayoutDashboard, Film, Sparkles, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { DashboardSettings } from '@/components/DashboardSettings';
+import { CreditsSection } from '@/components/CreditsSection';
+import { PageHeader } from '@/components/PageHeader';
+import { getRecentActivityAction, type RecentActivityItem } from '@/actions/getRecentActivityAction';
+
+export default function Home() {
+  const [activities, setActivities] = useState<RecentActivityItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setIsLoading(true);
+      try {
+        const res = await getRecentActivityAction();
+        if (res.success && res.activities) {
+          setActivities(res.activities);
+        }
+      } catch (err) {
+        console.error('Failed to load recent activities:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+  }, []);
+
+  const getActivityIcon = (type: RecentActivityItem['type']) => {
+    switch (type) {
+      case 'story':
+        return <FileText size={18} className="text-primary" />;
+      case 'script':
+        return <Sparkles size={18} className="text-amber-500" />;
+      case 'storyboard':
+        return <ImageIcon size={18} className="text-emerald-500" />;
+      case 'video':
+        return <Film size={18} className="text-sky-500" />;
+    }
+  };
+
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
       <PageHeader
@@ -24,7 +60,7 @@ export default function Home() {
         ].map((stat, i) => (
           <div
             key={i}
-            className="group bg-card text-card-foreground p-4 rounded-xl border border-border flex flex-col justify-between transition- relative overflow-hidden"
+            className="group bg-card text-card-foreground p-4 rounded-xl border border-border flex flex-col justify-between relative overflow-hidden"
           >
             <div className="flex items-start justify-between mb-3">
               <div className="text-sm font-medium text-muted-foreground">{stat.title}</div>
@@ -43,32 +79,51 @@ export default function Home() {
       <DashboardSettings />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Recent Activity */}
+        {/* Dynamic Recent Activity */}
         <div className="lg:col-span-2 bg-card text-card-foreground rounded-xl border border-border flex flex-col">
           <div className="p-5 border-b border-border flex items-center justify-between">
             <h2 className="text-lg font-semibold tracking-tight">Recent Activity</h2>
-            <button className="text-sm text-primary hover:underline">View all</button>
+            <Link href="/episode-production" className="text-sm text-primary hover:underline font-medium">
+              View all
+            </Link>
           </div>
+
           <div className="flex flex-col divide-y divide-border">
-            {[1, 2, 3, 4].map((i) => (
-              <div
-                key={i}
-                className="group flex items-center gap-4 p-5 hover:bg-muted/30 transition-colors"
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                  <Users size={18} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm text-foreground truncate">
-                    New script &quot;Summer Special&quot; generated
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">2 hours ago by Sarah</div>
-                </div>
-                <button className="hidden sm:flex items-center justify-center w-8 h-8 rounded-full bg-secondary text-secondary-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary hover:text-primary-foreground">
-                  <ArrowRight size={14} />
-                </button>
+            {isLoading ? (
+              <div className="p-8 text-center text-muted-foreground text-sm flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                Loading recent activity...
               </div>
-            ))}
+            ) : activities.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground text-sm">
+                No recent activity recorded yet.
+              </div>
+            ) : (
+              activities.map((item) => (
+                <Link
+                  key={item.id}
+                  href={item.href}
+                  className="group flex items-center gap-4 p-5 hover:bg-muted/30 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full bg-muted/60 flex items-center justify-center shrink-0">
+                    {getActivityIcon(item.type)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm text-foreground truncate group-hover:text-primary transition-colors">
+                      {item.title}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+                      <span>{item.timeAgo}</span>
+                      <span>•</span>
+                      <span className="truncate">{item.subtitle}</span>
+                    </div>
+                  </div>
+                  <div className="hidden sm:flex items-center justify-center w-8 h-8 rounded-full bg-secondary text-secondary-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary hover:text-primary-foreground shrink-0">
+                    <ArrowRight size={14} />
+                  </div>
+                </Link>
+              ))
+            )}
           </div>
         </div>
 

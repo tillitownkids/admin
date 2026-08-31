@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    let character;
+    let character: any = null;
     try {
       character = await prisma.character.findUnique({
         where: { id }
@@ -35,23 +35,33 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
-    const { name, description, reference_image_url } = body;
+    const { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
 
-    const updatePayload: Record<string, any> = { updated_at: new Date().toISOString() };
+    const updatePayload: Record<string, any> = { updated_at: new Date() };
     if (name !== undefined) updatePayload.name = name;
     if (description !== undefined) updatePayload.description = description;
     if (reference_image_url !== undefined) updatePayload.reference_image_url = reference_image_url;
+    if (magnific_identifier !== undefined) updatePayload.magnific_identifier = magnific_identifier;
+    if (generated_image_url !== undefined) updatePayload.generated_image_url = generated_image_url;
 
-    let character;
+    let character: any = null;
     try {
       character = await prisma.character.update({
         where: { id },
         data: updatePayload
       });
-    } catch {
+    } catch (e) {
+      console.warn('Prisma character update failed, falling back to Supabase:', e);
+    }
+
+    if (!character) {
+      const supabasePayload = {
+        ...updatePayload,
+        updated_at: new Date().toISOString(),
+      };
       const { data, error } = await supabase
         .from('Character')
-        .update(updatePayload)
+        .update(supabasePayload)
         .eq('id', id)
         .select()
         .single();

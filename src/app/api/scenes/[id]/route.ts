@@ -2,18 +2,61 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
 
+import { processAndUploadStoryboardImage, processAndUploadSceneVideo } from '@/lib/storage';
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const body = await req.json();
-    const { storyboard_prompt, storyboard_image_url, storyboard_status, beats_status, description } = body;
+    const {
+      storyboard_prompt,
+      storyboard_image_url,
+      storyboard_status,
+      beats_status,
+      description,
+      magnific_identifier,
+      video_prompt,
+      video_url,
+      video_magnific_identifier,
+    } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date() };
     if (storyboard_prompt !== undefined) updatePayload.storyboard_prompt = storyboard_prompt;
-    if (storyboard_image_url !== undefined) updatePayload.storyboard_image_url = storyboard_image_url;
+
+    if (storyboard_image_url !== undefined) {
+      let permanentUrl = storyboard_image_url;
+      if (storyboard_image_url && typeof storyboard_image_url === 'string' && storyboard_image_url.startsWith('http')) {
+        try {
+          permanentUrl = await processAndUploadStoryboardImage(storyboard_image_url, magnific_identifier, id);
+        } catch (err) {
+          console.warn('Failed to upload storyboard image to permanent storage, using original URL:', err);
+        }
+      }
+      updatePayload.storyboard_image_url = permanentUrl;
+    }
+
     if (storyboard_status !== undefined) updatePayload.storyboard_status = storyboard_status;
     if (beats_status !== undefined) updatePayload.beats_status = beats_status;
     if (description !== undefined) updatePayload.description = description;
+    if (magnific_identifier !== undefined) updatePayload.magnific_identifier = magnific_identifier;
+    if (video_prompt !== undefined) updatePayload.video_prompt = video_prompt;
+
+    if (video_url !== undefined) {
+      let permanentVideoUrl = video_url;
+      if (video_url && typeof video_url === 'string' && video_url.startsWith('http')) {
+        try {
+          permanentVideoUrl = await processAndUploadSceneVideo(video_url, video_magnific_identifier, id);
+        } catch (err) {
+          console.warn('Failed to upload scene video to permanent storage, using original URL:', err);
+        }
+      }
+      updatePayload.video_url = permanentVideoUrl;
+    }
+
+    if (video_magnific_identifier !== undefined) updatePayload.video_magnific_identifier = video_magnific_identifier;
+
+
+
 
     let scene: any = null;
 

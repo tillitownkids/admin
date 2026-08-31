@@ -5,8 +5,8 @@ import { Image as ImageIcon, Sparkles, Loader2, Check, RefreshCw, ExternalLink, 
 
 
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
-import { logPayloadAction } from '@/actions/logPayloadAction';
 import type { CharacterRow, EpisodeLocationRow, SceneRow } from './types';
+
 
 
 interface StoryboardsStageProps {
@@ -21,25 +21,63 @@ function extractImageUrl(data: any): string | null {
   if (!data) return null;
   if (typeof data === 'string' && data.startsWith('http')) return data;
 
-  // n8n format: data.result.results.url or data.result.results.thumbnailUrl
-  if (data.result?.results?.url) return data.result.results.url;
-  if (data.result?.results?.thumbnailUrl) return data.result.results.thumbnailUrl;
-  if (data.result?.url) return data.result.url;
+  const d = data.json || data;
 
-  // Standard format: data.results.url or data.url / data.imageUrl
-  if (data.results?.url) return data.results.url;
-  if (data.results?.thumbnailUrl) return data.results.thumbnailUrl;
-  if (data.url) return data.url;
-  if (data.imageUrl) return data.imageUrl;
-  if (data.thumbnailUrl) return data.thumbnailUrl;
+  // 1. Direct url or results.url on item
+  if (d.results?.url) return d.results.url;
+  if (d.results?.thumbnailUrl) return d.results.thumbnailUrl;
+  if (Array.isArray(d.results) && d.results[0]?.url) return d.results[0].url;
+  if (d.url) return d.url;
+  if (d.imageUrl) return d.imageUrl;
+  if (d.thumbnailUrl) return d.thumbnailUrl;
 
-  // Array format
+  // 2. Check scenes array inside result or root
+  const scenes = Array.isArray(d.result?.scenes) ? d.result.scenes : Array.isArray(d.scenes) ? d.scenes : null;
+  if (scenes && scenes[0]) {
+    const scUrl = extractImageUrl(scenes[0]);
+    if (scUrl) return scUrl;
+  }
+
+  // 3. Check result.results or result.url
+  if (d.result?.results?.url) return d.result.results.url;
+  if (d.result?.results?.thumbnailUrl) return d.result.results.thumbnailUrl;
+  if (Array.isArray(d.result?.results) && d.result.results[0]?.url) return d.result.results[0].url;
+  if (d.result?.url) return d.result.url;
+
+  // 4. Array format
   if (Array.isArray(data) && data[0]) {
     return extractImageUrl(data[0]);
   }
 
   return null;
 }
+
+function extractMagnificIdentifier(data: any): string | null {
+  if (!data) return null;
+  if (typeof data === 'string') return null;
+
+  const d = data.json || data;
+
+  if (d.identifier) return d.identifier;
+  if (d.magnific_identifier) return d.magnific_identifier;
+  if (d.magnific_id) return d.magnific_id;
+  if (d.results?.identifier) return d.results.identifier;
+
+  const scenes = Array.isArray(d.result?.scenes) ? d.result.scenes : Array.isArray(d.scenes) ? d.scenes : null;
+  if (scenes && scenes[0]) {
+    const magId = extractMagnificIdentifier(scenes[0]);
+    if (magId) return magId;
+  }
+
+  if (d.result?.identifier) return d.result.identifier;
+  if (d.result?.results?.identifier) return d.result.results.identifier;
+  if (Array.isArray(data) && data[0]) return extractMagnificIdentifier(data[0]);
+  return null;
+}
+
+
+
+
 
 export function StoryboardsStage({
   scenes,
@@ -52,10 +90,16 @@ export function StoryboardsStage({
   const [isConfirming, setIsConfirming] = useState(false);
   const [globalMessage, setGlobalMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [generatedUrls, setGeneratedUrls] = useState<Record<string, string>>({});
+  const [pendingUpdates, setPendingUpdates] = useState<Record<string, { url: string; magnificId?: string | null }>>({});
   const [lastPayload, setLastPayload] = useState<any | null>(null);
   const [showPayloadDebug, setShowPayloadDebug] = useState(false);
 
   const sortedScenes = [...scenes].sort((a, b) => a.scene_number - b.scene_number || a.order_index - b.order_index);
+
+  // Pending / Un-generated scenes
+  const pendingScenes = sortedScenes.filter(
+    (scene) => !scene.storyboard_image_url && !generatedUrls[scene.id]
+  );
 
   // Helper to build individual scene payload item matching n8n format
   const buildPayloadItem = (scene: SceneRow, sceneIdx: number) => {
@@ -96,11 +140,6 @@ export function StoryboardsStage({
     };
   };
 
-  // Pending / Un-generated scenes
-  const pendingScenes = sortedScenes.filter(
-    (scene) => !scene.storyboard_image_url && !generatedUrls[scene.id]
-  );
-
   // Group Generation ("Generate All Storyboards")
   const handleGenerateAll = async () => {
     const scenesToGenerate = pendingScenes.length > 0 ? pendingScenes : sortedScenes;
@@ -115,15 +154,8 @@ export function StoryboardsStage({
       );
 
       const fullPayload = { scenes: payloadScenes };
-      setLastPayload(fullPayload);
-      await logPayloadAction(
-        pendingScenes.length > 0
-          ? `GENERATE UNGENERATED STORYBOARDS (${scenesToGenerate.length})`
-          : `REGENERATE ALL STORYBOARDS (${scenesToGenerate.length})`,
-        fullPayload
-      );
 
-      const res = await fetch('https://n8n.roastnest.com/webhook-test/generate-storyboard', {
+      const res = await fetch('https://n8n.roastnest.com/webhook/generate-storyboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullPayload),
@@ -134,69 +166,101 @@ export function StoryboardsStage({
       }
 
       const data = await res.json().catch(() => null);
-      console.log('=== GENERATE STORYBOARDS RESPONSE ===', data);
 
-      const newUrls: Record<string, string> = {};
+
+      const newUrls: Record<string, { url: string; magnificId?: string | null }> = {};
       if (Array.isArray(data)) {
         data.forEach((item: any, idx: number) => {
-          const targetScene = scenesToGenerate[idx];
+          const itemId = item.id || item.sceneId || item.scene_id || item.result?.id || item.result?.sceneId;
+          const targetScene = sortedScenes.find((s) => s.id === itemId) || scenesToGenerate[idx] || sortedScenes[idx];
           const url = extractImageUrl(item);
+          const magId = extractMagnificIdentifier(item);
           if (targetScene && url) {
-            newUrls[targetScene.id] = url;
+            newUrls[targetScene.id] = { url, magnificId: magId };
           }
         });
       } else if (data && typeof data === 'object') {
-        if (Array.isArray(data.scenes)) {
-          data.scenes.forEach((item: any, idx: number) => {
-            const targetScene = scenesToGenerate.find((s) => s.id === item.id) || scenesToGenerate[idx];
+        const scenesArr = Array.isArray(data.scenes)
+          ? data.scenes
+          : Array.isArray(data.result?.scenes)
+          ? data.result.scenes
+          : null;
+
+        if (scenesArr) {
+          scenesArr.forEach((item: any, idx: number) => {
+            const itemId = item.id || item.sceneId || item.scene_id || item.result?.id || item.result?.sceneId;
+            const targetScene = sortedScenes.find((s) => s.id === itemId) || scenesToGenerate[idx] || sortedScenes[idx];
             const url = extractImageUrl(item);
+            const magId = extractMagnificIdentifier(item);
             if (targetScene && url) {
-              newUrls[targetScene.id] = url;
+              newUrls[targetScene.id] = { url, magnificId: magId };
             }
           });
         } else {
           const url = extractImageUrl(data);
-          if (url && scenesToGenerate.length > 0) {
-            newUrls[scenesToGenerate[0].id] = url;
+          const magId = extractMagnificIdentifier(data);
+          if (url && sortedScenes.length > 0) {
+            const targetScene = scenesToGenerate[0] || sortedScenes[0];
+            newUrls[targetScene.id] = { url, magnificId: magId };
           }
         }
       }
 
+
       if (Object.keys(newUrls).length > 0) {
-        setGeneratedUrls((prev) => ({ ...prev, ...newUrls }));
-        await Promise.all(
-          Object.entries(newUrls).map(([scId, imgUrl]) =>
-            fetch(`/api/scenes/${scId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ storyboard_image_url: imgUrl, storyboard_status: 'generated' }),
-            })
-          )
-        );
-        await onRefetchScenes();
-        setGlobalMessage({ type: 'success', text: `Successfully generated ${Object.keys(newUrls).length} storyboard(s)!` });
+        const urlMap: Record<string, string> = {};
+        Object.entries(newUrls).forEach(([scId, info]) => {
+          urlMap[scId] = info.url;
+        });
+        setGeneratedUrls((prev) => ({ ...prev, ...urlMap }));
+        setPendingUpdates((prev) => ({ ...prev, ...newUrls }));
+        setGlobalMessage({ type: 'success', text: 'Operation successful' });
       } else {
-        setGlobalMessage({ type: 'success', text: 'Payload sent to webhook successfully!' });
+        setGlobalMessage({ type: 'success', text: 'Operation successful' });
       }
+
     } catch (err: any) {
       console.error('Error generating storyboards:', err);
-      setGlobalMessage({ type: 'error', text: err.message || 'Failed to generate storyboards.' });
+      setGlobalMessage({ type: 'error', text: err.message || 'Operation failed' });
     } finally {
       setIsGeneratingAll(false);
     }
   };
 
 
-
+  const handleSingleGenerated = (sceneId: string, url: string, magnificId?: string | null) => {
+    setGeneratedUrls((prev) => ({ ...prev, [sceneId]: url }));
+    setPendingUpdates((prev) => ({ ...prev, [sceneId]: { url, magnificId } }));
+  };
 
   const handleConfirmClick = async () => {
     setIsConfirming(true);
     try {
+      if (Object.keys(pendingUpdates).length > 0) {
+        await Promise.all(
+          Object.entries(pendingUpdates).map(([scId, info]) =>
+            fetch(`/api/scenes/${scId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                storyboard_image_url: info.url,
+                storyboard_status: 'generated',
+                magnific_identifier: info.magnificId || undefined,
+              }),
+            })
+          )
+        );
+        await onRefetchScenes();
+      }
       await onConfirmed();
+    } catch (err: any) {
+      console.error('Error confirming storyboards:', err);
+      setGlobalMessage({ type: 'error', text: err.message || 'Failed to save confirmed storyboards.' });
     } finally {
       setIsConfirming(false);
     }
   };
+
 
   return (
     <div className="space-y-6">
@@ -212,16 +276,6 @@ export function StoryboardsStage({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {lastPayload && (
-            <button
-              type="button"
-              onClick={() => setShowPayloadDebug(!showPayloadDebug)}
-              className={secondaryButtonClass}
-            >
-              <Code className="w-4 h-4" />
-              {showPayloadDebug ? 'Hide Debug' : 'View Payload'}
-            </button>
-          )}
           <button
             type="button"
             onClick={handleGenerateAll}
@@ -233,11 +287,8 @@ export function StoryboardsStage({
               ? `Generate All Storyboards (${pendingScenes.length} remaining)`
               : `Regenerate All Storyboards (${sortedScenes.length})`}
           </button>
-
-
         </div>
       </div>
-
 
       {globalMessage && (
         <div
@@ -251,15 +302,6 @@ export function StoryboardsStage({
         </div>
       )}
 
-      {/* Debug Payload view */}
-      {showPayloadDebug && lastPayload && (
-        <div className="p-4 rounded-xl border border-border bg-black/90 text-emerald-400 space-y-2 font-mono text-xs overflow-x-auto">
-          <div className="flex items-center justify-between text-muted-foreground font-sans">
-            <span>Last Webhook Payload Sent to https://n8n.roastnest.com/webhook-test/generate-storyboard:</span>
-          </div>
-          <pre>{JSON.stringify(lastPayload, null, 2)}</pre>
-        </div>
-      )}
 
       {/* Scene Items */}
       <div className="space-y-4">
@@ -272,8 +314,9 @@ export function StoryboardsStage({
             episodeLocations={episodeLocations}
             overrideImageUrl={generatedUrls[scene.id]}
             buildPayloadItem={buildPayloadItem}
-            onRefetch={onRefetchScenes}
+            onSingleGenerated={handleSingleGenerated}
           />
+
         ))}
       </div>
 
@@ -300,7 +343,7 @@ function StoryboardItem({
   episodeLocations,
   overrideImageUrl,
   buildPayloadItem,
-  onRefetch,
+  onSingleGenerated,
 }: {
   scene: SceneRow;
   sceneIdx: number;
@@ -308,7 +351,7 @@ function StoryboardItem({
   episodeLocations: EpisodeLocationRow[];
   overrideImageUrl?: string;
   buildPayloadItem: (scene: SceneRow, sceneIdx: number) => any;
-  onRefetch: () => Promise<void>;
+  onSingleGenerated: (sceneId: string, url: string, magnificId?: string | null) => void;
 }) {
   const [isGeneratingSingle, setIsGeneratingSingle] = useState(false);
   const [returnedUrl, setReturnedUrl] = useState<string | null>(overrideImageUrl || scene.storyboard_image_url);
@@ -339,12 +382,8 @@ function StoryboardItem({
       );
       const payload = { scenes: [sceneItem] };
 
-
-      console.log(`=== GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number}) PAYLOAD ===`, payload);
-      await logPayloadAction(`GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number || sceneIdx + 1})`, payload);
-
       // 2. Send HTTP POST request to webhook
-      const res = await fetch('https://n8n.roastnest.com/webhook-test/generate-storyboard', {
+      const res = await fetch('https://n8n.roastnest.com/webhook/generate-storyboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -355,26 +394,22 @@ function StoryboardItem({
       }
 
       const data = await res.json().catch(() => null);
-      console.log(`=== GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number}) RESPONSE ===`, data);
+
 
       const imgUrl = extractImageUrl(data);
-
+      const magId = extractMagnificIdentifier(data);
 
       if (imgUrl) {
         setReturnedUrl(imgUrl);
-        await fetch(`/api/scenes/${scene.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storyboard_image_url: imgUrl, storyboard_status: 'generated' }),
-        });
-        await onRefetch();
-        setStatusMessage('Storyboard generated successfully!');
+        onSingleGenerated(scene.id, imgUrl, magId);
+        setStatusMessage('Operation successful');
       } else {
-        setStatusMessage('Payload sent to webhook successfully!');
+        setStatusMessage('Operation successful');
       }
+
     } catch (err: any) {
       console.error('Error generating single storyboard:', err);
-      setError(err.message || 'Failed to generate storyboard.');
+      setError(err.message || 'Operation failed');
     } finally {
       setIsGeneratingSingle(false);
     }
@@ -382,7 +417,10 @@ function StoryboardItem({
 
 
 
-  const displayUrl = returnedUrl || scene.storyboard_image_url;
+
+
+  const displayUrl = overrideImageUrl || returnedUrl || scene.storyboard_image_url;
+
 
   return (
     <div className="p-5 rounded-xl border border-border bg-card space-y-4">
@@ -440,31 +478,27 @@ function StoryboardItem({
       </div>
 
 
-      {/* Returned Image & URL Display */}
+      {/* Returned Image Display */}
       {displayUrl && (
         <div className="space-y-2 pt-2 border-t border-border/50">
           <label className={labelClass}>Generated Storyboard Image</label>
-          <div className="space-y-2">
+          <a
+            href={displayUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Click to open image in new tab"
+            className="block max-w-md cursor-pointer group overflow-hidden rounded-xl border border-border"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={displayUrl}
               alt={`Scene ${scene.scene_number}`}
-              className="w-full max-w-md rounded-xl border border-border object-cover max-h-[300px]"
+              className="w-full object-cover max-h-[300px] transition-transform duration-200 group-hover:scale-[1.02]"
             />
-            <div className="flex items-center gap-2 text-xs bg-muted/40 p-2.5 rounded-lg border border-border/50 max-w-md">
-              <ExternalLink className="w-3.5 h-3.5 text-primary shrink-0" />
-              <a
-                href={displayUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-primary hover:underline truncate"
-              >
-                {displayUrl}
-              </a>
-            </div>
-          </div>
+          </a>
         </div>
       )}
+
 
       {/* Actions */}
       <div className="pt-2 flex justify-end">
