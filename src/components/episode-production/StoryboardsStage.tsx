@@ -41,6 +41,19 @@ function extractImageUrl(data: any): string | null {
   return null;
 }
 
+function extractMagnificIdentifier(data: any): string | null {
+  if (!data) return null;
+  if (data.result?.identifier) return data.result.identifier;
+  if (data.result?.results?.identifier) return data.result.results.identifier;
+  if (data.identifier) return data.identifier;
+  if (data.magnific_identifier) return data.magnific_identifier;
+  if (data.magnific_id) return data.magnific_id;
+  if (Array.isArray(data) && data[0]) return extractMagnificIdentifier(data[0]);
+  return null;
+}
+
+
+
 export function StoryboardsStage({
   scenes,
   characters,
@@ -52,10 +65,16 @@ export function StoryboardsStage({
   const [isConfirming, setIsConfirming] = useState(false);
   const [globalMessage, setGlobalMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [generatedUrls, setGeneratedUrls] = useState<Record<string, string>>({});
+  const [pendingUpdates, setPendingUpdates] = useState<Record<string, { url: string; magnificId?: string | null }>>({});
   const [lastPayload, setLastPayload] = useState<any | null>(null);
   const [showPayloadDebug, setShowPayloadDebug] = useState(false);
 
   const sortedScenes = [...scenes].sort((a, b) => a.scene_number - b.scene_number || a.order_index - b.order_index);
+
+  // Pending / Un-generated scenes
+  const pendingScenes = sortedScenes.filter(
+    (scene) => !scene.storyboard_image_url && !generatedUrls[scene.id]
+  );
 
   // Helper to build individual scene payload item matching n8n format
   const buildPayloadItem = (scene: SceneRow, sceneIdx: number) => {
@@ -96,11 +115,6 @@ export function StoryboardsStage({
     };
   };
 
-  // Pending / Un-generated scenes
-  const pendingScenes = sortedScenes.filter(
-    (scene) => !scene.storyboard_image_url && !generatedUrls[scene.id]
-  );
-
   // Group Generation ("Generate All Storyboards")
   const handleGenerateAll = async () => {
     const scenesToGenerate = pendingScenes.length > 0 ? pendingScenes : sortedScenes;
@@ -119,7 +133,7 @@ export function StoryboardsStage({
       await logPayloadAction(
         pendingScenes.length > 0
           ? `GENERATE UNGENERATED STORYBOARDS (${scenesToGenerate.length})`
-          : `REGENERATE ALL STORYBOARDS (${scenesToGenerate.length})`,
+          : `REGENERATE ALL STORYBOARDs (${scenesToGenerate.length})`,
         fullPayload
       );
 
@@ -136,13 +150,14 @@ export function StoryboardsStage({
       const data = await res.json().catch(() => null);
       console.log('=== GENERATE STORYBOARDS RESPONSE ===', data);
 
-      const newUrls: Record<string, string> = {};
+      const newUrls: Record<string, { url: string; magnificId?: string | null }> = {};
       if (Array.isArray(data)) {
         data.forEach((item: any, idx: number) => {
           const targetScene = scenesToGenerate[idx];
           const url = extractImageUrl(item);
+          const magId = extractMagnificIdentifier(item);
           if (targetScene && url) {
-            newUrls[targetScene.id] = url;
+            newUrls[targetScene.id] = { url, magnificId: magId };
           }
         });
       } else if (data && typeof data === 'object') {
@@ -150,34 +165,35 @@ export function StoryboardsStage({
           data.scenes.forEach((item: any, idx: number) => {
             const targetScene = scenesToGenerate.find((s) => s.id === item.id) || scenesToGenerate[idx];
             const url = extractImageUrl(item);
+            const magId = extractMagnificIdentifier(item);
             if (targetScene && url) {
-              newUrls[targetScene.id] = url;
+              newUrls[targetScene.id] = { url, magnificId: magId };
             }
           });
         } else {
           const url = extractImageUrl(data);
+          const magId = extractMagnificIdentifier(data);
           if (url && scenesToGenerate.length > 0) {
-            newUrls[scenesToGenerate[0].id] = url;
+            newUrls[scenesToGenerate[0].id] = { url, magnificId: magId };
           }
         }
       }
 
       if (Object.keys(newUrls).length > 0) {
-        setGeneratedUrls((prev) => ({ ...prev, ...newUrls }));
-        await Promise.all(
-          Object.entries(newUrls).map(([scId, imgUrl]) =>
-            fetch(`/api/scenes/${scId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ storyboard_image_url: imgUrl, storyboard_status: 'generated' }),
-            })
-          )
-        );
-        await onRefetchScenes();
-        setGlobalMessage({ type: 'success', text: `Successfully generated ${Object.keys(newUrls).length} storyboard(s)!` });
+        const urlMap: Record<string, string> = {};
+        Object.entries(newUrls).forEach(([scId, info]) => {
+          urlMap[scId] = info.url;
+        });
+        setGeneratedUrls((prev) => ({ ...prev, ...urlMap }));
+        setPendingUpdates((prev) => ({ ...prev, ...newUrls }));
+        setGlobalMessage({
+          type: 'success',
+          text: `Generated ${Object.keys(newUrls).length} storyboard(s)! Click "Confirm Storyboards" below to save to database and proceed.`,
+        });
       } else {
         setGlobalMessage({ type: 'success', text: 'Payload sent to webhook successfully!' });
       }
+
     } catch (err: any) {
       console.error('Error generating storyboards:', err);
       setGlobalMessage({ type: 'error', text: err.message || 'Failed to generate storyboards.' });
@@ -186,17 +202,39 @@ export function StoryboardsStage({
     }
   };
 
-
-
+  const handleSingleGenerated = (sceneId: string, url: string, magnificId?: string | null) => {
+    setGeneratedUrls((prev) => ({ ...prev, [sceneId]: url }));
+    setPendingUpdates((prev) => ({ ...prev, [sceneId]: { url, magnificId } }));
+  };
 
   const handleConfirmClick = async () => {
     setIsConfirming(true);
     try {
+      if (Object.keys(pendingUpdates).length > 0) {
+        await Promise.all(
+          Object.entries(pendingUpdates).map(([scId, info]) =>
+            fetch(`/api/scenes/${scId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                storyboard_image_url: info.url,
+                storyboard_status: 'generated',
+                magnific_identifier: info.magnificId || undefined,
+              }),
+            })
+          )
+        );
+        await onRefetchScenes();
+      }
       await onConfirmed();
+    } catch (err: any) {
+      console.error('Error confirming storyboards:', err);
+      setGlobalMessage({ type: 'error', text: err.message || 'Failed to save confirmed storyboards.' });
     } finally {
       setIsConfirming(false);
     }
   };
+
 
   return (
     <div className="space-y-6">
@@ -272,8 +310,9 @@ export function StoryboardsStage({
             episodeLocations={episodeLocations}
             overrideImageUrl={generatedUrls[scene.id]}
             buildPayloadItem={buildPayloadItem}
-            onRefetch={onRefetchScenes}
+            onSingleGenerated={handleSingleGenerated}
           />
+
         ))}
       </div>
 
@@ -300,7 +339,7 @@ function StoryboardItem({
   episodeLocations,
   overrideImageUrl,
   buildPayloadItem,
-  onRefetch,
+  onSingleGenerated,
 }: {
   scene: SceneRow;
   sceneIdx: number;
@@ -308,7 +347,7 @@ function StoryboardItem({
   episodeLocations: EpisodeLocationRow[];
   overrideImageUrl?: string;
   buildPayloadItem: (scene: SceneRow, sceneIdx: number) => any;
-  onRefetch: () => Promise<void>;
+  onSingleGenerated: (sceneId: string, url: string, magnificId?: string | null) => void;
 }) {
   const [isGeneratingSingle, setIsGeneratingSingle] = useState(false);
   const [returnedUrl, setReturnedUrl] = useState<string | null>(overrideImageUrl || scene.storyboard_image_url);
@@ -339,7 +378,6 @@ function StoryboardItem({
       );
       const payload = { scenes: [sceneItem] };
 
-
       console.log(`=== GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number}) PAYLOAD ===`, payload);
       await logPayloadAction(`GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number || sceneIdx + 1})`, payload);
 
@@ -358,20 +396,16 @@ function StoryboardItem({
       console.log(`=== GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number}) RESPONSE ===`, data);
 
       const imgUrl = extractImageUrl(data);
-
+      const magId = extractMagnificIdentifier(data);
 
       if (imgUrl) {
         setReturnedUrl(imgUrl);
-        await fetch(`/api/scenes/${scene.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storyboard_image_url: imgUrl, storyboard_status: 'generated' }),
-        });
-        await onRefetch();
-        setStatusMessage('Storyboard generated successfully!');
+        onSingleGenerated(scene.id, imgUrl, magId);
+        setStatusMessage('Generated new storyboard preview! Click "Confirm Storyboards" below to save to database and proceed.');
       } else {
         setStatusMessage('Payload sent to webhook successfully!');
       }
+
     } catch (err: any) {
       console.error('Error generating single storyboard:', err);
       setError(err.message || 'Failed to generate storyboard.');
@@ -379,6 +413,7 @@ function StoryboardItem({
       setIsGeneratingSingle(false);
     }
   };
+
 
 
 

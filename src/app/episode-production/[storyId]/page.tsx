@@ -9,6 +9,8 @@ import { LocationsStage } from '@/components/episode-production/LocationsStage';
 import { ReferencesStage } from '@/components/episode-production/ReferencesStage';
 import { ScenesStage } from '@/components/episode-production/ScenesStage';
 import { StoryboardsStage } from '@/components/episode-production/StoryboardsStage';
+import { VideoStage } from '@/components/episode-production/VideoStage';
+
 
 import type {
   StoryRow,
@@ -201,11 +203,19 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
 
 
         {activeStage === 'video' && (
-          <div className="p-12 text-center border border-dashed border-border/80 rounded-xl space-y-2 bg-card/40">
-            <h3 className="text-lg font-bold text-foreground">Video Stage</h3>
-            <p className="text-sm text-muted-foreground">Will be configured in the next step.</p>
-          </div>
+          <VideoStage
+            scenes={scenes}
+            characters={characters}
+            episodeLocations={episodeLocations}
+            onRefetchScenes={async () => {
+              await fetchScenes(episodeLocations);
+            }}
+            onConfirmed={async () => {
+              await patchStage('complete');
+            }}
+          />
         )}
+
       </GlassPanel>
     </div>
   );

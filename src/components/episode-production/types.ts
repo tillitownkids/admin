@@ -38,7 +38,9 @@ export interface SceneRow {
   beats_status: string; // pending | generating | generated | approved
   order_index: number;
   locationName: string;
+  magnific_identifier?: string | null;
 }
+
 
 export interface BeatRow {
   id: string;

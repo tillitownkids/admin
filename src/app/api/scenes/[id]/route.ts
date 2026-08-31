@@ -6,7 +6,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
-    const { storyboard_prompt, storyboard_image_url, storyboard_status, beats_status, description } = body;
+    const { storyboard_prompt, storyboard_image_url, storyboard_status, beats_status, description, magnific_identifier } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date() };
     if (storyboard_prompt !== undefined) updatePayload.storyboard_prompt = storyboard_prompt;
@@ -14,6 +14,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (storyboard_status !== undefined) updatePayload.storyboard_status = storyboard_status;
     if (beats_status !== undefined) updatePayload.beats_status = beats_status;
     if (description !== undefined) updatePayload.description = description;
+    if (magnific_identifier !== undefined) updatePayload.magnific_identifier = magnific_identifier;
+
 
     let scene: any = null;
 
