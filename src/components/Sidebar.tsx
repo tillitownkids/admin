@@ -1,9 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon } from "lucide-react";
+import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
+import { signout } from "@/actions/auth";
+import type { User } from "@supabase/supabase-js";
 
 export const navItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -19,6 +23,25 @@ export const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const userInitial = user?.email ? user.email.charAt(0).toUpperCase() : "A";
+  const userEmail = user?.email ?? "Admin User";
 
   return (
     <aside className="w-[260px] h-screen bg-card border-r border-border flex flex-col sticky top-0 shrink-0 z-10">
@@ -31,7 +54,7 @@ export default function Sidebar() {
         </span>
       </div>
 
-      <div className="px-4 py-4">
+      <div className="px-4 py-4 overflow-y-auto flex-1">
         <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2">Main Menu</div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => {
@@ -63,14 +86,28 @@ export default function Sidebar() {
       </div>
 
       <div className="mt-auto border-t border-border/50 p-4">
-        <div className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-muted transition-colors cursor-pointer">
-          <div className="flex items-center justify-center w-9 h-9 bg-muted text-foreground border border-border rounded-full font-medium text-sm shrink-0">
-            A
+        <div className="flex items-center justify-between gap-3 px-2 py-2 rounded-lg bg-muted/30">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center justify-center w-9 h-9 bg-primary/15 text-primary border border-primary/20 rounded-full font-semibold text-sm shrink-0">
+              {userInitial}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="font-medium text-xs text-foreground truncate" title={userEmail}>
+                {userEmail}
+              </span>
+              <span className="text-[10px] text-muted-foreground truncate uppercase font-semibold">
+                Administrator
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col min-w-0">
-            <span className="font-medium text-sm text-foreground truncate">Admin User</span>
-            <span className="text-xs text-muted-foreground truncate">Super Admin</span>
-          </div>
+          <button
+            onClick={() => signout()}
+            className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors shrink-0"
+            title="Sign Out"
+            aria-label="Sign Out"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
       </div>
     </aside>

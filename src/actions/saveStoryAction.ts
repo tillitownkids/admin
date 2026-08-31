@@ -97,7 +97,7 @@ export async function saveGeneratedStoryAction(payload: {
     let story;
 
     if (id) {
-      // Update existing story
+     
       try {
         const { data, error } = await supabase
           .from('Story')
@@ -117,7 +117,7 @@ export async function saveGeneratedStoryAction(payload: {
         });
       }
     } else {
-      // Create new story
+      
       try {
         const { data, error } = await supabase
           .from('Story')
@@ -292,11 +292,13 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
 
       if (!elErr && elData) {
         locations = elData.map((el: any) => ({
-          id: el.id,
-          location_id: el.location_id,
+          id: el.location_id || el.id,
+          location_id: el.location_id || el.id,
+          episode_location_id: el.id,
           name: el.Location?.name || 'Unnamed Location',
           description: el.Location?.description || '',
-          reference_image_url: el.Location?.reference_image_url || el.stylesheet_image_url || null,
+          generated_image_url: el.Location?.generated_image_url || null,
+          reference_image_url: el.Location?.generated_image_url || el.Location?.reference_image_url || el.stylesheet_image_url || null,
           status: el.status,
           order_index: el.order_index
         }));
@@ -327,11 +329,13 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
           locations = elList.map((el: any) => {
             const locObj = locMap[el.location_id];
             return {
-              id: el.id,
-              location_id: el.location_id,
+              id: el.location_id || el.id,
+              location_id: el.location_id || el.id,
+              episode_location_id: el.id,
               name: locObj?.name || 'Unnamed Location',
               description: locObj?.description || '',
-              reference_image_url: locObj?.reference_image_url || el.stylesheet_image_url || null,
+              generated_image_url: locObj?.generated_image_url || null,
+              reference_image_url: locObj?.generated_image_url || locObj?.reference_image_url || el.stylesheet_image_url || null,
               status: el.status,
               order_index: el.order_index
             };
@@ -350,11 +354,13 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
         });
         if (elPrisma && elPrisma.length > 0) {
           locations = elPrisma.map((el) => ({
-            id: el.id,
-            location_id: el.location_id,
+            id: el.location_id || el.id,
+            location_id: el.location_id || el.id,
+            episode_location_id: el.id,
             name: el.Location?.name || 'Unnamed Location',
             description: el.Location?.description || '',
-            reference_image_url: el.Location?.reference_image_url || el.stylesheet_image_url || null,
+            generated_image_url: el.Location?.generated_image_url || null,
+            reference_image_url: el.Location?.generated_image_url || el.Location?.reference_image_url || el.stylesheet_image_url || null,
             status: el.status,
             order_index: el.order_index
           }));

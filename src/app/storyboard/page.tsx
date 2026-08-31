@@ -1,10 +1,10 @@
 "use client";
 
-import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin } from "lucide-react";
+import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin, Video } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { callAi } from "@/actions/actions";
-import { saveStoryboardScenesAction } from "@/actions/saveStoryboardAction";
+import { saveStoryboardScenesAction, buildStoryboardPayloadAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
 import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
 
@@ -22,9 +22,11 @@ interface StoryboardScene {
   scene_number: number;
   title: string;
   beat_numbers?: number[];
+  scene_script_beats?: string;
   description?: string;
   storyboard_prompt: string;
   location_name?: string;
+  character_names?: string[];
   episodeLocationId?: string;
 }
 
@@ -33,6 +35,63 @@ interface ChatMessage {
   content: string;
   summary?: string;
   updatedScenes?: StoryboardScene[];
+}
+
+function stripHtmlToMarkdown(text: string): string {
+  if (!text) return "";
+  if (!/<[a-z][\s\S]*>/i.test(text)) return text;
+
+  let cleaned = text;
+  cleaned = cleaned.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, "\n# $1\n");
+  cleaned = cleaned.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, "\n## $1\n");
+  cleaned = cleaned.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, "\n### $1\n");
+  cleaned = cleaned.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, "**$1**");
+  cleaned = cleaned.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, "**$1**");
+  cleaned = cleaned.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, "*$1*");
+  cleaned = cleaned.replace(/<u[^>]*>([\s\S]*?)<\/u>/gi, "$1");
+  cleaned = cleaned.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, "$1\n\n");
+  cleaned = cleaned.replace(/<br\s*\/?>/gi, "\n");
+  cleaned = cleaned.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
+  cleaned = cleaned.replace(/<\/?ul[^>]*>/gi, "\n");
+  cleaned = cleaned.replace(/<\/?ol[^>]*>/gi, "\n");
+  cleaned = cleaned.replace(/<[^>]+>/g, "");
+  cleaned = cleaned
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+  return cleaned.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function extractSceneBeats(fullScriptText: string, targetBeatNumbers?: number[]): string {
+  if (!fullScriptText) return "";
+
+  // Split script text by regex matching any beat header variation (e.g. ### **BEAT 1**, ### BEAT 1, **BEAT 1**, etc.)
+  const beatBlocks = fullScriptText.split(/(?=(?:###?\s*)?(?:\*\*)?\s*BEAT\s*\d+)/i);
+
+  if (targetBeatNumbers && targetBeatNumbers.length > 0) {
+    const matchedBlocks = beatBlocks.filter((block) => {
+      const match = block.match(/BEAT\s*(\d+)/i);
+      if (!match) return false;
+      const num = parseInt(match[1], 10);
+      return targetBeatNumbers.includes(num);
+    });
+
+    if (matchedBlocks.length > 0) {
+      return matchedBlocks.map((b) => b.trim()).join("\n\n---\n\n");
+    }
+  }
+
+  // Fallback if targetBeatNumbers was omitted or unmatched: slice only the first beat block
+  const validBeatBlocks = beatBlocks.filter((block) => /BEAT\s*\d+/i.test(block));
+  if (validBeatBlocks.length > 0) {
+    return validBeatBlocks.slice(0, 1).map((b) => b.trim()).join("\n\n---\n\n");
+  }
+
+  return fullScriptText.trim();
 }
 
 export default function StoryboardPage() {
@@ -46,10 +105,13 @@ export default function StoryboardPage() {
   const [isFetchingScripts, setIsFetchingScripts] = useState(true);
   const [generatedScenes, setGeneratedScenes] = useState<StoryboardScene[]>([]);
   const [storyLocations, setStoryLocations] = useState<any[]>([]);
+  const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
   
   // Confirmation state
   const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [targetSceneIndex, setTargetSceneIndex] = useState<number>(0);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
   // Brainstorm Chat Assistant State
@@ -118,19 +180,23 @@ export default function StoryboardPage() {
       } catch {
         // text is plain text string
       }
-      setPrompt(text);
+      setPrompt(stripHtmlToMarkdown(text));
       setGeneratedScenes([]);
       setSuccessBanner(null);
       setChatHistory([]);
 
-      // Fetch linked locations for this script/story
+      // Fetch linked locations and characters for this script/story
       getStoryCharactersAndLocationsAction(selectedScript)
         .then((res) => {
-          if (res.success && res.locations) {
-            setStoryLocations(res.locations);
+          if (res.success) {
+            setStoryLocations(res.locations || []);
+            setStoryCharacters(res.characters || []);
           }
         })
-        .catch(() => setStoryLocations([]));
+        .catch(() => {
+          setStoryLocations([]);
+          setStoryCharacters([]);
+        });
     }
   }, [selectedScript, scripts]);
 
@@ -169,6 +235,7 @@ export default function StoryboardPage() {
           description: scene.description,
           storyboardPrompt: scene.storyboard_prompt,
           locationName: scene.location_name,
+          characterNames: scene.character_names,
           episodeLocationId: scene.episodeLocationId,
         },
       ]);
@@ -201,6 +268,7 @@ export default function StoryboardPage() {
         description: scene.description,
         storyboardPrompt: scene.storyboard_prompt,
         locationName: scene.location_name,
+        characterNames: scene.character_names,
         episodeLocationId: scene.episodeLocationId,
       }));
 
@@ -292,10 +360,15 @@ export default function StoryboardPage() {
     setSuccessBanner(null);
 
     const locationPromptSection = storyLocations.length > 0
-      ? `AVAILABLE LOCATIONS FOR THIS EPISODE:
-${storyLocations.map(l => `- "${l.name}"`).join("\n")}
+      ? `OFFICIAL EPISODE LOCATIONS & DESCRIPTIONS:
+${storyLocations.map(l => `- "${l.name}": ${l.description || 'No visual description provided.'}`).join("\n")}
 
-Assign the exact matching location name in the "location_name" field for each scene.`
+Assign the exact matching location name in the "location_name" field for each scene. Use these official location descriptions directly to populate the Environment section for each scene prompt.`
+      : "";
+
+    const characterPromptSection = storyCharacters.length > 0
+      ? `OFFICIAL CHARACTER PROFILES FOR THIS STORY:
+${storyCharacters.map(c => `- ${c.name}: ${c.description || 'Standard character'}`).join("\n")}`
       : "";
 
     const storyboardAiPrompt = `You are a professional storyboard artist for a 3D animated children's series.
@@ -304,12 +377,32 @@ Your task is to convert the provided beat script into storyboard scenes
 and generate a production-ready storyboard image-generation prompt for
 each scene.
 
-The ONLY input available to you is the beat script.
+---
 
-Do not assume that character reference images, location reference images,
-style sheets, or other external assets are available.
+## STRICT CHARACTER FIDELITY & NO FABRICATION RULE (CRITICAL)
 
-Use only the information explicitly present in the beat script.
+1. NEVER INVENT, ASSUME, OR FABRICATE any physical traits, body mechanics, technological qualities, powers, or unstated equipment for any character.
+2. DO NOT describe any character as a robot, machine, mechanical companion, or as having wheels, engines, metallic parts, glowing eyes, or spinning compasses UNLESS those exact traits are explicitly stated in the provided official character profile or beat script.
+3. For example: If a character is named "Tilli", describe Tilli strictly as defined in the official character profile or script. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
+4. Keep all character descriptions 100% faithful to the official character profiles provided below. Only describe character clothing, expressions, posture, and physical actions relevant to each beat.
+
+${characterPromptSection}
+
+---
+
+## STRICT LOCATION FIDELITY & NO FABRICATION RULE (CRITICAL)
+
+1. NEVER INVENT OR FABRICATE futuristic, sci-fi, metallic, neon, or conflicting architectural features for any location.
+2. Build each scene's Environment section strictly using the official location descriptions provided below and the beat script details.
+3. Maintain environmental continuity (time of day, lighting, color palette, architectural style) across all panels in the same location.
+
+---
+
+## STRICT 3D CGI RENDER STYLE RULE (CRITICAL)
+
+1. EVERY storyboard_prompt MUST explicitly start with 3D CGI animation render style keywords: "Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI character models, crisp lighting, zero pencil lines."
+2. ABSOLUTELY FORBIDDEN: DO NOT use words that cause image generation models to render 2D hand-drawn sketches or pencil outlines. NEVER use keywords like "hand-drawn", "pencil sketch", "line art", "drawing", "illustration", "sketchbook", or "storybook sketch".
+3. Always frame each shot as a polished 3D CGI animation frame.
 
 ---
 
@@ -385,22 +478,25 @@ Use exactly this structure:
       "scene_number": 1,
       "title": "Short descriptive scene title",
       "location_name": "Location Name",
+      "character_names": ["Character Name 1", "Character Name 2"],
       "beat_numbers": [1, 2, 3],
+      "scene_script_beats": "Full exact text of all script beats grouped into this scene (including beat headers, [ACTION], [DIALOGUE], [CAMERA], [MOTION], and [SFX] lines).",
       "storyboard_prompt": "Complete prompt for generating this storyboard sheet."
     }
   ]
 }
 
-The storyboard_prompt should follow this structure:
+The storyboard_prompt MUST strictly follow this structure:
 
-"Create a [GRID] storyboard grid, [NUMBER] panels, for a full-color
-3D animated children's film.
+"Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.
+
+Create a [GRID] 3D animation panel grid, [NUMBER] panels, for a full-color 3D animated children's film.
 
 Scene: [short scene description]
 
 Environment: [location, time of day, lighting and important environmental details]
 
-Characters: [characters present and their appearance as described in the script]
+Characters: [characters present and strictly their appearance as explicitly defined in their official character profile without any added qualities or fictional traits]
 
 Panel 1: [visual description based on Beat 1]
 
@@ -408,7 +504,9 @@ Panel 2: [visual description based on Beat 2]
 
 ...
 
-Maintain visual continuity across all panels. Number each panel in the corner."
+Maintain 3D CGI visual continuity across all panels. Number each panel in the corner.
+
+Style Directive: Clean 3D CGI digital animation render only. No 2D sketches, no pencil outlines, no hand-drawn artwork."
 
 ---
 
@@ -446,6 +544,94 @@ ${prompt}`;
       setError(err?.message || "An error occurred while generating storyboard prompts.");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleGenerateVideo() {
+    if (!selectedScript || generatedScenes.length === 0) return;
+
+    setIsGeneratingVideo(true);
+    setError(null);
+    setSuccessBanner(null);
+
+    try {
+      const targetScene = generatedScenes[targetSceneIndex] || generatedScenes[0];
+      const targetImagePrompt = targetScene?.storyboard_prompt || "";
+      const sceneBeatsText = targetScene?.scene_script_beats || extractSceneBeats(prompt, targetScene?.beat_numbers);
+
+      // 1. Generate video animation prompt using callAi taking reference of both scene beats and imagePrompt
+      const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the following script beats and storyboard image prompt for a scene, and generate a concise, cinematic video animation description for video generation AI.
+
+Target Scene Script Beats (Contains exact dialogues, character actions, camera, motion, and SFX):
+"""
+${sceneBeatsText}
+"""
+
+Target Scene Storyboard Image Prompt (Visual Art Direction & Framing):
+"""
+${targetImagePrompt}
+"""
+
+Requirements:
+- MANDATORY DIALOGUE ATTRIBUTION & LIP-SYNC ACCURACY (CRITICAL):
+  1. Whenever a character speaks a dialogue line (e.g. JAKSH: "There's still so much to see."), you MUST explicitly tag the speaker name and quote the exact dialogue line: [Jaksh speaks: "There's still so much to see."].
+  2. NEVER assign, mix up, or blur dialogue lines between characters. Each dialogue line MUST be strictly attached to the correct character's name.
+  3. Explicitly state who is speaking and who is listening (e.g. "Jaksh opens his mouth and speaks: 'There's still so much to see.' while Tilli listens quietly.").
+  4. NEVER summarize dialogue as "he speaks his dialogue" or omit the spoken words.
+- Seamlessly combine the visual art direction of the storyboard prompt with the precise character actions, spoken dialogue lines, expressions, and motion cues from the script beats.
+- Describe sequential character actions, natural movement, and expressions across each beat in chronological order.
+- Begin with camera movement (e.g. gentle wide camera push, tracking shot).
+- End with a strong cinematic shot composition.
+- STRICT CHARACTER FIDELITY: NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
+- Output ONLY the plain text video animation prompt without headers, markdown, or commentary.
+
+Example format:
+Animate this storyboard as a cinematic children's film sequence. Begin with a gentle wide camera tracking shot following Jaksh and Tilli as they enter the bedroom. Jaksh walks ahead with bright energy, then turns back to Tilli with an eager smile and [Jaksh speaks: "There's still so much to see."] while Tilli listens quietly. Transition into a slow pan across the room's toys and drawings, ending on Tilli as his compass chest brightens with curiosity. As Jaksh notices Tilli's silence, Jaksh turns with concern and [Jaksh speaks: "Tilli? Do you remember something?"] while Tilli looks upward. Tilli's form settles, looking down at his chest as [Tilli speaks: "I remember a light. A very special light."] while Jaksh watches attentively. End with a gentle hold on Tilli's glowing compass chest. Preserve exact 3D CGI Pixar style, zero 2D sketch lines, and strict character visual fidelity throughout.`;
+
+      const generatedVideoResponse = await callAi(videoAiInstruction);
+      const videoPromptText = (typeof generatedVideoResponse === "string"
+        ? generatedVideoResponse
+        : (generatedVideoResponse as any)?.text || ""
+      ).trim();
+
+      // 2. Build input payload for the targeted scene
+      const payloadInput = [{
+        scriptId: selectedScript,
+        sceneNumber: targetScene.scene_number || targetSceneIndex + 1,
+        title: targetScene.title,
+        description: targetScene.description,
+        storyboardPrompt: targetScene.storyboard_prompt,
+        locationName: targetScene.location_name,
+        characterNames: targetScene.character_names,
+        episodeLocationId: targetScene.episodeLocationId,
+      }];
+
+      const res = await buildStoryboardPayloadAction(selectedScript, payloadInput, videoPromptText);
+
+      if (res.success && res.payload) {
+        
+        const webhookRes = await fetch("https://n8n.roastnest.com/webhook/generate-video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(res.payload),
+        });
+
+        const webhookData = await webhookRes.json().catch(() => ({}));
+
+        if (webhookRes.ok) {
+          setSuccessBanner(`Video prompt & payload for Scene #${targetScene.scene_number || targetSceneIndex + 1} sent to webhook successfully!`);
+        } else {
+          setSuccessBanner(`Video payload sent to webhook (Status: ${webhookRes.status})`);
+        }
+        setTimeout(() => setSuccessBanner(null), 5000);
+      } else {
+        setError(res.error || "Failed to generate video payload.");
+      }
+    } catch (err: any) {
+      console.error("Error generating video payload:", err);
+      setError(err?.message || "Failed to generate video payload.");
+    } finally {
+      setIsGeneratingVideo(false);
     }
   }
 
@@ -560,7 +746,42 @@ ${prompt}`;
           )}
 
           {/* Top Control Bar */}
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-3 flex-wrap">
+            <div className="flex items-center gap-2 border border-border/80 bg-card rounded-xl px-3 py-1.5 shadow-sm">
+              <span className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Target Scene:</span>
+              <select
+                value={targetSceneIndex}
+                onChange={(e) => setTargetSceneIndex(Number(e.target.value))}
+                disabled={isGeneratingVideo || generatedScenes.length === 0}
+                className="bg-transparent text-xs font-bold text-foreground focus:outline-none cursor-pointer disabled:opacity-50"
+              >
+                {generatedScenes.map((scene, idx) => (
+                  <option key={idx} value={idx}>
+                    Scene #{scene.scene_number || idx + 1}{scene.title ? `: ${scene.title}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGenerateVideo}
+              disabled={isGeneratingVideo || !selectedScript || generatedScenes.length === 0}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold shadow-sm hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer shrink-0"
+            >
+              {isGeneratingVideo ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating Video...
+                </>
+              ) : (
+                <>
+                  <Video className="w-4 h-4" />
+                  Generate Video
+                </>
+              )}
+            </button>
+
             <button
               type="button"
               onClick={handleConfirmAll}
@@ -765,6 +986,42 @@ ${prompt}`;
                   <Send className="w-4 h-4" />
                 </button>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Page Loader Overlay for Storyboard Generation */}
+      {isLoading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-start pt-[180px] bg-background/80 backdrop-blur-md transition-all animate-in fade-in-0 duration-200">
+          <div className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-card border border-border/80 shadow-2xl max-w-sm text-center">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <Loader2 className="w-10 h-10 animate-spin text-primary relative z-10" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-semibold text-base text-foreground">Generating Storyboard</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Converting beat script into production-ready 3D CGI storyboard prompts...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Page Loader Overlay for Video Generation */}
+      {isGeneratingVideo && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-start pt-[180px] bg-background/80 backdrop-blur-md transition-all animate-in fade-in-0 duration-200">
+          <div className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-card border border-border/80 shadow-2xl max-w-sm text-center">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+              <Loader2 className="w-10 h-10 animate-spin text-primary relative z-10" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-semibold text-base text-foreground">Generating Video Payload</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Extracting scene beats & dialogue to build video animation prompt...
+              </p>
             </div>
           </div>
         </div>

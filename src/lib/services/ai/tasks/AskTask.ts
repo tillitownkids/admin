@@ -22,6 +22,10 @@ User Requested Changes:
 Task:
 Revise the story by seamlessly incorporating the requested changes into the narrative while maintaining the warm bedtime tone, character personalities, and world rules.
 
+STRICT CHARACTER FIDELITY:
+- NEVER INVENT, ASSUME, OR FABRICATE physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character.
+- DO NOT describe any character as a robot, machine, mechanical companion, or as having wheels, engines, metallic parts, glowing eyes, or spinning compasses UNLESS explicitly stated in the story or character profile. Keep all character traits 100% faithful to their established definitions.
+
 FORMATTING REQUIREMENTS:
 - Start the story with a clear heading:
   # **[Story Title]**
