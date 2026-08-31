@@ -475,34 +475,33 @@ export async function getSavedStoryboardsAction() {
       where: { id: { in: uniqueStoryIds } }
     });
 
-    const scripts = await prisma.script.findMany({
-      where: { id: { in: uniqueStoryIds } }
-    });
-
     const storyLookup = new Map(stories.map(s => [s.id, s]));
-    const scriptLookup = new Map(scripts.map(s => [s.id, s]));
 
-    const result = uniqueStoryIds.map(id => {
-      const story = storyLookup.get(id);
-      const script = scriptLookup.get(id);
-      const topic = story?.topic || script?.topic || "Storyboard Episode";
-      const episode_number = story?.episode_number || script?.episode_number || "1";
-      const date = storyMap.get(id);
+    const result = uniqueStoryIds
+      .map(id => {
+        const story = storyLookup.get(id);
+        if (!story) return null;
+        const date = storyMap.get(id);
 
-      return {
-        id,
-        episode_number,
-        topic,
-        generated_at: date ? (typeof date === 'string' ? date : date.toISOString()) : new Date().toISOString(),
-        production_stage: story?.production_stage || 'storyboards',
-      };
-    });
+        return {
+          id: story.id,
+          episode_number: story.episode_number || "1",
+          topic: story.topic || "Untitled Storyboard",
+          generated_at: date ? (typeof date === 'string' ? date : date.toISOString()) : story.generated_at ? story.generated_at.toISOString() : new Date().toISOString(),
+          production_stage: story.production_stage || 'storyboards',
+        };
+      })
+      .filter((item): item is { id: string; episode_number: string; topic: string; generated_at: string; production_stage: string } => item !== null);
+
+
+
 
     return { success: true, storyboards: result };
   } catch (error: any) {
     console.error("Error in getSavedStoryboardsAction:", error);
     return { success: false, error: error.message || "Failed to fetch saved storyboards." };
   }
+
 }
 
 

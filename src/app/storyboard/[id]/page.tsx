@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin, Video } from "lucide-react";
+import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin } from "lucide-react";
 import { useEffect, useState, useRef, use } from "react";
 
 import { PageHeader } from "@/components/PageHeader";
 import { callAi } from "@/actions/actions";
-import { saveStoryboardScenesAction, buildStoryboardPayloadAction, getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
+import { saveStoryboardScenesAction, getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
+
 
 interface StoryboardScene {
   scene_number: number;
@@ -96,9 +97,8 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
   // Confirmation state
   const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
   const [isConfirmingAll, setIsConfirmingAll] = useState(false);
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
-  const [targetSceneIndex, setTargetSceneIndex] = useState<number>(0);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
+
 
   // Brainstorm Chat Assistant State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -231,92 +231,6 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
     }
   }
 
-  async function handleGenerateVideo() {
-    if (generatedScenes.length === 0) return;
-
-    setIsGeneratingVideo(true);
-    setError(null);
-    setSuccessBanner(null);
-
-    try {
-      const targetScene = generatedScenes[targetSceneIndex] || generatedScenes[0];
-      const targetImagePrompt = targetScene?.storyboard_prompt || "";
-      const sceneBeatsText = targetScene?.scene_script_beats || extractSceneBeats(prompt, targetScene?.beat_numbers);
-
-      const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the following script beats and storyboard image prompt for a scene, and generate a concise, cinematic video animation description for video generation AI.
-
-Target Scene Script Beats (Contains exact dialogues, character actions, camera, motion, and SFX):
-"""
-${sceneBeatsText}
-"""
-
-Target Scene Storyboard Image Prompt (Visual Art Direction & Framing):
-"""
-${targetImagePrompt}
-"""
-
-Requirements:
-- MANDATORY DIALOGUE ATTRIBUTION & LIP-SYNC ACCURACY (CRITICAL):
-  1. Whenever a character speaks a dialogue line (e.g. JAKSH: "There's still so much to see."), you MUST explicitly tag the speaker name and quote the exact dialogue line: [Jaksh speaks: "There's still so much to see."].
-  2. NEVER assign, mix up, or blur dialogue lines between characters. Each dialogue line MUST be strictly attached to the correct character's name.
-  3. Explicitly state who is speaking and who is listening (e.g. "Jaksh opens his mouth and speaks: 'There's still so much to see.' while Tilli listens quietly.").
-  4. NEVER summarize dialogue as "he speaks his dialogue" or omit the spoken words.
-- Seamlessly combine the visual art direction of the storyboard prompt with the precise character actions, spoken dialogue lines, expressions, and motion cues from the script beats.
-- Describe sequential character actions, natural movement, and expressions across each beat in chronological order.
-- Begin with camera movement (e.g. gentle wide camera push, tracking shot).
-- End with a strong cinematic shot composition.
-- STRICT CHARACTER FIDELITY: NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
-- Output ONLY the plain text video animation prompt without headers, markdown, or commentary.
-
-Example format:
-Animate this storyboard as a cinematic children's film sequence. Begin with a gentle wide camera tracking shot following Jaksh and Tilli as they enter the bedroom. Jaksh walks ahead with bright energy, then turns back to Tilli with an eager smile and [Jaksh speaks: "There's still so much to see."] while Tilli listens quietly. Transition into a slow pan across the room's toys and drawings, ending on Tilli as his compass chest brightens with curiosity. As Jaksh notices Tilli's silence, Jaksh turns with concern and [Jaksh speaks: "Tilli? Do you remember something?"] while Tilli looks upward. Tilli's form settles, looking down at his chest as [Tilli speaks: "I remember a light. A very special light."] while Jaksh watches attentively. End with a gentle hold on Tilli's glowing compass chest. Preserve exact 3D CGI Pixar style, zero 2D sketch lines, and strict character visual fidelity throughout.`;
-
-      const generatedVideoResponse = await callAi(videoAiInstruction);
-      const videoPromptText = (typeof generatedVideoResponse === "string"
-        ? generatedVideoResponse
-        : (generatedVideoResponse as any)?.text || ""
-      ).trim();
-
-      const payloadInput = [{
-        scriptId: id,
-        sceneNumber: targetScene.scene_number || targetSceneIndex + 1,
-        title: targetScene.title,
-        description: targetScene.description,
-        storyboardPrompt: targetScene.storyboard_prompt,
-        locationName: targetScene.location_name,
-        characterNames: targetScene.character_names,
-        episodeLocationId: targetScene.episodeLocationId,
-      }];
-
-      const res = await buildStoryboardPayloadAction(id, payloadInput, videoPromptText);
-
-      if (res.success && res.payload) {
-        console.log("=== GENERATED VIDEO PAYLOAD ===", JSON.stringify(res.payload, null, 2));
-
-        const webhookRes = await fetch("https://n8n.roastnest.com/webhook-test/generate-video", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(res.payload),
-        });
-
-        if (webhookRes.ok) {
-          setSuccessBanner(`Video prompt & payload for Scene #${targetScene.scene_number || targetSceneIndex + 1} sent to webhook successfully!`);
-        } else {
-          setSuccessBanner(`Video payload sent to webhook (Status: ${webhookRes.status})`);
-        }
-        setTimeout(() => setSuccessBanner(null), 5000);
-      } else {
-        setError(res.error || "Failed to generate video payload.");
-      }
-
-
-    } catch (err: any) {
-      console.error("Error generating video payload:", err);
-      setError(err?.message || "Failed to generate video payload.");
-    } finally {
-      setIsGeneratingVideo(false);
-    }
-  }
 
   async function handleChatSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -408,41 +322,6 @@ Animate this storyboard as a cinematic children's film sequence. Begin with a ge
         <div className="space-y-6">
           {/* Top Control Bar */}
           <div className="flex items-center justify-end gap-3 flex-wrap">
-            <div className="flex items-center gap-2 border border-border/80 bg-card rounded-xl px-3 py-1.5 shadow-sm">
-              <span className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Target Scene:</span>
-              <select
-                value={targetSceneIndex}
-                onChange={(e) => setTargetSceneIndex(Number(e.target.value))}
-                disabled={isGeneratingVideo || generatedScenes.length === 0}
-                className="bg-transparent text-xs font-bold text-foreground focus:outline-none cursor-pointer disabled:opacity-50"
-              >
-                {generatedScenes.map((scene, idx) => (
-                  <option key={idx} value={idx}>
-                    Scene #{scene.scene_number || idx + 1}{scene.title ? `: ${scene.title}` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleGenerateVideo}
-              disabled={isGeneratingVideo || generatedScenes.length === 0}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold shadow-sm hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer shrink-0"
-            >
-              {isGeneratingVideo ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating Video...
-                </>
-              ) : (
-                <>
-                  <Video className="w-4 h-4" />
-                  Generate Video
-                </>
-              )}
-            </button>
-
             <button
               type="button"
               onClick={handleConfirmAll}
@@ -462,6 +341,7 @@ Animate this storyboard as a cinematic children's film sequence. Begin with a ge
               )}
             </button>
           </div>
+
 
           {/* Split Grid Layout: Left Column (Scene Cards) & Right Column (Brainstorm Assistant) */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
@@ -669,24 +549,7 @@ Animate this storyboard as a cinematic children's film sequence. Begin with a ge
           </div>
         </div>
       )}
-
-      {/* Full Page Loader Overlay for Video Generation */}
-      {isGeneratingVideo && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-start pt-[180px] bg-background/80 backdrop-blur-md transition-all animate-in fade-in-0 duration-200">
-          <div className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-card border border-border/80 shadow-2xl max-w-sm text-center">
-            <div className="relative flex items-center justify-center">
-              <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
-              <Loader2 className="w-10 h-10 animate-spin text-primary relative z-10" />
-            </div>
-            <div className="space-y-1.5">
-              <h3 className="font-semibold text-base text-foreground">Generating Video Payload</h3>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Extracting scene beats & dialogue to build video animation prompt...
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
+

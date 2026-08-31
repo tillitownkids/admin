@@ -5,8 +5,8 @@ import { Image as ImageIcon, Sparkles, Loader2, Check, RefreshCw, ExternalLink, 
 
 
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
-import { logPayloadAction } from '@/actions/logPayloadAction';
 import type { CharacterRow, EpisodeLocationRow, SceneRow } from './types';
+
 
 
 interface StoryboardsStageProps {
@@ -129,13 +129,6 @@ export function StoryboardsStage({
       );
 
       const fullPayload = { scenes: payloadScenes };
-      setLastPayload(fullPayload);
-      await logPayloadAction(
-        pendingScenes.length > 0
-          ? `GENERATE UNGENERATED STORYBOARDS (${scenesToGenerate.length})`
-          : `REGENERATE ALL STORYBOARDs (${scenesToGenerate.length})`,
-        fullPayload
-      );
 
       const res = await fetch('https://n8n.roastnest.com/webhook/generate-storyboard', {
         method: 'POST',
@@ -148,7 +141,7 @@ export function StoryboardsStage({
       }
 
       const data = await res.json().catch(() => null);
-      console.log('=== GENERATE STORYBOARDS RESPONSE ===', data);
+
 
       const newUrls: Record<string, { url: string; magnificId?: string | null }> = {};
       if (Array.isArray(data)) {
@@ -186,21 +179,19 @@ export function StoryboardsStage({
         });
         setGeneratedUrls((prev) => ({ ...prev, ...urlMap }));
         setPendingUpdates((prev) => ({ ...prev, ...newUrls }));
-        setGlobalMessage({
-          type: 'success',
-          text: `Generated ${Object.keys(newUrls).length} storyboard(s)! Click "Confirm Storyboards" below to save to database and proceed.`,
-        });
+        setGlobalMessage({ type: 'success', text: 'Operation successful' });
       } else {
-        setGlobalMessage({ type: 'success', text: 'Payload sent to webhook successfully!' });
+        setGlobalMessage({ type: 'success', text: 'Operation successful' });
       }
 
     } catch (err: any) {
       console.error('Error generating storyboards:', err);
-      setGlobalMessage({ type: 'error', text: err.message || 'Failed to generate storyboards.' });
+      setGlobalMessage({ type: 'error', text: err.message || 'Operation failed' });
     } finally {
       setIsGeneratingAll(false);
     }
   };
+
 
   const handleSingleGenerated = (sceneId: string, url: string, magnificId?: string | null) => {
     setGeneratedUrls((prev) => ({ ...prev, [sceneId]: url }));
@@ -250,16 +241,6 @@ export function StoryboardsStage({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {lastPayload && (
-            <button
-              type="button"
-              onClick={() => setShowPayloadDebug(!showPayloadDebug)}
-              className={secondaryButtonClass}
-            >
-              <Code className="w-4 h-4" />
-              {showPayloadDebug ? 'Hide Debug' : 'View Payload'}
-            </button>
-          )}
           <button
             type="button"
             onClick={handleGenerateAll}
@@ -271,11 +252,8 @@ export function StoryboardsStage({
               ? `Generate All Storyboards (${pendingScenes.length} remaining)`
               : `Regenerate All Storyboards (${sortedScenes.length})`}
           </button>
-
-
         </div>
       </div>
-
 
       {globalMessage && (
         <div
@@ -289,15 +267,6 @@ export function StoryboardsStage({
         </div>
       )}
 
-      {/* Debug Payload view */}
-      {showPayloadDebug && lastPayload && (
-        <div className="p-4 rounded-xl border border-border bg-black/90 text-emerald-400 space-y-2 font-mono text-xs overflow-x-auto">
-          <div className="flex items-center justify-between text-muted-foreground font-sans">
-            <span>Last Webhook Payload Sent to https://n8n.roastnest.com/webhook/generate-storyboard:</span>
-          </div>
-          <pre>{JSON.stringify(lastPayload, null, 2)}</pre>
-        </div>
-      )}
 
       {/* Scene Items */}
       <div className="space-y-4">
@@ -378,9 +347,6 @@ function StoryboardItem({
       );
       const payload = { scenes: [sceneItem] };
 
-      console.log(`=== GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number}) PAYLOAD ===`, payload);
-      await logPayloadAction(`GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number || sceneIdx + 1})`, payload);
-
       // 2. Send HTTP POST request to webhook
       const res = await fetch('https://n8n.roastnest.com/webhook/generate-storyboard', {
         method: 'POST',
@@ -393,7 +359,7 @@ function StoryboardItem({
       }
 
       const data = await res.json().catch(() => null);
-      console.log(`=== GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number}) RESPONSE ===`, data);
+
 
       const imgUrl = extractImageUrl(data);
       const magId = extractMagnificIdentifier(data);
@@ -401,18 +367,19 @@ function StoryboardItem({
       if (imgUrl) {
         setReturnedUrl(imgUrl);
         onSingleGenerated(scene.id, imgUrl, magId);
-        setStatusMessage('Generated new storyboard preview! Click "Confirm Storyboards" below to save to database and proceed.');
+        setStatusMessage('Operation successful');
       } else {
-        setStatusMessage('Payload sent to webhook successfully!');
+        setStatusMessage('Operation successful');
       }
 
     } catch (err: any) {
       console.error('Error generating single storyboard:', err);
-      setError(err.message || 'Failed to generate storyboard.');
+      setError(err.message || 'Operation failed');
     } finally {
       setIsGeneratingSingle(false);
     }
   };
+
 
 
 
@@ -475,31 +442,27 @@ function StoryboardItem({
       </div>
 
 
-      {/* Returned Image & URL Display */}
+      {/* Returned Image Display */}
       {displayUrl && (
         <div className="space-y-2 pt-2 border-t border-border/50">
           <label className={labelClass}>Generated Storyboard Image</label>
-          <div className="space-y-2">
+          <a
+            href={displayUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Click to open image in new tab"
+            className="block max-w-md cursor-pointer group overflow-hidden rounded-xl border border-border"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={displayUrl}
               alt={`Scene ${scene.scene_number}`}
-              className="w-full max-w-md rounded-xl border border-border object-cover max-h-[300px]"
+              className="w-full object-cover max-h-[300px] transition-transform duration-200 group-hover:scale-[1.02]"
             />
-            <div className="flex items-center gap-2 text-xs bg-muted/40 p-2.5 rounded-lg border border-border/50 max-w-md">
-              <ExternalLink className="w-3.5 h-3.5 text-primary shrink-0" />
-              <a
-                href={displayUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-primary hover:underline truncate"
-              >
-                {displayUrl}
-              </a>
-            </div>
-          </div>
+          </a>
         </div>
       )}
+
 
       {/* Actions */}
       <div className="pt-2 flex justify-end">

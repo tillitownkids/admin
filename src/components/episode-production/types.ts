@@ -39,7 +39,11 @@ export interface SceneRow {
   order_index: number;
   locationName: string;
   magnific_identifier?: string | null;
+  video_prompt?: string | null;
+  video_url?: string | null;
+  video_magnific_identifier?: string | null;
 }
+
 
 
 export interface BeatRow {
