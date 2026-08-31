@@ -21,19 +21,30 @@ function extractImageUrl(data: any): string | null {
   if (!data) return null;
   if (typeof data === 'string' && data.startsWith('http')) return data;
 
-  // n8n format: data.result.results.url or data.result.results.thumbnailUrl
-  if (data.result?.results?.url) return data.result.results.url;
-  if (data.result?.results?.thumbnailUrl) return data.result.results.thumbnailUrl;
-  if (data.result?.url) return data.result.url;
+  const d = data.json || data;
 
-  // Standard format: data.results.url or data.url / data.imageUrl
-  if (data.results?.url) return data.results.url;
-  if (data.results?.thumbnailUrl) return data.results.thumbnailUrl;
-  if (data.url) return data.url;
-  if (data.imageUrl) return data.imageUrl;
-  if (data.thumbnailUrl) return data.thumbnailUrl;
+  // 1. Direct url or results.url on item
+  if (d.results?.url) return d.results.url;
+  if (d.results?.thumbnailUrl) return d.results.thumbnailUrl;
+  if (Array.isArray(d.results) && d.results[0]?.url) return d.results[0].url;
+  if (d.url) return d.url;
+  if (d.imageUrl) return d.imageUrl;
+  if (d.thumbnailUrl) return d.thumbnailUrl;
 
-  // Array format
+  // 2. Check scenes array inside result or root
+  const scenes = Array.isArray(d.result?.scenes) ? d.result.scenes : Array.isArray(d.scenes) ? d.scenes : null;
+  if (scenes && scenes[0]) {
+    const scUrl = extractImageUrl(scenes[0]);
+    if (scUrl) return scUrl;
+  }
+
+  // 3. Check result.results or result.url
+  if (d.result?.results?.url) return d.result.results.url;
+  if (d.result?.results?.thumbnailUrl) return d.result.results.thumbnailUrl;
+  if (Array.isArray(d.result?.results) && d.result.results[0]?.url) return d.result.results[0].url;
+  if (d.result?.url) return d.result.url;
+
+  // 4. Array format
   if (Array.isArray(data) && data[0]) {
     return extractImageUrl(data[0]);
   }
@@ -43,14 +54,28 @@ function extractImageUrl(data: any): string | null {
 
 function extractMagnificIdentifier(data: any): string | null {
   if (!data) return null;
-  if (data.result?.identifier) return data.result.identifier;
-  if (data.result?.results?.identifier) return data.result.results.identifier;
-  if (data.identifier) return data.identifier;
-  if (data.magnific_identifier) return data.magnific_identifier;
-  if (data.magnific_id) return data.magnific_id;
+  if (typeof data === 'string') return null;
+
+  const d = data.json || data;
+
+  if (d.identifier) return d.identifier;
+  if (d.magnific_identifier) return d.magnific_identifier;
+  if (d.magnific_id) return d.magnific_id;
+  if (d.results?.identifier) return d.results.identifier;
+
+  const scenes = Array.isArray(d.result?.scenes) ? d.result.scenes : Array.isArray(d.scenes) ? d.scenes : null;
+  if (scenes && scenes[0]) {
+    const magId = extractMagnificIdentifier(scenes[0]);
+    if (magId) return magId;
+  }
+
+  if (d.result?.identifier) return d.result.identifier;
+  if (d.result?.results?.identifier) return d.result.results.identifier;
   if (Array.isArray(data) && data[0]) return extractMagnificIdentifier(data[0]);
   return null;
 }
+
+
 
 
 
@@ -146,7 +171,8 @@ export function StoryboardsStage({
       const newUrls: Record<string, { url: string; magnificId?: string | null }> = {};
       if (Array.isArray(data)) {
         data.forEach((item: any, idx: number) => {
-          const targetScene = scenesToGenerate[idx];
+          const itemId = item.id || item.sceneId || item.scene_id || item.result?.id || item.result?.sceneId;
+          const targetScene = sortedScenes.find((s) => s.id === itemId) || scenesToGenerate[idx] || sortedScenes[idx];
           const url = extractImageUrl(item);
           const magId = extractMagnificIdentifier(item);
           if (targetScene && url) {
@@ -154,9 +180,16 @@ export function StoryboardsStage({
           }
         });
       } else if (data && typeof data === 'object') {
-        if (Array.isArray(data.scenes)) {
-          data.scenes.forEach((item: any, idx: number) => {
-            const targetScene = scenesToGenerate.find((s) => s.id === item.id) || scenesToGenerate[idx];
+        const scenesArr = Array.isArray(data.scenes)
+          ? data.scenes
+          : Array.isArray(data.result?.scenes)
+          ? data.result.scenes
+          : null;
+
+        if (scenesArr) {
+          scenesArr.forEach((item: any, idx: number) => {
+            const itemId = item.id || item.sceneId || item.scene_id || item.result?.id || item.result?.sceneId;
+            const targetScene = sortedScenes.find((s) => s.id === itemId) || scenesToGenerate[idx] || sortedScenes[idx];
             const url = extractImageUrl(item);
             const magId = extractMagnificIdentifier(item);
             if (targetScene && url) {
@@ -166,11 +199,13 @@ export function StoryboardsStage({
         } else {
           const url = extractImageUrl(data);
           const magId = extractMagnificIdentifier(data);
-          if (url && scenesToGenerate.length > 0) {
-            newUrls[scenesToGenerate[0].id] = { url, magnificId: magId };
+          if (url && sortedScenes.length > 0) {
+            const targetScene = scenesToGenerate[0] || sortedScenes[0];
+            newUrls[targetScene.id] = { url, magnificId: magId };
           }
         }
       }
+
 
       if (Object.keys(newUrls).length > 0) {
         const urlMap: Record<string, string> = {};
@@ -384,7 +419,8 @@ function StoryboardItem({
 
 
 
-  const displayUrl = returnedUrl || scene.storyboard_image_url;
+  const displayUrl = overrideImageUrl || returnedUrl || scene.storyboard_image_url;
+
 
   return (
     <div className="p-5 rounded-xl border border-border bg-card space-y-4">
