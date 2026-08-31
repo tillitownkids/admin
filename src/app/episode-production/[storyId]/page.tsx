@@ -6,10 +6,10 @@ import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
 import { ProductionStepper, type ProductionStageKey } from '@/components/episode-production/ProductionStepper';
 import { LocationsStage } from '@/components/episode-production/LocationsStage';
-import { StylesheetsStage } from '@/components/episode-production/StylesheetsStage';
+import { ReferencesStage } from '@/components/episode-production/ReferencesStage';
 import { ScenesStage } from '@/components/episode-production/ScenesStage';
 import { StoryboardsStage } from '@/components/episode-production/StoryboardsStage';
-import { BeatsStage } from '@/components/episode-production/BeatsStage';
+
 import type {
   StoryRow,
   EpisodeLocationRow,
@@ -20,10 +20,10 @@ import type {
 
 function defaultActiveStage(stage: string): ProductionStageKey {
   if (stage === 'story' || stage === 'locations') return 'locations';
-  if (stage === 'stylesheets') return 'stylesheets';
+  if (stage === 'references' || stage === 'stylesheets') return 'references';
   if (stage === 'scenes') return 'scenes';
   if (stage === 'storyboards') return 'storyboards';
-  return 'beats'; // 'beats' or 'complete'
+  return 'video';
 }
 
 export default function EpisodeProductionPage({ params }: { params: Promise<{ storyId: string }> }) {
@@ -131,7 +131,7 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
         icon={Clapperboard}
         title={story.topic || 'Untitled Episode'}
         highlight="Production"
-        description="Walk through locations, stylesheets, scenes, storyboards, and beats for this episode."
+        description="Walk through locations, references, scenes, storyboards, and video generation for this episode."
       />
 
       {isComplete && (
@@ -153,19 +153,17 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
             onConfirmed={async () => {
               const locs = await fetchEpisodeLocations();
               await fetchScenes(locs);
-              await patchStage('stylesheets');
-              setActiveStage('stylesheets');
+              await patchStage('references');
+              setActiveStage('references');
             }}
           />
         )}
 
-        {activeStage === 'stylesheets' && (
-          <StylesheetsStage
+        {activeStage === 'references' && (
+          <ReferencesStage
             episodeLocations={episodeLocations}
-            onRefetch={async () => {
-              await fetchEpisodeLocations();
-            }}
-            onAllApproved={async () => {
+            characters={characters}
+            onConfirmed={async () => {
               await patchStage('scenes');
               setActiveStage('scenes');
             }}
@@ -190,28 +188,26 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
           <StoryboardsStage
             scenes={scenes}
             characters={characters}
+            episodeLocations={episodeLocations}
             onRefetchScenes={async () => {
               await fetchScenes(episodeLocations);
             }}
-            onAllApproved={async () => {
-              await patchStage('beats');
-              setActiveStage('beats');
+            onConfirmed={async () => {
+              await patchStage('video');
+              setActiveStage('video');
             }}
           />
         )}
 
-        {activeStage === 'beats' && (
-          <BeatsStage
-            scenes={scenes}
-            onRefetchScenes={async () => {
-              await fetchScenes(episodeLocations);
-            }}
-            onComplete={async () => {
-              await patchStage('complete');
-            }}
-          />
+
+        {activeStage === 'video' && (
+          <div className="p-12 text-center border border-dashed border-border/80 rounded-xl space-y-2 bg-card/40">
+            <h3 className="text-lg font-bold text-foreground">Video Stage</h3>
+            <p className="text-sm text-muted-foreground">Will be configured in the next step.</p>
+          </div>
         )}
       </GlassPanel>
     </div>
   );
 }
+

@@ -91,9 +91,20 @@ export function LocationsStage({ storyId, storyContent, episodeLocations, locati
     }
   };
 
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  const handleConfirmedClick = async () => {
+    setIsConfirming(true);
+    try {
+      await onConfirmed();
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
   if (episodeLocations.length > 0) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-6">
         <p className="text-sm text-muted-foreground">
           {episodeLocations.length} location{episodeLocations.length !== 1 ? 's' : ''} confirmed for this episode.
         </p>
@@ -105,9 +116,17 @@ export function LocationsStage({ storyId, storyContent, episodeLocations, locati
             </div>
           ))}
         </div>
+        <div className="pt-4 border-t border-border/60 flex justify-end">
+          <button type="button" onClick={handleConfirmedClick} disabled={isConfirming} className={primaryButtonClass}>
+            {isConfirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            Confirm Locations
+          </button>
+        </div>
       </div>
     );
   }
+
+
 
   return (
     <div className="space-y-6">

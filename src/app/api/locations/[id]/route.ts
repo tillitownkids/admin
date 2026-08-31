@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
+import { processAndUploadLocationSheet } from '@/lib/storage';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -58,7 +59,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
-    const { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
+    let { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
+
+    if (generated_image_url && typeof generated_image_url === 'string' && generated_image_url.startsWith('http')) {
+      try {
+        generated_image_url = await processAndUploadLocationSheet(generated_image_url, magnific_identifier);
+      } catch (uploadErr) {
+        console.error('Failed to re-host generated_image_url in Supabase storage:', uploadErr);
+      }
+    }
 
     const updatePayload: Record<string, any> = { updated_at: new Date().toISOString() };
     if (name !== undefined) updatePayload.name = name;
@@ -66,6 +75,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (reference_image_url !== undefined) updatePayload.reference_image_url = reference_image_url;
     if (magnific_identifier !== undefined) updatePayload.magnific_identifier = magnific_identifier;
     if (generated_image_url !== undefined) updatePayload.generated_image_url = generated_image_url;
+
 
     let targetLocationId = id;
 

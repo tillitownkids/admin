@@ -277,7 +277,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
             story_id: validStoryId,
             episode_location_id: targetEpLocId,
             storyboard_prompt: sceneInput.storyboardPrompt,
-            description: sceneInput.description || existingScene.description,
+            description: sceneInput.description || sceneInput.title || existingScene.description,
             storyboard_status: "confirmed",
             updated_at: new Date()
           }
@@ -288,13 +288,14 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
             story_id: validStoryId,
             episode_location_id: targetEpLocId,
             scene_number: sceneInput.sceneNumber,
-            description: sceneInput.description || "",
+            description: sceneInput.description || sceneInput.title || "",
             storyboard_prompt: sceneInput.storyboardPrompt,
             storyboard_status: "confirmed",
             order_index: sceneInput.sceneNumber
           }
         });
       }
+
 
       // Resolve character IDs for this scene
       let matchedCharIds: string[] = [];
@@ -345,3 +346,163 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
     return { success: false, error: error.message || "Failed to save storyboard scenes." };
   }
 }
+
+export async function getStoryboardByStoryIdAction(storyId: string) {
+  try {
+    if (!storyId) {
+      return { success: false, error: "Story ID is required" };
+    }
+
+    // 1. Fetch Story
+    let story = await prisma.story.findUnique({
+      where: { id: storyId }
+    }).catch(() => null);
+
+    let validStoryId = storyId;
+
+    if (!story) {
+      // Fallback: check if storyId is a script ID
+      const scriptObj = await prisma.script.findUnique({
+        where: { id: storyId }
+      }).catch(() => null);
+
+      if (scriptObj?.topic) {
+        story = await prisma.story.findFirst({
+          where: { topic: scriptObj.topic }
+        }).catch(() => null);
+      }
+
+      if (story) {
+        validStoryId = story.id;
+      }
+    }
+
+    // 2. Resolve script content
+    let scriptContent = story?.content || "";
+    if (!scriptContent) {
+      const scriptObj = await prisma.script.findFirst({
+        where: { topic: story?.topic || "" }
+      }).catch(() => null);
+      if (scriptObj) scriptContent = scriptObj.content || "";
+    }
+
+    // 3. Fetch scenes for this story
+    const scenes = await prisma.scene.findMany({
+      where: { story_id: validStoryId },
+      include: {
+        EpisodeLocation: { include: { Location: true } },
+        SceneCharacter: { include: { Character: true } }
+      },
+      orderBy: { scene_number: 'asc' }
+    }).catch(() => []);
+
+    // 4. Fetch EpisodeLocations and StoryCharacters
+    const episodeLocations = await prisma.episodeLocation.findMany({
+      where: { story_id: validStoryId },
+      include: { Location: true },
+      orderBy: { order_index: 'asc' }
+    }).catch(() => []);
+
+    const storyChars = await prisma.storyCharacter.findMany({
+      where: { story_id: validStoryId },
+      include: { Character: true }
+    }).catch(() => []);
+
+    const formattedScenes = scenes.map((sc) => ({
+      scene_number: sc.scene_number,
+      title: sc.description ? (sc.description.length > 50 ? sc.description.slice(0, 50) + "..." : sc.description) : `Scene ${sc.scene_number}`,
+      description: sc.description,
+      storyboard_prompt: sc.storyboard_prompt,
+      location_name: sc.EpisodeLocation?.Location?.name || "",
+      character_names: sc.SceneCharacter.map(scChar => scChar.Character.name),
+      episodeLocationId: sc.episode_location_id,
+    }));
+
+    const formattedLocations = episodeLocations.map(el => ({
+      id: el.id,
+      name: el.Location.name,
+      description: el.Location.description,
+    }));
+
+    const formattedCharacters = storyChars.map(sc => ({
+      id: sc.Character.id,
+      name: sc.Character.name,
+      description: sc.Character.description,
+    }));
+
+    return {
+      success: true,
+      storyId: validStoryId,
+      story,
+      scriptContent,
+      scenes: formattedScenes,
+      locations: formattedLocations,
+      characters: formattedCharacters,
+    };
+  } catch (error: any) {
+    console.error("Error in getStoryboardByStoryIdAction:", error);
+    return { success: false, error: error.message || "Failed to fetch storyboard data." };
+  }
+}
+
+export async function getSavedStoryboardsAction() {
+  try {
+    const scenesWithStory = await prisma.scene.findMany({
+      where: {
+        story_id: { not: null }
+      },
+      select: {
+        story_id: true,
+        updated_at: true,
+      },
+      orderBy: { updated_at: 'desc' }
+    });
+
+    const storyMap = new Map<string, Date>();
+    for (const sc of scenesWithStory) {
+      if (sc.story_id && !storyMap.has(sc.story_id)) {
+        storyMap.set(sc.story_id, sc.updated_at);
+      }
+    }
+
+    const uniqueStoryIds = Array.from(storyMap.keys());
+
+    if (uniqueStoryIds.length === 0) {
+      return { success: true, storyboards: [] };
+    }
+
+    const stories = await prisma.story.findMany({
+      where: { id: { in: uniqueStoryIds } }
+    });
+
+    const scripts = await prisma.script.findMany({
+      where: { id: { in: uniqueStoryIds } }
+    });
+
+    const storyLookup = new Map(stories.map(s => [s.id, s]));
+    const scriptLookup = new Map(scripts.map(s => [s.id, s]));
+
+    const result = uniqueStoryIds.map(id => {
+      const story = storyLookup.get(id);
+      const script = scriptLookup.get(id);
+      const topic = story?.topic || script?.topic || "Storyboard Episode";
+      const episode_number = story?.episode_number || script?.episode_number || "1";
+      const date = storyMap.get(id);
+
+      return {
+        id,
+        episode_number,
+        topic,
+        generated_at: date ? (typeof date === 'string' ? date : date.toISOString()) : new Date().toISOString(),
+        production_stage: story?.production_stage || 'storyboards',
+      };
+    });
+
+    return { success: true, storyboards: result };
+  } catch (error: any) {
+    console.error("Error in getSavedStoryboardsAction:", error);
+    return { success: false, error: error.message || "Failed to fetch saved storyboards." };
+  }
+}
+
+

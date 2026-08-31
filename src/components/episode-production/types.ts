@@ -3,6 +3,8 @@ export interface LocationLibraryRow {
   name: string;
   description: string;
   reference_image_url: string | null;
+  generated_image_url?: string | null;
+  magnific_identifier?: string | null;
 }
 
 export interface CharacterRow {
@@ -10,7 +12,9 @@ export interface CharacterRow {
   name: string;
   description: string;
   reference_image_url: string | null;
+  magnific_identifier?: string | null;
 }
+
 
 export interface EpisodeLocationRow {
   id: string;
