@@ -123,7 +123,7 @@ export function StoryboardsStage({
         fullPayload
       );
 
-      const res = await fetch('https://n8n.roastnest.com/webhook-test/generate-storyboard', {
+      const res = await fetch('https://n8n.roastnest.com/webhook/generate-storyboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullPayload),
@@ -255,7 +255,7 @@ export function StoryboardsStage({
       {showPayloadDebug && lastPayload && (
         <div className="p-4 rounded-xl border border-border bg-black/90 text-emerald-400 space-y-2 font-mono text-xs overflow-x-auto">
           <div className="flex items-center justify-between text-muted-foreground font-sans">
-            <span>Last Webhook Payload Sent to https://n8n.roastnest.com/webhook-test/generate-storyboard:</span>
+            <span>Last Webhook Payload Sent to https://n8n.roastnest.com/webhook/generate-storyboard:</span>
           </div>
           <pre>{JSON.stringify(lastPayload, null, 2)}</pre>
         </div>
@@ -344,7 +344,7 @@ function StoryboardItem({
       await logPayloadAction(`GENERATE SINGLE STORYBOARD (Scene #${scene.scene_number || sceneIdx + 1})`, payload);
 
       // 2. Send HTTP POST request to webhook
-      const res = await fetch('https://n8n.roastnest.com/webhook-test/generate-storyboard', {
+      const res = await fetch('https://n8n.roastnest.com/webhook/generate-storyboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
