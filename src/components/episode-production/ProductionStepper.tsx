@@ -2,21 +2,24 @@
 
 const STAGES = [
   { key: 'locations', label: 'Locations' },
-  { key: 'stylesheets', label: 'Stylesheets' },
+  { key: 'references', label: 'References' },
   { key: 'scenes', label: 'Scenes' },
   { key: 'storyboards', label: 'Storyboards' },
-  { key: 'beats', label: 'Beats' },
+  { key: 'video', label: 'Video' },
 ] as const;
 
 export type ProductionStageKey = typeof STAGES[number]['key'];
 
-const STAGE_ORDER: ProductionStageKey[] = ['locations', 'stylesheets', 'scenes', 'storyboards', 'beats'];
+const STAGE_ORDER: ProductionStageKey[] = ['locations', 'references', 'scenes', 'storyboards', 'video'];
 
 export function stageIndex(stage: string): number {
   const idx = STAGE_ORDER.indexOf(stage as ProductionStageKey);
   if (idx !== -1) return idx;
+  if (stage === 'stylesheets') return 1; // legacy mapping
+  if (stage === 'beats') return 4;       // legacy mapping
   return stage === 'complete' ? STAGE_ORDER.length : 0;
 }
+
 
 interface ProductionStepperProps {
   currentStage: string;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 export async function GET(req: NextRequest) {
   try {
@@ -7,13 +8,33 @@ export async function GET(req: NextRequest) {
     const episodeLocationId = searchParams.get('episodeLocationId');
     const storyId = searchParams.get('storyId') || searchParams.get('story_id');
 
-    let query = supabase.from('Scene').select('*').order('order_index', { ascending: true });
-    if (episodeLocationId) query = query.eq('episode_location_id', episodeLocationId);
-    if (storyId) query = query.eq('story_id', storyId);
+    let scenes: any = null;
 
-    const { data: scenes, error } = await query;
-    if (error) throw error;
-    return NextResponse.json({ scenes });
+    // 1. Try Prisma query first
+    try {
+      const where: any = {};
+      if (episodeLocationId) where.episode_location_id = episodeLocationId;
+      if (storyId) where.story_id = storyId;
+
+      scenes = await prisma.scene.findMany({
+        where,
+        orderBy: { order_index: 'asc' }
+      });
+    } catch (e) {}
+
+    // 2. Try Supabase fallback
+    if (!scenes || scenes.length === 0) {
+      let query = supabase.from('Scene').select('*').order('order_index', { ascending: true });
+      if (episodeLocationId) query = query.eq('episode_location_id', episodeLocationId);
+      if (storyId) query = query.eq('story_id', storyId);
+
+      const { data, error } = await query;
+      if (!error && data) {
+        scenes = data;
+      }
+    }
+
+    return NextResponse.json({ scenes: scenes || [] });
   } catch (error: any) {
     console.error("Error fetching scenes:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -41,12 +62,23 @@ export async function POST(req: NextRequest) {
       order_index: item.order_index,
     }));
 
-    const { data: scenes, error } = await supabase
-      .from('Scene')
-      .insert(rows)
-      .select();
+    let scenes: any = null;
 
-    if (error) throw error;
+    try {
+      scenes = await prisma.scene.createMany({
+        data: rows as any
+      });
+    } catch (e) {}
+
+    if (!scenes) {
+      const { data, error } = await supabase
+        .from('Scene')
+        .insert(rows)
+        .select();
+
+      if (error) throw error;
+      scenes = data;
+    }
 
     return NextResponse.json({ scenes });
   } catch (error: any) {

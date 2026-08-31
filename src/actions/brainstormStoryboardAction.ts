@@ -1,8 +1,11 @@
 "use server";
 
 import { callAi } from "@/actions/actions";
+import { parseAiJson } from "@/lib/parseAiJson";
 
 export interface StoryboardSceneInput {
+
+
   scene_number: number;
   title: string;
   beat_numbers?: number[];
@@ -53,8 +56,8 @@ Return ONLY valid JSON with this exact structure:
     const response = await callAi(prompt);
     const rawText = typeof response === "string" ? response : response?.text || "";
 
-    const cleanedJson = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(cleanedJson);
+    const parsed = parseAiJson(rawText);
+
 
     let summary = "I have updated the storyboard prompts according to your request.";
     let updatedScenes: StoryboardSceneInput[] = currentScenes;

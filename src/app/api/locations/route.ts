@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { supabase } from '@/lib/supabase';
+import { processAndUploadLocationSheet } from '@/lib/storage';
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,10 +29,18 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
+    let { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
 
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
+    }
+
+    if (generated_image_url && typeof generated_image_url === 'string' && generated_image_url.startsWith('http')) {
+      try {
+        generated_image_url = await processAndUploadLocationSheet(generated_image_url, magnific_identifier);
+      } catch (uploadErr) {
+        console.error('Failed to re-host generated_image_url in Supabase storage:', uploadErr);
+      }
     }
 
     const dataPayload: Record<string, any> = {
@@ -41,6 +50,7 @@ export async function POST(req: NextRequest) {
     if (reference_image_url !== undefined) dataPayload.reference_image_url = reference_image_url;
     if (magnific_identifier !== undefined) dataPayload.magnific_identifier = magnific_identifier;
     if (generated_image_url !== undefined) dataPayload.generated_image_url = generated_image_url;
+
 
     let location;
     try {
