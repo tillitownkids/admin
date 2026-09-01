@@ -20,7 +20,7 @@ export class AiService {
     });
   }
 
-  async call(prompt: string, maxTokens = 5000) {
+  async call(prompt: string, maxTokens = 64000) {
     try {
       const response = await this.callBedrock(prompt);
 

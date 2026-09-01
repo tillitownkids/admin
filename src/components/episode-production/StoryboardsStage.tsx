@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Image as ImageIcon, Sparkles, Loader2, Check, RefreshCw, ExternalLink, Film, Code, MapPin, User } from 'lucide-react';
+import { Image as ImageIcon, Sparkles, Loader2, Check, RefreshCw, ExternalLink, Film, Code, MapPin, User, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
 
 
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
@@ -358,6 +358,8 @@ function StoryboardItem({
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
+  const [isScriptBeatsOpen, setIsScriptBeatsOpen] = useState(false);
+
   useEffect(() => {
     if (overrideImageUrl) {
       setReturnedUrl(overrideImageUrl);
@@ -431,9 +433,16 @@ function StoryboardItem({
             #{scene.scene_number || sceneIdx + 1}
           </span>
           <div>
-            <h4 className="text-base font-bold text-foreground line-clamp-1">
-              {scene.description || `Scene #${scene.scene_number || sceneIdx + 1}`}
-            </h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-base font-bold text-foreground line-clamp-1">
+                {scene.description || `Scene #${scene.scene_number || sceneIdx + 1}`}
+              </h4>
+              {scene.beat_numbers && (
+                <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20">
+                  Beats {Array.isArray(scene.beat_numbers) ? scene.beat_numbers.join(', ') : scene.beat_numbers}
+                </span>
+              )}
+            </div>
             {scene.locationName && (
               <span className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 font-medium">
                 <MapPin className="w-3 h-3 text-emerald-500" />
@@ -443,6 +452,33 @@ function StoryboardItem({
           </div>
         </div>
       </div>
+
+      {/* Collapsible Script Beats & Dialogues Accordion */}
+      {scene.script_beats && (
+        <div className="border border-border/50 rounded-xl overflow-hidden bg-muted/10">
+          <button
+            type="button"
+            onClick={() => setIsScriptBeatsOpen(!isScriptBeatsOpen)}
+            className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-foreground bg-muted/20 hover:bg-muted/40 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <BookOpen className="w-3.5 h-3.5 text-emerald-500" />
+              Script Beats & Spoken Dialogues
+            </span>
+            <span className="flex items-center gap-1.5 text-muted-foreground font-normal">
+              {isScriptBeatsOpen ? 'Hide Beats' : 'Show Beats'}
+              {isScriptBeatsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </span>
+          </button>
+          {isScriptBeatsOpen && (
+            <div className="p-3 border-t border-border/40 bg-background/50">
+              <p className="text-xs font-mono text-foreground leading-relaxed whitespace-pre-wrap">
+                {scene.script_beats}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
 
 

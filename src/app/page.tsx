@@ -83,9 +83,6 @@ export default function Home() {
         <div className="lg:col-span-2 bg-card text-card-foreground rounded-xl border border-border flex flex-col">
           <div className="p-5 border-b border-border flex items-center justify-between">
             <h2 className="text-lg font-semibold tracking-tight">Recent Activity</h2>
-            <Link href="/episode-production" className="text-sm text-primary hover:underline font-medium">
-              View all
-            </Link>
           </div>
 
           <div className="flex flex-col divide-y divide-border">

@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 
 export interface SaveScriptInput {
   id?: string;
+  story_id?: string;
+  storyId?: string;
   topic?: string;
   episode_number?: string | number;
   generationType?: string;
@@ -72,6 +74,14 @@ export async function saveGeneratedScriptAction(input: SaveScriptInput) {
     const content = input.contentHtml || input.content || input.contentText || "";
     const status = input.status || "success";
 
+    let resolvedStoryId = input.story_id || input.storyId || null;
+    if (!resolvedStoryId && topic) {
+      const matchedStory = await prisma.story.findFirst({ where: { topic } }).catch(() => null);
+      if (matchedStory?.id) {
+        resolvedStoryId = matchedStory.id;
+      }
+    }
+
     const payload: Record<string, any> = {
       topic,
       content,
@@ -79,6 +89,7 @@ export async function saveGeneratedScriptAction(input: SaveScriptInput) {
       generation_type,
       mode,
       status,
+      story_id: resolvedStoryId,
       generated_at: new Date().toISOString()
     };
 

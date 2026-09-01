@@ -48,7 +48,7 @@ interface SavedStoryboard {
 interface StoryboardScene {
   scene_number: number;
   title: string;
-  beat_numbers?: number[];
+  beat_numbers?: number[] | string;
   scene_script_beats?: string;
   description?: string;
   storyboard_prompt: string;
@@ -84,6 +84,24 @@ function stripHtmlToMarkdown(text: string): string {
     .replace(/&#39;/g, "'");
 
   return cleaned.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function splitScriptIntoBeatChunks(fullScriptText: string, chunkSize = 10): string[] {
+  if (!fullScriptText) return [];
+  const beatRegex = /(?=(?:###?\s*)?(?:\*\*)?\s*BEAT\s*\d+)/i;
+  const blocks = fullScriptText.split(beatRegex).filter((b) => b.trim().length > 0);
+
+  if (blocks.length <= chunkSize) {
+    return [fullScriptText];
+  }
+
+  const chunks: string[] = [];
+  for (let i = 0; i < blocks.length; i += chunkSize) {
+    const group = blocks.slice(i, i + chunkSize);
+    chunks.push(group.join("\n\n---\n\n"));
+  }
+
+  return chunks;
 }
 
 export default function StoryboardPage() {
@@ -184,11 +202,88 @@ Assign the exact matching location name in the "location_name" field for each sc
 ${storyCharacters.map(c => `- ${c.name}: ${c.description || 'Standard character'}`).join("\n")}`
       : "";
 
-    const storyboardAiPrompt = `You are a professional storyboard artist for a 3D animated children's series.
+    // PASS 1: Detect all scenes across the ENTIRE script at once (100% natural scene boundaries)
+    const pass1DetectPrompt = `You are a professional storyboard artist for a 3D animated children's series.
 
-Your task is to convert the provided beat script into storyboard scenes
-and generate a production-ready storyboard image-generation prompt for
-each scene.
+Analyze the provided beat script and group consecutive beats into visual scenes across the entire episode.
+
+---
+
+## SCENE GROUPING RULES
+A scene is a continuous visual and dramatic sequence.
+Group consecutive beats together when they share:
+- The same physical location or closely connected setting.
+- The same general time of day.
+- Continuous character action or interaction.
+
+CRITICAL GRID CAP (STRICT MAX 6 BEATS PER SCENE):
+- A single scene MUST NOT contain more than 6 beats.
+- If a continuous scene sequence in the same location contains more than 6 beats (e.g., Beats 17 through 24), you MUST split them into consecutive scenes (e.g., Scene 5: Beats 17-22 [6 beats], Scene 6: Beats 23-24 [2 beats]).
+- This guarantees every scene cleanly fits standard panel grids (max 2x3 grid).
+
+Start a new scene when:
+- A significant location change or INT/EXT change occurs.
+- A significant time-of-day change occurs.
+- A new dramatic sequence starts.
+- The beat count reaches 6 beats (split into a new scene sheet).
+
+Every beat must belong to exactly ONE scene.
+Never reorder, skip, duplicate, or omit any beats.
+
+${locationPromptSection}
+
+---
+
+## OUTPUT FORMAT
+Return ONLY valid JSON with this structure:
+
+{
+  "scenes": [
+    {
+      "scene_number": 1,
+      "title": "Short descriptive scene title",
+      "location_name": "Location Name",
+      "character_names": ["Character Name 1", "Character Name 2"],
+      "beat_numbers": [1, 2, 3],
+      "scene_script_beats": "Full exact text of all script beats grouped into this scene (including beat headers, [ACTION], [DIALOGUE], [CAMERA], [MOTION], and [SFX] lines)."
+    }
+  ]
+}
+
+---
+
+## BEAT SCRIPT
+${prompt}`;
+
+    try {
+      // Execute Pass 1: Scene Detection
+      const pass1Response = await callAi(pass1DetectPrompt, 64000);
+      const pass1Text = typeof pass1Response === "string" ? pass1Response : pass1Response?.text || "";
+      const parsedPass1 = parseAiJson(pass1Text);
+
+      let detectedScenes: StoryboardScene[] = [];
+      if (parsedPass1 && Array.isArray(parsedPass1.scenes)) {
+        detectedScenes = parsedPass1.scenes;
+      } else if (Array.isArray(parsedPass1)) {
+        detectedScenes = parsedPass1;
+      }
+
+      if (!detectedScenes || detectedScenes.length === 0) {
+        throw new Error("Could not detect scenes from the beat script.");
+      }
+
+      // PASS 2: Generate 3D CGI Storyboard Prompts for each scene (Zero response truncation)
+      const finalScenes: StoryboardScene[] = [];
+
+      for (let idx = 0; idx < detectedScenes.length; idx++) {
+        const scene = detectedScenes[idx];
+        const beatNums = Array.isArray(scene.beat_numbers)
+          ? scene.beat_numbers.join(", ")
+          : (scene.beat_numbers || "");
+
+        const pass2Prompt = `You are a professional storyboard artist for a 3D animated children's series.
+
+Your task is to generate a production-ready storyboard image-generation prompt for Scene #${scene.scene_number || idx + 1}: "${scene.title || 'Scene'}".
 
 ---
 
@@ -209,6 +304,8 @@ ${characterPromptSection}
 2. Build each scene's Environment section strictly using the official location descriptions provided below and the beat script details.
 3. Maintain environmental continuity (time of day, lighting, color palette, architectural style) across all panels in the same location.
 
+${locationPromptSection}
+
 ---
 
 ## STRICT 3D CGI RENDER STYLE RULE (CRITICAL)
@@ -219,130 +316,67 @@ ${characterPromptSection}
 
 ---
 
-## YOUR TASK
-
-1. Group consecutive beats into coherent scenes.
-2. Each scene should contain one or more consecutive beats.
-3. Generate one storyboard prompt for each scene.
-4. Each beat within a scene should become one storyboard panel.
-
----
-
-## SCENE GROUPING
-
-A scene is a continuous visual and dramatic sequence.
-
-Group consecutive beats together when they share:
-
-- The same physical location or closely connected setting.
-- The same general time of day.
-- Continuous character action or interaction.
-- Strong visual and dramatic continuity.
-
-Start a new scene when there is:
-
-- A significant location change.
-- A meaningful INT/EXT change.
-- A significant time-of-day change.
-- A major environmental change.
-- A new dramatic sequence.
-
-Every beat must belong to exactly one scene.
-
-Never reorder, skip, duplicate, or modify beats.
-
----
-
-## LOCATION ASSIGNMENT
-${locationPromptSection}
-
----
-
-## STORYBOARD PANELS
-
-Each beat becomes exactly ONE storyboard panel.
-
----
-
 ## GRID SIZE
 
 Choose the grid based on the number of beats in the scene:
-
 1 beat → 1 panel
 2 beats → 1x2 grid
 3 beats → 1x3 grid
 4 beats → 2x2 grid
 5-6 beats → 2x3 grid
 
-If a scene contains more than 6 beats, split the scene into
-multiple storyboard sheets while preserving beat order.
+---
+
+## TARGET SCENE DETAILS
+Scene Number: ${scene.scene_number || idx + 1}
+Title: ${scene.title || 'Scene'}
+Location Name: ${scene.location_name || ''}
+Beats Included: ${beatNums}
+
+Target Scene Script Beats:
+"""
+${scene.scene_script_beats || ''}
+"""
 
 ---
 
 ## OUTPUT FORMAT
 
-Return ONLY valid JSON.
-
-Use exactly this structure:
+Return ONLY valid JSON with this structure:
 
 {
-  "scenes": [
-    {
-      "scene_number": 1,
-      "title": "Short descriptive scene title",
-      "location_name": "Location Name",
-      "character_names": ["Character Name 1", "Character Name 2"],
-      "beat_numbers": [1, 2, 3],
-      "scene_script_beats": "Full exact text of all script beats grouped into this scene (including beat headers, [ACTION], [DIALOGUE], [CAMERA], [MOTION], and [SFX] lines).",
-      "storyboard_prompt": "Complete prompt for generating this storyboard sheet."
-    }
-  ]
-}
+  "storyboard_prompt": "Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.\n\nCreate a [GRID] 3D animation panel grid, [NUMBER] panels, for a full-color 3D animated children's film.\n\nScene: ${scene.title || 'Scene'}\n\nEnvironment: [location, time of day, lighting and important environmental details]\n\nCharacters: [characters present and strictly their appearance as explicitly defined in their official character profile without any added qualities or fictional traits]\n\nPanel 1: [visual description based on Beat 1]\n\nPanel 2: [visual description based on Beat 2]\n\n...\n\nMaintain 3D CGI visual continuity across all panels. Number each panel in the corner.\n\nStyle Directive: Clean 3D CGI digital animation render only. No 2D sketches, no pencil outlines, no hand-drawn artwork."
+}`;
 
-The storyboard_prompt MUST strictly follow this structure:
+        try {
+          const pass2Response = await callAi(pass2Prompt, 64000);
+          const pass2Text = typeof pass2Response === "string" ? pass2Response : pass2Response?.text || "";
+          const parsedPass2 = parseAiJson(pass2Text);
 
-"Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.
+          let promptStr = "";
+          if (parsedPass2?.storyboard_prompt) {
+            promptStr = parsedPass2.storyboard_prompt;
+          } else if (typeof parsedPass2 === "string") {
+            promptStr = parsedPass2;
+          }
 
-Create a [GRID] 3D animation panel grid, [NUMBER] panels, for a full-color 3D animated children's film.
-
-Scene: [short scene description]
-
-Environment: [location, time of day, lighting and important environmental details]
-
-Characters: [characters present and strictly their appearance as explicitly defined in their official character profile without any added qualities or fictional traits]
-
-Panel 1: [visual description based on Beat 1]
-
-Panel 2: [visual description based on Beat 2]
-
-...
-
-Maintain 3D CGI visual continuity across all panels. Number each panel in the corner.
-
-Style Directive: Clean 3D CGI digital animation render only. No 2D sketches, no pencil outlines, no hand-drawn artwork."
-
----
-
-## BEAT SCRIPT
-
-${prompt}`;
-
-    try {
-      const response = await callAi(storyboardAiPrompt, 8000);
-      const rawText = typeof response === "string" ? response : response?.text || "";
-
-      const parsed = parseAiJson(rawText);
-
-      let scenesList: StoryboardScene[] = [];
-      if (parsed && Array.isArray(parsed.scenes)) {
-        scenesList = parsed.scenes;
-      } else if (Array.isArray(parsed)) {
-        scenesList = parsed;
+          finalScenes.push({
+            ...scene,
+            scene_number: scene.scene_number || idx + 1,
+            storyboard_prompt: promptStr || `Full-color 3D CGI animation frame, Disney Pixar quality. Scene: ${scene.title}`,
+          });
+        } catch (scErr) {
+          console.warn(`Failed to generate prompt for scene ${idx + 1}, using fallback:`, scErr);
+          finalScenes.push({
+            ...scene,
+            scene_number: scene.scene_number || idx + 1,
+            storyboard_prompt: `Full-color 3D CGI animation frame, Disney Pixar quality. Scene: ${scene.title}`,
+          });
+        }
       }
 
-
-      if (scenesList.length > 0) {
-        const payload = scenesList.map((scene, idx) => ({
+      if (finalScenes.length > 0) {
+        const payload = finalScenes.map((scene, idx) => ({
           scriptId: selectedScript,
           sceneNumber: scene.scene_number || idx + 1,
           title: scene.title,
@@ -352,6 +386,8 @@ ${prompt}`;
           locationName: scene.location_name,
           characterNames: scene.character_names,
           episodeLocationId: scene.episodeLocationId,
+          beatNumbers: scene.beat_numbers,
+          sceneScriptBeats: scene.scene_script_beats,
         }));
 
         const saveRes = await saveStoryboardScenesAction(payload);
