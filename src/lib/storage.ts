@@ -138,5 +138,50 @@ export async function processAndUploadSceneVideo(
   return data.publicUrl;
 }
 
+const FULL_EPISODES_BUCKET = 'full_episodes';
+
+export async function uploadFullEpisodeVideo(
+  fileBuffer: Buffer,
+  storyId: string,
+  title?: string
+): Promise<string> {
+  const cleanTitle = title ? title.replace(/[^a-zA-Z0-9_-]/g, '_') : `episode_${Date.now()}`;
+  const fileName = `${storyId}/${cleanTitle}_${Date.now()}.mp4`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(FULL_EPISODES_BUCKET)
+    .upload(fileName, fileBuffer, {
+      contentType: 'video/mp4',
+      upsert: true,
+    });
+
+  if (uploadError) {
+    console.error('Error uploading full episode video to Supabase storage:', uploadError);
+    throw uploadError;
+  }
+
+  const { data } = supabase.storage.from(FULL_EPISODES_BUCKET).getPublicUrl(fileName);
+  return data.publicUrl;
+}
+
+export async function deleteFullEpisodeVideoFromStorage(videoPublicUrl: string): Promise<boolean> {
+  try {
+    if (!videoPublicUrl || !videoPublicUrl.includes(FULL_EPISODES_BUCKET)) return true;
+    const urlParts = videoPublicUrl.split(`${FULL_EPISODES_BUCKET}/`);
+    if (urlParts.length < 2) return false;
+    const filePath = urlParts[1];
+
+    const { error } = await supabase.storage.from(FULL_EPISODES_BUCKET).remove([filePath]);
+    if (error) {
+      console.error('Error removing video from storage:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to delete video from storage:', err);
+    return false;
+  }
+}
+
 
 

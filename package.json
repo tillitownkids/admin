@@ -13,6 +13,7 @@
     "@anthropic-ai/sdk": "^0.116.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1085.0",
     "@base-ui/react": "^1.6.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/genai": "^2.13.0",
     "@prisma/client": "^5.22.0",
     "@supabase/ssr": "^0.12.5",

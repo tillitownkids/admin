@@ -445,10 +445,13 @@ export async function getStoryboardByStoryIdAction(storyId: string) {
     }).catch(() => []);
 
     const formattedScenes = scenes.map((sc) => ({
+      id: sc.id,
       scene_number: sc.scene_number,
       title: sc.description ? (sc.description.length > 50 ? sc.description.slice(0, 50) + "..." : sc.description) : `Scene ${sc.scene_number}`,
       description: sc.description,
       storyboard_prompt: sc.storyboard_prompt,
+      video_url: sc.video_url,
+      video_prompt: sc.video_prompt,
       script_beats: sc.script_beats,
       beat_numbers: sc.beat_numbers,
       location_name: sc.EpisodeLocation?.Location?.name || "",
