@@ -8,7 +8,7 @@ export interface StoryboardSceneInput {
 
   scene_number: number;
   title: string;
-  beat_numbers?: number[];
+  beat_numbers?: number[] | string;
   scene_script_beats?: string;
   location_name?: string;
   character_names?: string[];
