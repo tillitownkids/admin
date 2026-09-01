@@ -37,27 +37,83 @@ async function sendVideoWebhook(payload: any): Promise<Response | null> {
 function extractVideoUrl(data: any): string | null {
   if (!data) return null;
   if (typeof data === 'string' && (data.startsWith('http') || data.includes('.mp4') || data.includes('.webm'))) return data;
-  if (data.result?.results?.url) return data.result.results.url;
-  if (data.result?.results?.videoUrl) return data.result.results.videoUrl;
-  if (data.result?.url) return data.result.url;
-  if (data.result?.videoUrl) return data.result.videoUrl;
-  if (data.results?.url) return data.results.url;
-  if (data.results?.videoUrl) return data.results.videoUrl;
-  if (data.url) return data.url;
-  if (data.videoUrl) return data.videoUrl;
-  if (data.video_url) return data.video_url;
-  if (Array.isArray(data) && data[0]) return extractVideoUrl(data[0]);
+
+  const d = data.body || data.json || data;
+
+  // 1. Direct url or results.url on item
+  if (d.results?.url) return d.results.url;
+  if (d.results?.videoUrl) return d.results.videoUrl;
+  if (d.results?.video_url) return d.results.video_url;
+  if (Array.isArray(d.results) && d.results[0]?.url) return d.results[0].url;
+  if (Array.isArray(d.results) && d.results[0]?.videoUrl) return d.results[0].videoUrl;
+  if (d.url) return d.url;
+  if (d.videoUrl) return d.videoUrl;
+  if (d.video_url) return d.video_url;
+
+  // 2. Check scenes array inside result or root
+  const scenes = Array.isArray(d.result?.scenes)
+    ? d.result.scenes
+    : Array.isArray(d.scenes)
+    ? d.scenes
+    : null;
+  if (scenes && scenes[0]) {
+    const scUrl = extractVideoUrl(scenes[0]);
+    if (scUrl) return scUrl;
+  }
+
+  // 3. Check result.results or result.url
+  if (d.result?.results?.url) return d.result.results.url;
+  if (d.result?.results?.videoUrl) return d.result.results.videoUrl;
+  if (d.result?.results?.video_url) return d.result.results.video_url;
+  if (Array.isArray(d.result?.results) && d.result.results[0]?.url) return d.result.results[0].url;
+  if (d.result?.url) return d.result.url;
+  if (d.result?.videoUrl) return d.result.videoUrl;
+  if (d.result?.video_url) return d.result.video_url;
+
+  // 4. Array format fallback
+  if (Array.isArray(data) && data[0]) {
+    return extractVideoUrl(data[0]);
+  }
+
   return null;
 }
 
 function extractVideoMagnificIdentifier(data: any): string | null {
   if (!data) return null;
-  if (data.result?.identifier) return data.result.identifier;
-  if (data.result?.results?.identifier) return data.result.results.identifier;
-  if (data.identifier) return data.identifier;
-  if (data.video_magnific_identifier) return data.video_magnific_identifier;
-  if (data.magnific_identifier) return data.magnific_identifier;
-  if (Array.isArray(data) && data[0]) return extractVideoMagnificIdentifier(data[0]);
+  if (typeof data === 'string') return null;
+
+  const d = data.body || data.json || data;
+
+  // 1. Direct identifier on item
+  if (d.identifier) return d.identifier;
+  if (d.video_magnific_identifier) return d.video_magnific_identifier;
+  if (d.magnific_identifier) return d.magnific_identifier;
+  if (d.magnific_id) return d.magnific_id;
+  if (d.results?.identifier) return d.results.identifier;
+  if (d.results?.magnific_identifier) return d.results.magnific_identifier;
+
+  // 2. Check scenes array inside result or root
+  const scenes = Array.isArray(d.result?.scenes)
+    ? d.result.scenes
+    : Array.isArray(d.scenes)
+    ? d.scenes
+    : null;
+  if (scenes && scenes[0]) {
+    const magId = extractVideoMagnificIdentifier(scenes[0]);
+    if (magId) return magId;
+  }
+
+  // 3. Check result object
+  if (d.result?.identifier) return d.result.identifier;
+  if (d.result?.video_magnific_identifier) return d.result.video_magnific_identifier;
+  if (d.result?.magnific_identifier) return d.result.magnific_identifier;
+  if (d.result?.results?.identifier) return d.result.results.identifier;
+
+  // 4. Array format fallback
+  if (Array.isArray(data) && data[0]) {
+    return extractVideoMagnificIdentifier(data[0]);
+  }
+
   return null;
 }
 
@@ -213,39 +269,38 @@ Requirements:
 
 
           const newVideoUrls: Record<string, { url: string; magnificId?: string | null }> = {};
+          let rawScenes: any[] = [];
+
           if (Array.isArray(data)) {
-            data.forEach((item: any, idx: number) => {
-              const targetScene = targetScenes[idx];
-              const url = extractVideoUrl(item);
-              const magId = extractVideoMagnificIdentifier(item);
-              if (targetScene && url) {
-                newVideoUrls[targetScene.id] = { url, magnificId: magId };
-              }
+            data.forEach((item: any) => {
+              const d = item.body || item.json || item;
+              const subScenes = Array.isArray(d.result?.scenes)
+                ? d.result.scenes
+                : Array.isArray(d.scenes)
+                ? d.scenes
+                : [item];
+              rawScenes.push(...subScenes);
             });
           } else if (data && typeof data === 'object') {
-            const scenesArr = Array.isArray(data.result?.scenes)
-              ? data.result.scenes
-              : Array.isArray(data.scenes)
-              ? data.scenes
-              : null;
+            const d = data.body || data.json || data;
+            rawScenes = Array.isArray(d.result?.scenes)
+              ? d.result.scenes
+              : Array.isArray(d.scenes)
+              ? d.scenes
+              : [data];
+          }
 
-            if (scenesArr) {
-              scenesArr.forEach((item: any, idx: number) => {
-                const targetScene = targetScenes.find((s) => s.id === item.id) || targetScenes[idx];
-                const url = extractVideoUrl(item);
-                const magId = extractVideoMagnificIdentifier(item);
-                if (targetScene && url) {
-                  newVideoUrls[targetScene.id] = { url, magnificId: magId };
-                }
-              });
-            } else {
-              const url = extractVideoUrl(data);
-              const magId = extractVideoMagnificIdentifier(data);
-              if (url && targetScenes.length > 0) {
-                newVideoUrls[targetScenes[0].id] = { url, magnificId: magId };
+          rawScenes.forEach((item: any, idx: number) => {
+            const url = extractVideoUrl(item);
+            const magId = extractVideoMagnificIdentifier(item);
+            if (url) {
+              const itemId = item.id || item.sceneId || item.scene_id;
+              const targetScene = targetScenes.find((s) => s.id === itemId) || targetScenes[idx];
+              if (targetScene) {
+                newVideoUrls[targetScene.id] = { url, magnificId: magId };
               }
             }
-          }
+          });
 
           if (Object.keys(newVideoUrls).length > 0) {
             const urlMap: Record<string, string> = {};
