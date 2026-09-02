@@ -173,7 +173,11 @@ Requirements:
 - Describe sequential character actions, natural movement, and expressions across each beat in chronological order.
 - Begin with camera movement (e.g. gentle wide camera push, tracking shot).
 - End with a strong cinematic shot composition.
-- STRICT CHARACTER FIDELITY: NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
+- STRICT CHARACTER FIDELITY & ANTI-CLONING RULE (CRITICAL):
+  1. NEVER CLONE, DUPLICATE, REPLICATE, OR RENDER MULTIPLE COPIES OF ANY CHARACTER IN THE SAME SCENE.
+  2. Every named character MUST appear as EXACTLY ONE (1) single unique individual character figure.
+  3. FORBIDDEN: DO NOT depict twin copies, cloned figures, secondary duplicates, or multiple instances of any character standing or hovering side-by-side. Describe every character strictly as a single unique individual figure.
+  4. NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
 - Output ONLY the plain text video animation prompt without headers, markdown, or commentary.`;
 
     const response = await callAi(videoAiInstruction);
@@ -553,7 +557,11 @@ Requirements:
 - Describe sequential character actions, natural movement, and expressions across each beat in chronological order.
 - Begin with camera movement (e.g. gentle wide camera push, tracking shot).
 - End with a strong cinematic shot composition.
-- STRICT CHARACTER FIDELITY: NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
+- STRICT CHARACTER FIDELITY & ANTI-CLONING RULE (CRITICAL):
+  1. NEVER CLONE, DUPLICATE, REPLICATE, OR RENDER MULTIPLE COPIES OF ANY CHARACTER IN THE SAME SCENE.
+  2. Every named character MUST appear as EXACTLY ONE (1) single unique individual character figure.
+  3. FORBIDDEN: DO NOT depict twin copies, cloned figures, secondary duplicates, or multiple instances of any character standing or hovering side-by-side. Describe every character strictly as a single unique individual figure.
+  4. NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
 - Output ONLY the plain text video animation prompt without headers, markdown, or commentary.`;
 
       const response = await callAi(videoAiInstruction);
