@@ -94,18 +94,21 @@ export async function stitchEpisodeVideosAction(input: StitchVideosInput) {
     }
 
     const n = videoUrls.length;
-    // Construct filter_complex stream concatenation
+    // Construct filter_complex stream concatenation including video and audio streams
     let filterString = '';
     for (let i = 0; i < n; i++) {
-      filterString += `[${i}:v]`;
+      filterString += `[${i}:v][${i}:a]`;
     }
-    filterString += `concat=n=${n}:v=1:a=0[outv]`;
+    filterString += `concat=n=${n}:v=1:a=1[outv][outa]`;
 
     ffmpegArgs.push('-filter_complex', filterString);
     ffmpegArgs.push('-map', '[outv]');
+    ffmpegArgs.push('-map', '[outa]');
     ffmpegArgs.push('-c:v', 'libx264');
     ffmpegArgs.push('-preset', 'fast');
     ffmpegArgs.push('-crf', '22');
+    ffmpegArgs.push('-c:a', 'aac');
+    ffmpegArgs.push('-b:a', '192k');
     ffmpegArgs.push('-pix_fmt', 'yuv420p');
     ffmpegArgs.push(outputFile);
 
