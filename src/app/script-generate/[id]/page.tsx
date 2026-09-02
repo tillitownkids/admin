@@ -140,6 +140,7 @@ export default function ScriptDetailPage({ params }: { params: Promise<{ id: str
     try {
       const res = await saveGeneratedScriptAction({
         id: id,
+        story_id: script?.story_id,
         topic: script?.topic || "Untitled Script",
         generationType: script?.generation_type || "new",
         contentHtml: currentHtml,

@@ -374,6 +374,7 @@ Now convert the provided story into the beat script format.`;
       }
 
       const saveRes = await saveGeneratedScriptAction({
+        story_id: selectedStory.id,
         topic: selectedStory.topic || selectedStory.concept || "Beat Script",
         generationType: selectedStory.generation_type || "new",
         contentHtml: generatedScriptText

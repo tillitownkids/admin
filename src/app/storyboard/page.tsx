@@ -291,8 +291,12 @@ Your task is to generate a production-ready storyboard image-generation prompt f
 
 1. NEVER INVENT, ASSUME, OR FABRICATE any physical traits, body mechanics, technological qualities, powers, or unstated equipment for any character.
 2. DO NOT describe any character as a robot, machine, mechanical companion, or as having wheels, engines, metallic parts, glowing eyes, or spinning compasses UNLESS those exact traits are explicitly stated in the provided official character profile or beat script.
-3. For example: If a character is named "Tilli", describe Tilli strictly as defined in the official character profile or script. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
-4. Keep all character descriptions 100% faithful to the official character profiles provided below. Only describe character clothing, expressions, posture, and physical actions relevant to each beat.
+3. STRICT SINGLE-CHARACTER INSTANCE RULE (ANTI-CLONING / NO DUPLICATION):
+   - NEVER CLONE, DUPLICATE, REPLICATE, OR RENDER MULTIPLE COPIES OF ANY CHARACTER IN THE SAME SCENE.
+   - Every named character MUST appear as EXACTLY ONE (1) single individual character figure.
+   - FORBIDDEN: DO NOT depict twin copies, cloned figures, or multiple instances of any character standing or hovering side-by-side. Describe every character strictly as a single unique individual figure.
+4. For example: If a character is named "Tilli", describe Tilli strictly as defined in the official character profile or script. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
+5. Keep all character descriptions 100% faithful to the official character profiles provided below. Only describe character clothing, expressions, posture, and physical actions relevant to each beat.
 
 ${characterPromptSection}
 
