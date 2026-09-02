@@ -12,6 +12,8 @@ export interface ConfirmSceneInput {
   episodeLocationId?: string;
   locationName?: string;
   characterNames?: string[];
+  beatNumbers?: number[] | string;
+  sceneScriptBeats?: string;
 }
 
 export async function buildStoryboardPayloadAction(scriptId: string, scenes: ConfirmSceneInput[], videoPrompt?: string) {
@@ -30,7 +32,13 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
         where: { id: scriptId }
       }).catch(() => null);
 
-      if (scriptObj?.topic) {
+      if (scriptObj?.story_id) {
+        targetStory = await prisma.story.findUnique({
+          where: { id: scriptObj.story_id }
+        }).catch(() => null);
+      }
+
+      if (!targetStory && scriptObj?.topic) {
         targetStory = await prisma.story.findFirst({
           where: { topic: scriptObj.topic }
         }).catch(() => null);
@@ -169,7 +177,13 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         where: { id: inputScriptId }
       }).catch(() => null);
 
-      if (scriptObj?.topic) {
+      if (scriptObj?.story_id) {
+        targetStory = await prisma.story.findUnique({
+          where: { id: scriptObj.story_id }
+        }).catch(() => null);
+      }
+
+      if (!targetStory && scriptObj?.topic) {
         targetStory = await prisma.story.findFirst({
           where: { topic: scriptObj.topic }
         }).catch(() => null);
@@ -269,6 +283,18 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         }
       });
 
+      let beatNumbersArray: number[] = [];
+      if (Array.isArray(sceneInput.beatNumbers)) {
+        beatNumbersArray = sceneInput.beatNumbers.map(n => Number(n)).filter(n => !isNaN(n));
+      } else if (typeof sceneInput.beatNumbers === 'string') {
+        beatNumbersArray = (sceneInput.beatNumbers as string)
+          .split(',')
+          .map(s => parseInt(s.trim(), 10))
+          .filter(n => !isNaN(n));
+      } else if (typeof sceneInput.beatNumbers === 'number') {
+        beatNumbersArray = [sceneInput.beatNumbers];
+      }
+
       let updatedScene;
       if (existingScene) {
         updatedScene = await prisma.scene.update({
@@ -278,6 +304,8 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
             episode_location_id: targetEpLocId,
             storyboard_prompt: sceneInput.storyboardPrompt,
             description: sceneInput.description || sceneInput.title || existingScene.description,
+            script_beats: sceneInput.sceneScriptBeats || existingScene.script_beats,
+            beat_numbers: beatNumbersArray.length > 0 ? beatNumbersArray : existingScene.beat_numbers,
             storyboard_status: "confirmed",
             updated_at: new Date()
           }
@@ -290,6 +318,8 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
             scene_number: sceneInput.sceneNumber,
             description: sceneInput.description || sceneInput.title || "",
             storyboard_prompt: sceneInput.storyboardPrompt,
+            script_beats: sceneInput.sceneScriptBeats || null,
+            beat_numbers: beatNumbersArray,
             storyboard_status: "confirmed",
             order_index: sceneInput.sceneNumber
           }
@@ -366,7 +396,13 @@ export async function getStoryboardByStoryIdAction(storyId: string) {
         where: { id: storyId }
       }).catch(() => null);
 
-      if (scriptObj?.topic) {
+      if (scriptObj?.story_id) {
+        story = await prisma.story.findUnique({
+          where: { id: scriptObj.story_id }
+        }).catch(() => null);
+      }
+
+      if (!story && scriptObj?.topic) {
         story = await prisma.story.findFirst({
           where: { topic: scriptObj.topic }
         }).catch(() => null);
@@ -409,10 +445,15 @@ export async function getStoryboardByStoryIdAction(storyId: string) {
     }).catch(() => []);
 
     const formattedScenes = scenes.map((sc) => ({
+      id: sc.id,
       scene_number: sc.scene_number,
       title: sc.description ? (sc.description.length > 50 ? sc.description.slice(0, 50) + "..." : sc.description) : `Scene ${sc.scene_number}`,
       description: sc.description,
       storyboard_prompt: sc.storyboard_prompt,
+      video_url: sc.video_url,
+      video_prompt: sc.video_prompt,
+      script_beats: sc.script_beats,
+      beat_numbers: sc.beat_numbers,
       location_name: sc.EpisodeLocation?.Location?.name || "",
       character_names: sc.SceneCharacter.map(scChar => scChar.Character.name),
       episodeLocationId: sc.episode_location_id,

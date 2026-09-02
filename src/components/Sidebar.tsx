@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon, LogOut } from "lucide-react";
+import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon, LogOut, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { signout } from "@/actions/auth";
@@ -17,6 +17,7 @@ export const navItems = [
   { name: "Script Generate", path: "/script-generate", icon: FileText },
   { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
   { name: "Video Production", path: "/episode-production", icon: Clapperboard },
+  { name: "Video Stitching", path: "/video-stitching", icon: Film },
   { name: "Video Approval", path: "/video-approval", icon: CheckSquare },
   { name: "YouTube Publishing", path: "/youtube-publishing", icon: Tv },
 ];

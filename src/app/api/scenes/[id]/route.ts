@@ -18,10 +18,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       video_prompt,
       video_url,
       video_magnific_identifier,
+      script_beats,
+      beat_numbers,
     } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date() };
     if (storyboard_prompt !== undefined) updatePayload.storyboard_prompt = storyboard_prompt;
+    if (script_beats !== undefined) updatePayload.script_beats = script_beats;
+    if (beat_numbers !== undefined) updatePayload.beat_numbers = beat_numbers;
 
     if (storyboard_image_url !== undefined) {
       let permanentUrl = storyboard_image_url;

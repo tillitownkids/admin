@@ -13,7 +13,7 @@ import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction
 interface StoryboardScene {
   scene_number: number;
   title: string;
-  beat_numbers?: number[];
+  beat_numbers?: number[] | string;
   scene_script_beats?: string;
   description?: string;
   storyboard_prompt: string;
@@ -180,6 +180,8 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
         locationName: sceneToSave.location_name,
         characterNames: sceneToSave.character_names,
         episodeLocationId: sceneToSave.episodeLocationId,
+        beatNumbers: sceneToSave.beat_numbers,
+        sceneScriptBeats: sceneToSave.scene_script_beats,
       }];
 
       const res = await saveStoryboardScenesAction(payload);
@@ -214,6 +216,8 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
         locationName: scene.location_name,
         characterNames: scene.character_names,
         episodeLocationId: scene.episodeLocationId,
+        beatNumbers: scene.beat_numbers,
+        sceneScriptBeats: scene.scene_script_beats,
       }));
 
       const res = await saveStoryboardScenesAction(payload);
@@ -375,17 +379,26 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
                           </div>
                         )}
 
-                        {scene.beat_numbers && scene.beat_numbers.length > 0 && (
-                          <>
-                            <span className="text-xs bg-muted text-muted-foreground px-3 py-1 rounded-full font-medium">
-                              Beats: {scene.beat_numbers.join(", ")}
-                            </span>
-                            <span className="text-xs bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
-                              <LayoutGrid className="w-3 h-3" />
-                              {getGridBadge(scene.beat_numbers.length)}
-                            </span>
-                          </>
-                        )}
+                        {(() => {
+                          const beats = scene.beat_numbers;
+                          if (!beats) return null;
+                          const beatsArr = Array.isArray(beats)
+                            ? beats
+                            : (typeof beats === 'string' ? beats.split(',').map((s) => s.trim()).filter(Boolean) : []);
+                          if (beatsArr.length === 0) return null;
+
+                          return (
+                            <>
+                              <span className="text-xs bg-muted text-muted-foreground px-3 py-1 rounded-full font-medium">
+                                Beats: {beatsArr.join(', ')}
+                              </span>
+                              <span className="text-xs bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
+                                <LayoutGrid className="w-3 h-3" />
+                                {getGridBadge(beatsArr.length)}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
 

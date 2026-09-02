@@ -42,6 +42,8 @@ export interface SceneRow {
   video_prompt?: string | null;
   video_url?: string | null;
   video_magnific_identifier?: string | null;
+  script_beats?: string | null;
+  beat_numbers?: number[] | string | null;
 }
 
 

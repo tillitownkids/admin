@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-import { Video, FileText, Loader2, Check, RefreshCw, ExternalLink, Code, Film, User, MapPin, ChevronDown, ChevronUp } from 'lucide-react';
+import { Video, FileText, Loader2, Check, RefreshCw, ExternalLink, Code, Film, User, MapPin, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
 
 
 import { labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
@@ -37,27 +37,83 @@ async function sendVideoWebhook(payload: any): Promise<Response | null> {
 function extractVideoUrl(data: any): string | null {
   if (!data) return null;
   if (typeof data === 'string' && (data.startsWith('http') || data.includes('.mp4') || data.includes('.webm'))) return data;
-  if (data.result?.results?.url) return data.result.results.url;
-  if (data.result?.results?.videoUrl) return data.result.results.videoUrl;
-  if (data.result?.url) return data.result.url;
-  if (data.result?.videoUrl) return data.result.videoUrl;
-  if (data.results?.url) return data.results.url;
-  if (data.results?.videoUrl) return data.results.videoUrl;
-  if (data.url) return data.url;
-  if (data.videoUrl) return data.videoUrl;
-  if (data.video_url) return data.video_url;
-  if (Array.isArray(data) && data[0]) return extractVideoUrl(data[0]);
+
+  const d = data.body || data.json || data;
+
+  // 1. Direct url or results.url on item
+  if (d.results?.url) return d.results.url;
+  if (d.results?.videoUrl) return d.results.videoUrl;
+  if (d.results?.video_url) return d.results.video_url;
+  if (Array.isArray(d.results) && d.results[0]?.url) return d.results[0].url;
+  if (Array.isArray(d.results) && d.results[0]?.videoUrl) return d.results[0].videoUrl;
+  if (d.url) return d.url;
+  if (d.videoUrl) return d.videoUrl;
+  if (d.video_url) return d.video_url;
+
+  // 2. Check scenes array inside result or root
+  const scenes = Array.isArray(d.result?.scenes)
+    ? d.result.scenes
+    : Array.isArray(d.scenes)
+    ? d.scenes
+    : null;
+  if (scenes && scenes[0]) {
+    const scUrl = extractVideoUrl(scenes[0]);
+    if (scUrl) return scUrl;
+  }
+
+  // 3. Check result.results or result.url
+  if (d.result?.results?.url) return d.result.results.url;
+  if (d.result?.results?.videoUrl) return d.result.results.videoUrl;
+  if (d.result?.results?.video_url) return d.result.results.video_url;
+  if (Array.isArray(d.result?.results) && d.result.results[0]?.url) return d.result.results[0].url;
+  if (d.result?.url) return d.result.url;
+  if (d.result?.videoUrl) return d.result.videoUrl;
+  if (d.result?.video_url) return d.result.video_url;
+
+  // 4. Array format fallback
+  if (Array.isArray(data) && data[0]) {
+    return extractVideoUrl(data[0]);
+  }
+
   return null;
 }
 
 function extractVideoMagnificIdentifier(data: any): string | null {
   if (!data) return null;
-  if (data.result?.identifier) return data.result.identifier;
-  if (data.result?.results?.identifier) return data.result.results.identifier;
-  if (data.identifier) return data.identifier;
-  if (data.video_magnific_identifier) return data.video_magnific_identifier;
-  if (data.magnific_identifier) return data.magnific_identifier;
-  if (Array.isArray(data) && data[0]) return extractVideoMagnificIdentifier(data[0]);
+  if (typeof data === 'string') return null;
+
+  const d = data.body || data.json || data;
+
+  // 1. Direct identifier on item
+  if (d.identifier) return d.identifier;
+  if (d.video_magnific_identifier) return d.video_magnific_identifier;
+  if (d.magnific_identifier) return d.magnific_identifier;
+  if (d.magnific_id) return d.magnific_id;
+  if (d.results?.identifier) return d.results.identifier;
+  if (d.results?.magnific_identifier) return d.results.magnific_identifier;
+
+  // 2. Check scenes array inside result or root
+  const scenes = Array.isArray(d.result?.scenes)
+    ? d.result.scenes
+    : Array.isArray(d.scenes)
+    ? d.scenes
+    : null;
+  if (scenes && scenes[0]) {
+    const magId = extractVideoMagnificIdentifier(scenes[0]);
+    if (magId) return magId;
+  }
+
+  // 3. Check result object
+  if (d.result?.identifier) return d.result.identifier;
+  if (d.result?.video_magnific_identifier) return d.result.video_magnific_identifier;
+  if (d.result?.magnific_identifier) return d.result.magnific_identifier;
+  if (d.result?.results?.identifier) return d.result.results.identifier;
+
+  // 4. Array format fallback
+  if (Array.isArray(data) && data[0]) {
+    return extractVideoMagnificIdentifier(data[0]);
+  }
+
   return null;
 }
 
@@ -92,7 +148,7 @@ export function VideoStage({
 
   // Helper to build video prompt for a scene via AI
   const generateVideoPromptForScene = async (scene: SceneRow): Promise<string> => {
-    const sceneBeatsText = scene.description || '';
+    const sceneBeatsText = scene.script_beats || scene.description || '';
     const targetImagePrompt = scene.storyboard_prompt || scene.description || '';
 
     const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the following script beats and storyboard image prompt for a scene, and generate a concise, cinematic video animation description for video generation AI.
@@ -213,39 +269,38 @@ Requirements:
 
 
           const newVideoUrls: Record<string, { url: string; magnificId?: string | null }> = {};
+          let rawScenes: any[] = [];
+
           if (Array.isArray(data)) {
-            data.forEach((item: any, idx: number) => {
-              const targetScene = targetScenes[idx];
-              const url = extractVideoUrl(item);
-              const magId = extractVideoMagnificIdentifier(item);
-              if (targetScene && url) {
-                newVideoUrls[targetScene.id] = { url, magnificId: magId };
-              }
+            data.forEach((item: any) => {
+              const d = item.body || item.json || item;
+              const subScenes = Array.isArray(d.result?.scenes)
+                ? d.result.scenes
+                : Array.isArray(d.scenes)
+                ? d.scenes
+                : [item];
+              rawScenes.push(...subScenes);
             });
           } else if (data && typeof data === 'object') {
-            const scenesArr = Array.isArray(data.result?.scenes)
-              ? data.result.scenes
-              : Array.isArray(data.scenes)
-              ? data.scenes
-              : null;
+            const d = data.body || data.json || data;
+            rawScenes = Array.isArray(d.result?.scenes)
+              ? d.result.scenes
+              : Array.isArray(d.scenes)
+              ? d.scenes
+              : [data];
+          }
 
-            if (scenesArr) {
-              scenesArr.forEach((item: any, idx: number) => {
-                const targetScene = targetScenes.find((s) => s.id === item.id) || targetScenes[idx];
-                const url = extractVideoUrl(item);
-                const magId = extractVideoMagnificIdentifier(item);
-                if (targetScene && url) {
-                  newVideoUrls[targetScene.id] = { url, magnificId: magId };
-                }
-              });
-            } else {
-              const url = extractVideoUrl(data);
-              const magId = extractVideoMagnificIdentifier(data);
-              if (url && targetScenes.length > 0) {
-                newVideoUrls[targetScenes[0].id] = { url, magnificId: magId };
+          rawScenes.forEach((item: any, idx: number) => {
+            const url = extractVideoUrl(item);
+            const magId = extractVideoMagnificIdentifier(item);
+            if (url) {
+              const itemId = item.id || item.sceneId || item.scene_id;
+              const targetScene = targetScenes.find((s) => s.id === itemId) || targetScenes[idx];
+              if (targetScene) {
+                newVideoUrls[targetScene.id] = { url, magnificId: magId };
               }
             }
-          }
+          });
 
           if (Object.keys(newVideoUrls).length > 0) {
             const urlMap: Record<string, string> = {};
@@ -441,6 +496,7 @@ function VideoSceneCard({
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isSendingVideo, setIsSendingVideo] = useState(false);
   const [isPromptOpen, setIsPromptOpen] = useState(false);
+  const [isScriptBeatsOpen, setIsScriptBeatsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -601,9 +657,16 @@ Requirements:
             #{scene.scene_number || sceneIdx + 1}
           </span>
           <div>
-            <h4 className="text-base font-bold text-foreground line-clamp-1">
-              {scene.description || `Scene #${scene.scene_number || sceneIdx + 1}`}
-            </h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-base font-bold text-foreground line-clamp-1">
+                {scene.description || `Scene #${scene.scene_number || sceneIdx + 1}`}
+              </h4>
+              {scene.beat_numbers && (
+                <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20">
+                  Beats {Array.isArray(scene.beat_numbers) ? scene.beat_numbers.join(', ') : scene.beat_numbers}
+                </span>
+              )}
+            </div>
             {scene.locationName && (
               <span className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 font-medium">
                 <MapPin className="w-3 h-3 text-emerald-500" />
@@ -613,6 +676,33 @@ Requirements:
           </div>
         </div>
       </div>
+
+      {/* Collapsible Script Beats & Dialogues Accordion */}
+      {scene.script_beats && (
+        <div className="border border-border/50 rounded-xl overflow-hidden bg-muted/10">
+          <button
+            type="button"
+            onClick={() => setIsScriptBeatsOpen(!isScriptBeatsOpen)}
+            className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-foreground bg-muted/20 hover:bg-muted/40 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <BookOpen className="w-3.5 h-3.5 text-emerald-500" />
+              Script Beats & Spoken Dialogues
+            </span>
+            <span className="flex items-center gap-1.5 text-muted-foreground font-normal">
+              {isScriptBeatsOpen ? 'Hide Beats' : 'Show Beats'}
+              {isScriptBeatsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </span>
+          </button>
+          {isScriptBeatsOpen && (
+            <div className="p-3 border-t border-border/40 bg-background/50">
+              <p className="text-xs font-mono text-foreground leading-relaxed whitespace-pre-wrap">
+                {scene.script_beats}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {statusMessage && <p className="text-sm text-emerald-500 font-medium">{statusMessage}</p>}

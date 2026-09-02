@@ -121,9 +121,16 @@ export function ScenesStage({ episodeLocations, scenes, onRefetchScenes, onAllDe
                             <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10 text-primary text-xs font-bold shrink-0">
                               #{scene.scene_number || idx + 1}
                             </span>
-                            <h5 className="font-bold text-sm text-foreground line-clamp-1">
-                              {scene.description ? (scene.description.length > 80 ? scene.description.slice(0, 80) + '...' : scene.description) : `Scene #${scene.scene_number}`}
-                            </h5>
+                            <div className="flex items-center gap-2">
+                              <h5 className="font-bold text-sm text-foreground line-clamp-1">
+                                {scene.description ? (scene.description.length > 80 ? scene.description.slice(0, 80) + '...' : scene.description) : `Scene #${scene.scene_number}`}
+                              </h5>
+                              {scene.beat_numbers && (
+                                <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20">
+                                  Beats {Array.isArray(scene.beat_numbers) ? scene.beat_numbers.join(', ') : scene.beat_numbers}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-xs font-medium text-muted-foreground">
@@ -140,20 +147,10 @@ export function ScenesStage({ episodeLocations, scenes, onRefetchScenes, onAllDe
                         {/* Collapsible Dropdown Content Body */}
                         {isOpen && (
                           <div className="p-4 pt-3 border-t border-border/60 bg-muted/20 space-y-3 animate-in fade-in duration-200">
-                            <div className="space-y-1">
-                              <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                                <BookOpen className="w-3.5 h-3.5 text-primary" />
-                                Scene Script & Description
-                              </label>
-                              <p className="text-sm text-foreground leading-relaxed">
-                                {scene.description || 'No detailed scene description provided.'}
-                              </p>
-                            </div>
-
                             {scene.storyboard_prompt && (
                               <div className="space-y-1 pt-1">
                                 <label className="text-xs font-semibold text-muted-foreground">
-                                  Storyboard Prompt Context
+                                  Storyboard Prompt
                                 </label>
                                 <p className="text-xs text-muted-foreground leading-relaxed font-mono">
                                   {scene.storyboard_prompt}
@@ -194,9 +191,9 @@ export function ScenesStage({ episodeLocations, scenes, onRefetchScenes, onAllDe
                     </div>
                     <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                   </div>
-                  {isOpen && (
+                  {isOpen && scene.storyboard_prompt && (
                     <div className="p-4 pt-3 border-t border-border/60 bg-muted/20">
-                      <p className="text-sm text-foreground leading-relaxed">{scene.description}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed font-mono">{scene.storyboard_prompt}</p>
                     </div>
                   )}
                 </div>
