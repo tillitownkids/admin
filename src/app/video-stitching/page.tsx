@@ -56,6 +56,7 @@ export default function VideoStitchingPage() {
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
   const [isStitching, setIsStitching] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -156,6 +157,27 @@ export default function VideoStitchingPage() {
       setError(err?.message || "An unexpected error occurred during video stitching.");
     } finally {
       setIsStitching(false);
+    }
+  }
+
+  async function handleDownloadVideo(videoId: string, videoUrl: string, title: string) {
+    setDownloadingId(videoId);
+    try {
+      const response = await fetch(videoUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${title.replace(/[^a-zA-Z0-9_-]/g, "_")}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error("Failed to download video blob, opening direct link:", err);
+      window.open(videoUrl, "_blank");
+    } finally {
+      setDownloadingId(null);
     }
   }
 
@@ -377,16 +399,23 @@ export default function VideoStitchingPage() {
 
                   {/* Actions */}
                   <div className="flex items-center justify-between border-t border-border/50 pt-3">
-                    <a
-                      href={vid.video_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      download
-                      className="px-3 py-1.5 rounded-lg bg-secondary text-secondary-foreground hover:bg-muted text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                    <button
+                      onClick={() => handleDownloadVideo(vid.id, vid.video_url, vid.title)}
+                      disabled={downloadingId === vid.id}
+                      className="px-3 py-1.5 rounded-lg bg-secondary text-secondary-foreground hover:bg-muted text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
                     >
-                      <Download size={13} />
-                      Download MP4
-                    </a>
+                      {downloadingId === vid.id ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin text-primary" />
+                          Preparing MP4...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={13} />
+                          Download MP4
+                        </>
+                      )}
+                    </button>
 
                     <button
                       onClick={() => handleDeleteVideo(vid.id)}
