@@ -1,6 +1,6 @@
 'use client';
 
-import { Users, Type, Sparkles, Save, Check, Loader2 } from "lucide-react";
+import { Users, Type, Sparkles, Save, Check, Loader2, Cpu } from "lucide-react";
 import { useState, useEffect } from "react";
 import { labelClass, selectFieldClass, primaryButtonClass } from "@/lib/styles";
 import { getGlobalSettingsAction, saveGlobalSettingsAction } from "@/actions/settingsAction";
@@ -8,17 +8,20 @@ import { getGlobalSettingsAction, saveGlobalSettingsAction } from "@/actions/set
 interface SettingsState {
   targetAudience: string;
   tone: string;
+  aiModel: string;
 }
 
 export function DashboardSettings() {
   const [savedState, setSavedState] = useState<SettingsState>({
     targetAudience: 'kids',
     tone: 'educational',
+    aiModel: 'claude',
   });
 
   const [currentState, setCurrentState] = useState<SettingsState>({
     targetAudience: 'kids',
     tone: 'educational',
+    aiModel: 'claude',
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -34,6 +37,7 @@ export function DashboardSettings() {
           const loaded = {
             targetAudience: res.settings.targetAudience || 'kids',
             tone: res.settings.tone || 'educational',
+            aiModel: res.settings.aiModel || 'claude',
           };
           setSavedState(loaded);
           setCurrentState(loaded);
@@ -49,7 +53,8 @@ export function DashboardSettings() {
 
   const isDirty =
     currentState.targetAudience !== savedState.targetAudience ||
-    currentState.tone !== savedState.tone;
+    currentState.tone !== savedState.tone ||
+    currentState.aiModel !== savedState.aiModel;
 
   const handleAudienceChange = (val: string) => {
     setCurrentState((prev) => ({ ...prev, targetAudience: val }));
@@ -59,12 +64,17 @@ export function DashboardSettings() {
     setCurrentState((prev) => ({ ...prev, tone: val }));
   };
 
+  const handleModelChange = (val: string) => {
+    setCurrentState((prev) => ({ ...prev, aiModel: val }));
+  };
+
   const handleSaveChanges = async () => {
     setIsSaving(true);
     try {
       const res = await saveGlobalSettingsAction({
         targetAudience: currentState.targetAudience,
         tone: currentState.tone,
+        aiModel: currentState.aiModel,
       });
 
       console.log('[GLOBAL STORY SETTINGS SAVED TO DATABASE]', res);
@@ -72,9 +82,10 @@ export function DashboardSettings() {
       if (res.success) {
         setSavedState(currentState);
         setSaveSuccess(true);
-        // Also sync localStorage for fallback
+        // Sync localStorage for fallback
         localStorage.setItem('targetAudience', currentState.targetAudience);
         localStorage.setItem('tone', currentState.tone);
+        localStorage.setItem('aiModel', currentState.aiModel);
         setTimeout(() => setSaveSuccess(false), 3000);
       }
     } catch (err) {
@@ -127,7 +138,7 @@ export function DashboardSettings() {
             Loading global settings from database...
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Target Audience */}
             <div className="space-y-2">
               <label className={labelClass}>
@@ -164,6 +175,24 @@ export function DashboardSettings() {
                   <option value="adventurous">Adventurous</option>
                   <option value="humorous">Humorous</option>
                   <option value="emotional">Emotional & Heartwarming</option>
+                </select>
+              </div>
+            </div>
+
+            {/* AI Model */}
+            <div className="space-y-2">
+              <label className={labelClass}>
+                <Cpu className="w-4 h-4 text-primary" />
+                AI Model
+              </label>
+              <div className="relative">
+                <select
+                  value={currentState.aiModel}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  className={selectFieldClass}
+                >
+                  <option value="claude">Claude</option>
+                  <option value="kimi2.5">Kimi 2.5</option>
                 </select>
               </div>
             </div>

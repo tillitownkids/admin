@@ -108,7 +108,7 @@ export class BedrockService {
       }
       
       throw new Error("Unexpected response format from Bedrock");
-    } catch (error) {
+    } catch (error: any) {
       console.error("BedrockService invokeModel Error:", error);
       throw error;
     }

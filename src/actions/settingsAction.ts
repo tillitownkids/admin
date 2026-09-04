@@ -6,13 +6,14 @@ export interface GlobalSettings {
   targetAudience?: string;
   audience?: string;
   tone?: string;
+  aiModel?: string;
 }
 
-export async function getGlobalSettingsAction(): Promise<{ success: boolean; settings: { targetAudience: string; tone: string } }> {
+export async function getGlobalSettingsAction(): Promise<{ success: boolean; settings: { targetAudience: string; tone: string; aiModel: string } }> {
   try {
     const rows = await prisma.setting.findMany({
       where: {
-        key: { in: ["targetAudience", "tone"] }
+        key: { in: ["targetAudience", "tone", "aiModel"] }
       }
     }).catch(() => []);
 
@@ -23,13 +24,14 @@ export async function getGlobalSettingsAction(): Promise<{ success: boolean; set
       settings: {
         targetAudience: map.get("targetAudience") || "kids",
         tone: map.get("tone") || "educational",
+        aiModel: map.get("aiModel") || "claude",
       }
     };
   } catch (err: any) {
     console.error("Error fetching global settings from database:", err);
     return {
       success: false,
-      settings: { targetAudience: "kids", tone: "educational" }
+      settings: { targetAudience: "kids", tone: "educational", aiModel: "claude" }
     };
   }
 }
@@ -38,6 +40,7 @@ export async function saveGlobalSettingsAction(input: GlobalSettings) {
   try {
     const targetAudience = input.targetAudience || input.audience || "kids";
     const tone = input.tone || "educational";
+    const aiModel = input.aiModel || "claude";
 
     await prisma.$transaction([
       prisma.setting.upsert({
@@ -49,6 +52,11 @@ export async function saveGlobalSettingsAction(input: GlobalSettings) {
         where: { key: "tone" },
         update: { value: tone },
         create: { key: "tone", value: tone }
+      }),
+      prisma.setting.upsert({
+        where: { key: "aiModel" },
+        update: { value: aiModel },
+        create: { key: "aiModel", value: aiModel }
       })
     ]);
 
@@ -56,6 +64,7 @@ export async function saveGlobalSettingsAction(input: GlobalSettings) {
       success: true,
       targetAudience,
       tone,
+      aiModel,
       timestamp: new Date().toISOString()
     };
 
