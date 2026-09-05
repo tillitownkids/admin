@@ -2,6 +2,7 @@
 
 import { callAi } from "@/actions/actions";
 import { getStoriesAction, saveGeneratedStoryAction } from "@/actions/saveStoryAction";
+import { getGlobalSettingsAction } from "@/actions/settingsAction";
 import { PageHeader } from "@/components/PageHeader";
 import { GlassPanel } from "@/components/GlassPanel";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass, selectFieldClass } from "@/lib/styles";
@@ -276,6 +277,23 @@ export default function StoryPage() {
     setIsLoading(true);
     setError(null);
 
+    let globalAudience = 'Kids (4-8 years)';
+    let globalTone = 'Educational & Fun';
+
+    try {
+      const dbSettingsRes = await getGlobalSettingsAction();
+      if (dbSettingsRes.success && dbSettingsRes.settings) {
+        globalAudience = dbSettingsRes.settings.targetAudience || globalAudience;
+        globalTone = dbSettingsRes.settings.tone || globalTone;
+      } else {
+        globalAudience = localStorage.getItem('targetAudience') || globalAudience;
+        globalTone = localStorage.getItem('tone') || globalTone;
+      }
+    } catch {
+      globalAudience = localStorage.getItem('targetAudience') || globalAudience;
+      globalTone = localStorage.getItem('tone') || globalTone;
+    }
+
     const selectedPreviousStory = stories.find((s) => s.id === previousEpisodeId);
     const contextToUse = previousContext.trim() || (selectedPreviousStory?.content ? selectedPreviousStory.content.replace(/<[^>]+>/g, ' ').slice(0, 600) : "");
 
@@ -297,6 +315,8 @@ You are a creative director and storyteller for the children's animated show "Ti
 
 Generation Mode Details: ${continuationHeader}
 Target Story Duration: ${duration || '2-3 minutes'}
+Target Audience: ${globalAudience}
+Story Tone & Atmosphere: ${globalTone}
 
 CHARACTERS RULE & STRICT CHARACTER FIDELITY (STRICT CRITICAL):
 - You MUST strictly use ONLY the characters present in the database listed below.
@@ -319,6 +339,8 @@ Given Inputs:
 - Story Overview: ${data.Overview}
 - Lesson to be Taught: ${data.Lesson}
 - Time Duration Target: ${duration || '2-3 minutes'}
+- Target Audience: ${globalAudience}
+- Story Tone & Atmosphere: ${globalTone}
 
 STORY FORMATTING RULES (STRICT & MANDATORY):
 - Write a single, continuous, warm bedtime narrative story.
@@ -330,6 +352,8 @@ STORY FORMATTING RULES (STRICT & MANDATORY):
 Requirements:
 - Build the story around the provided concept and overview while naturally conveying the given lesson.
 - Keep the narrative length and pacing aligned with the target duration (${duration || '2-3 minutes'}).
+- TARGET AUDIENCE CONSTRAINT: Adapt vocabulary, dialogue complexity, and themes strictly for ${globalAudience}.
+- TONE & ATMOSPHERE CONSTRAINT: Maintain a strictly ${globalTone} tone and emotional atmosphere throughout the entire narrative.
 ${generationType === 'continue' ? '- Maintain plot and character continuity from the previous episode events.' : '- Create a clear, engaging standalone story.'}
 - Use ONLY characters from the database list above.
 - Include natural dialogue for every character involved.

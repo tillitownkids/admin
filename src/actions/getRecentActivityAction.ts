@@ -29,7 +29,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
     // 1. Fetch latest stories
     const stories = await prisma.story.findMany({
       orderBy: { generated_at: 'desc' },
-      take: 5,
+      take: 6,
     }).catch(() => []);
 
     for (const story of stories) {
@@ -49,7 +49,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
     // 2. Fetch latest scripts
     const scripts = await prisma.script.findMany({
       orderBy: { generated_at: 'desc' },
-      take: 5,
+      take: 6,
     }).catch(() => []);
 
     for (const script of scripts) {
@@ -66,7 +66,27 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
       });
     }
 
-    // 3. Fetch latest scenes with storyboards or videos
+    // 3. Fetch latest full episode videos
+    const fullVideos = await prisma.video.findMany({
+      orderBy: { created_at: 'desc' },
+      take: 6,
+      include: { Story: true }
+    }).catch(() => []);
+
+    for (const vid of fullVideos) {
+      const date = vid.created_at ? new Date(vid.created_at) : new Date();
+      activities.push({
+        id: `full_video_${vid.id}`,
+        type: 'video',
+        title: `Full Episode Video "${vid.title.slice(0, 30)}" stitched`,
+        subtitle: vid.Story?.topic ? `Episode: ${vid.Story.topic.slice(0, 25)}...` : 'Full MP4 render ready',
+        timeAgo: getTimeAgo(date),
+        timestamp: date.toISOString(),
+        href: '/video-stitching',
+      });
+    }
+
+    // 4. Fetch latest scenes with storyboards or video clips
     const scenes = await prisma.scene.findMany({
       where: {
         OR: [
@@ -75,7 +95,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
         ],
       },
       orderBy: { updated_at: 'desc' },
-      take: 5,
+      take: 6,
       include: {
         Story: true,
       },
