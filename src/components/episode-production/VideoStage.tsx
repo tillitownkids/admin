@@ -117,6 +117,53 @@ function extractVideoMagnificIdentifier(data: any): string | null {
   return null;
 }
 
+function buildVideoAiInstruction(scene: SceneRow, sceneIdx: number = 0): string {
+  const sceneNum = scene.scene_number || sceneIdx + 1;
+  const location = scene.locationName || 'LOCATION';
+  const sceneOverview = scene.description || '';
+  const beatsText = scene.script_beats || scene.description || '';
+  const storyboardPromptText = scene.storyboard_prompt || scene.description || '';
+
+  return `You are a cinematic director for a 3D animated children's film. Take the following script beats, location context, and storyboard details for Scene #${sceneNum}, and format a video generation prompt for video generation AI (like Luma, Runway, Sora, Kling).
+
+Target Scene Data:
+- Location Header: ${location}
+- Scene Overview: ${sceneOverview}
+
+Script Beats (Contains exact dialogues, actions, camera, motion, WPM/emotion, and SFX):
+"""
+${beatsText}
+"""
+
+Storyboard Image Prompt / Art Direction:
+"""
+${storyboardPromptText}
+"""
+
+You MUST format the output video prompt EXACTLY according to the following template structure:
+
+## SCRIPT
+
+${location} — ${sceneOverview}
+
+[Include all BEATs from the Script Beats as-is, preserving **BEAT N — Title**, [ACTION], [DIALOGUE], [CAMERA], [MOTION], [SFX], [EMOTION], and [WPM]]
+
+(Use attached storyboard panels and reference images as visual reference)
+
+Generate a single continuous 3D animated video, Pixar/DreamWorks style, full color, maximum 15 seconds total duration, landscape 16:9. Follow the [ACTION], [CAMERA], and [MOTION] instructions from the attached script exactly, in order, for all Beats. Use the attached storyboard panel to match framing, character design, and environment at each beat.
+
+Steady, natural real-time pacing — do NOT speed up, rush, or compress the action to fit the duration. The total video duration MUST be a maximum of 15 seconds (0:00 to 0:15.0 max). Scale and allocate the beat timestamps sequentially so that the entire scene fits within 15 seconds total. Use this timing as the pacing guide:
+
+[Generate explicit timestamp ranges for each Beat scaled to fit within a maximum of 15.0 seconds total, e.g.:
+[0:00–0:02.5] Beat 1 — Title
+[0:02.5–0:05.0] Beat 2 — Title
+...up to maximum 0:15.0 total]
+
+Consistent character design, location design, and lighting throughout, per the attached reference sheets. No morphing, warping, or distorted geometry. No extra characters.
+
+Return ONLY the formatted video prompt text matching the exact template above, without any markdown code blocks, preamble, or extra commentary.`;
+}
+
 export function VideoStage({
   scenes,
   characters,
@@ -147,39 +194,8 @@ export function VideoStage({
 
 
   // Helper to build video prompt for a scene via AI
-  const generateVideoPromptForScene = async (scene: SceneRow): Promise<string> => {
-    const sceneBeatsText = scene.script_beats || scene.description || '';
-    const targetImagePrompt = scene.storyboard_prompt || scene.description || '';
-
-    const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the following script beats and storyboard image prompt for a scene, and generate a concise, cinematic video animation description for video generation AI.
-
-Target Scene Script Beats (Contains exact dialogues, character actions, camera, motion, and SFX):
-"""
-${sceneBeatsText}
-"""
-
-Target Scene Storyboard Image Prompt (Visual Art Direction & Framing):
-"""
-${targetImagePrompt}
-"""
-
-Requirements:
-- MANDATORY DIALOGUE ATTRIBUTION & LIP-SYNC ACCURACY (CRITICAL):
-  1. Whenever a character speaks a dialogue line (e.g. JAKSH: "There's still so much to see."), you MUST explicitly tag the speaker name and quote the exact dialogue line: [Jaksh speaks: "There's still so much to see."].
-  2. NEVER assign, mix up, or blur dialogue lines between characters. Each dialogue line MUST be strictly attached to the correct character's name.
-  3. Explicitly state who is speaking and who is listening (e.g. "Jaksh opens his mouth and speaks: 'There's still so much to see.' while Tilli listens quietly.").
-  4. NEVER summarize dialogue as "he speaks his dialogue" or omit the spoken words.
-- Seamlessly combine the visual art direction of the storyboard prompt with the precise character actions, spoken dialogue lines, expressions, and motion cues from the script beats.
-- Describe sequential character actions, natural movement, and expressions across each beat in chronological order.
-- Begin with camera movement (e.g. gentle wide camera push, tracking shot).
-- End with a strong cinematic shot composition.
-- STRICT CHARACTER FIDELITY & ANTI-CLONING RULE (CRITICAL):
-  1. NEVER CLONE, DUPLICATE, REPLICATE, OR RENDER MULTIPLE COPIES OF ANY CHARACTER IN THE SAME SCENE.
-  2. Every named character MUST appear as EXACTLY ONE (1) single unique individual character figure.
-  3. FORBIDDEN: DO NOT depict twin copies, cloned figures, secondary duplicates, or multiple instances of any character standing or hovering side-by-side. Describe every character strictly as a single unique individual figure.
-  4. NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
-- Output ONLY the plain text video animation prompt without headers, markdown, or commentary.`;
-
+  const generateVideoPromptForScene = async (scene: SceneRow, sceneIdx: number = 0): Promise<string> => {
+    const videoAiInstruction = buildVideoAiInstruction(scene, sceneIdx);
     const response = await callAi(videoAiInstruction);
     const resultText = typeof response === 'string' ? response : (response as any)?.text || '';
     return resultText.trim();
@@ -532,38 +548,7 @@ function VideoSceneCard({
     setStatusMessage(null);
 
     try {
-      const sceneBeatsText = scene.description || '';
-      const targetImagePrompt = scene.storyboard_prompt || scene.description || '';
-
-      const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the following script beats and storyboard image prompt for a scene, and generate a concise, cinematic video animation description for video generation AI.
-
-Target Scene Script Beats (Contains exact dialogues, character actions, camera, motion, and SFX):
-"""
-${sceneBeatsText}
-"""
-
-Target Scene Storyboard Image Prompt (Visual Art Direction & Framing):
-"""
-${targetImagePrompt}
-"""
-
-Requirements:
-- MANDATORY DIALOGUE ATTRIBUTION & LIP-SYNC ACCURACY (CRITICAL):
-  1. Whenever a character speaks a dialogue line (e.g. JAKSH: "There's still so much to see."), you MUST explicitly tag the speaker name and quote the exact dialogue line: [Jaksh speaks: "There's still so much to see."].
-  2. NEVER assign, mix up, or blur dialogue lines between characters. Each dialogue line MUST be strictly attached to the correct character's name.
-  3. Explicitly state who is speaking and who is listening (e.g. "Jaksh opens his mouth and speaks: 'There's still so much to see.' while Tilli listens quietly.").
-  4. NEVER summarize dialogue as "he speaks his dialogue" or omit the spoken words.
-- Seamlessly combine the visual art direction of the storyboard prompt with the precise character actions, spoken dialogue lines, expressions, and motion cues from the script beats.
-- Describe sequential character actions, natural movement, and expressions across each beat in chronological order.
-- Begin with camera movement (e.g. gentle wide camera push, tracking shot).
-- End with a strong cinematic shot composition.
-- STRICT CHARACTER FIDELITY & ANTI-CLONING RULE (CRITICAL):
-  1. NEVER CLONE, DUPLICATE, REPLICATE, OR RENDER MULTIPLE COPIES OF ANY CHARACTER IN THE SAME SCENE.
-  2. Every named character MUST appear as EXACTLY ONE (1) single unique individual character figure.
-  3. FORBIDDEN: DO NOT depict twin copies, cloned figures, secondary duplicates, or multiple instances of any character standing or hovering side-by-side. Describe every character strictly as a single unique individual figure.
-  4. NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character. Preserve character visual identity strictly as defined in official character profiles.
-- Output ONLY the plain text video animation prompt without headers, markdown, or commentary.`;
-
+      const videoAiInstruction = buildVideoAiInstruction(scene, sceneIdx);
       const response = await callAi(videoAiInstruction);
       const generatedPrompt = (typeof response === 'string' ? response : (response as any)?.text || '').trim();
 
@@ -596,9 +581,7 @@ Requirements:
     try {
       let currentPrompt = videoPromptText;
       if (!currentPrompt) {
-        const sceneBeatsText = scene.description || '';
-        const targetImagePrompt = scene.storyboard_prompt || scene.description || '';
-        const videoAiInstruction = `You are a cinematic director for a 3D animated children's film. Take the script beats and storyboard image prompt for scene #${scene.scene_number || sceneIdx + 1} and generate a concise video animation description.\nBeats: ${sceneBeatsText}\nStoryboard: ${targetImagePrompt}`;
+        const videoAiInstruction = buildVideoAiInstruction(scene, sceneIdx);
         const response = await callAi(videoAiInstruction);
         currentPrompt = (typeof response === 'string' ? response : (response as any)?.text || '').trim();
         setVideoPromptText(currentPrompt);

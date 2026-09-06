@@ -7,6 +7,8 @@ export interface BeatScriptInput {
 
 export interface GeneratedBeat {
   beat_number: number;
+  emotion: string;
+  wpm: number;
   action: string;
   camera: string;
   motion: string;
@@ -22,11 +24,13 @@ export class BeatScriptTask extends BaseAITask {
 Scene description: ${input.sceneDescription}
 Storyboard shot: ${input.storyboardPrompt}
 
-Break this scene into one or more sequential beats. Each beat needs all five fields filled in with age-appropriate, production-ready detail:
+Break this scene into one or more sequential beats. Each beat needs all fields filled in with age-appropriate, production-ready detail:
+- emotion: primary emotional tone of this beat (e.g., "Excited", "Normal", "Emotional", "Fearful", "Curious")
+- wpm: speech rate / pacing in Words Per Minute (e.g. 185 for Excited, 145 for Normal, 105 for Emotional/Slow)
 - action: what physically happens/what characters do
 - camera: camera angle/movement (e.g. "Wide shot, static", "Slow push-in on character's face")
 - motion: animation/motion notes (e.g. "Character bounces excitedly", "Leaves rustle in the wind")
-- dialogue: spoken lines, in the format "CharacterName: line" (empty string "" if this beat has no dialogue)
+- dialogue: spoken lines in format "CharacterName: line" (empty string "" if none). Specifically use "<-Break x seconds->" between dialogue lines/sentences (e.g., 'Jaksh: "Line one" <-Break 1.5 seconds-> "Line two"') to improve audio quality and pacing.
 - sfx: sound effects/audio notes (empty string "" if none)
 
 You MUST return your response ONLY as a valid JSON array of objects. Do NOT include any preamble, explanation, or markdown code blocks — return raw JSON only.
@@ -35,6 +39,8 @@ CRITICAL: Escape all newlines (\\n) and double quotes (\\") inside string values
 Each object must have this structure:
 {
   "beat_number": <number, starting at 1>,
+  "emotion": "<string>",
+  "wpm": <number>,
   "action": "<string>",
   "camera": "<string>",
   "motion": "<string>",

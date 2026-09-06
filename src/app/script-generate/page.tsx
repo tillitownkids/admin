@@ -218,9 +218,13 @@ For every beat, use exactly this structure:
 
 [LOCATION HEADER]
 
+**[EMOTION]** State the primary emotional tone (e.g. Excited, Normal, Emotional, Fearful, Curious).
+
+**[WPM]** Target speech rate in Words Per Minute (e.g. 185 WPM for Excited, 145 WPM for Normal, 105 WPM for Emotional).
+
 **[ACTION]** What happens in this beat.
 
-**[DIALOGUE]** Spoken dialogue, if any. If there is no dialogue, omit this tag.
+**[DIALOGUE]** Spoken dialogue, if any. Format as CharacterName: "Spoken line". When multiple dialogue lines or sentences occur, use explicit pause tags between lines (e.g. Character: "Line one" <-Break 1.5 seconds-> "Line two"). If there is no dialogue, omit this tag.
 
 **[CAMERA]** Describe the camera shot, framing, movement, and angle.
 
@@ -244,6 +248,32 @@ Examples:
 EXT — DUBAI CREEK — GOLDEN HOUR — Boats move gently across the water as the city glows in the setting sun.
 
 INT — OLD HOUSE — EVENING — Warm lantern light fills the room.
+
+---
+
+## EMOTION & WPM PACING GUIDELINES
+
+Choose the **EMOTION** and **WPM** for each beat based on the narrative context:
+
+1. **Excited / Energetic / Panicked** (Target WPM: 170 – 210 WPM, Default: 185 WPM)
+   - Use for high-energy moments, big discoveries, joyful celebration, shouting, or frantic activity.
+
+2. **Normal / Neutral / Conversational** (Target WPM: 130 – 160 WPM, Default: 145 WPM)
+   - Use for standard dialogue, casual banter, explanations, or steady narration.
+
+3. **Emotional / Slow / Dramatic** (Target WPM: 90 – 120 WPM, Default: 105 WPM)
+   - Use for sad, gentle, intimate, or serious moments, dramatic revelations, bedtime/calm scenes, or long pauses.
+
+---
+
+## DIALOGUE PAUSE BREAKS GUIDELINES
+
+To improve audio quality and TTS delivery:
+- Specifically insert <-Break x seconds-> between consecutive dialogue lines, character exchanges, or separate sentences within a beat.
+- Examples:
+  - Jaksh: "Threshold number seven complete," <-Break 1.5 seconds-> "Jaksh? Where are you hiding?"
+  - Jaksh: "Faster, faster!" <-Break 1 second-> Mom: "Hold on tight!" <-Break 1.5 seconds->
+- Choose appropriate break durations (e.g. <-Break 0.5 seconds-> for short pauses, <-Break 1.5 seconds-> for speaker turns, <-Break 2.5 seconds-> for dramatic beats).
 
 ---
 
