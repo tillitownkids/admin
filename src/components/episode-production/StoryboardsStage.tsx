@@ -155,7 +155,7 @@ export function StoryboardsStage({
 
       const fullPayload = { scenes: payloadScenes };
 
-      const res = await fetch('https://automation.tillitown.com/webhook-test/generate-storyboard', {
+      const res = await fetch('https://automation.tillitown.com/webhook/generate-storyboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullPayload),
@@ -385,7 +385,7 @@ function StoryboardItem({
       const payload = { scenes: [sceneItem] };
 
       // 2. Send HTTP POST request to webhook
-      const res = await fetch('https://automation.tillitown.com/webhook-test/generate-storyboard', {
+      const res = await fetch('https://automation.tillitown.com/webhook/generate-storyboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
