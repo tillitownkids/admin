@@ -20,7 +20,7 @@ interface VideoStageProps {
 
 async function sendVideoWebhook(payload: any): Promise<Response | null> {
   try {
-    const res = await fetch('https://n8n.roastnest.com/webhook/generate-video', {
+    const res = await fetch('https://automation.tillitown.com/webhook/generate-video', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
