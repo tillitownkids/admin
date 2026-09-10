@@ -30,7 +30,7 @@ export function CreditsSection() {
     setError(null);
 
     try {
-      const res = await fetch("https://n8n.roastnest.com/webhook/get-credits", {
+      const res = await fetch("https://automation.tillitown.com/webhook/get-credits", {
         method: "GET",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",

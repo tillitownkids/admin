@@ -1,27 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { uploadFullEpisodeVideo, deleteFullEpisodeVideoFromStorage } from "@/lib/storage";
-import { spawn } from "child_process";
-import fs from "fs";
-import path from "path";
-import os from "os";
-
-function getFfmpegPath(): string {
-  if (process.env.FFMPEG_PATH) {
-    return process.env.FFMPEG_PATH;
-  }
-  try {
-    // eval('require') avoids Next.js Turbopack bundling errors for dynamic binary paths
-    const installer = eval("require")("@ffmpeg-installer/ffmpeg");
-    if (installer?.path) {
-      return installer.path;
-    }
-  } catch (err) {
-    console.warn("Could not resolve @ffmpeg-installer/ffmpeg dynamically:", err);
-  }
-  return "ffmpeg";
-}
+import { deleteFullEpisodeVideoFromStorage } from "@/lib/storage";
 
 export interface StitchVideosInput {
   storyId: string;
@@ -80,96 +60,46 @@ export async function stitchEpisodeVideosAction(input: StitchVideosInput) {
     return { success: false, error: "No video URLs provided for stitching." };
   }
 
-  const tempDir = path.join(/*turbopackIgnore: true*/ os.tmpdir(), `ffmpeg_stitch_${Date.now()}`);
-  fs.mkdirSync(tempDir, { recursive: true });
-
-  const outputFile = path.join(/*turbopackIgnore: true*/ tempDir, `stitched_${Date.now()}.mp4`);
+  const stitcherServiceUrl = process.env.STITCHER_SERVICE_URL || "http://localhost:3001/stitch";
+  // Increased timeout limit to 5 minutes (300,000 ms) to accommodate slow renders or Render cold starts
+  const timeoutMs = parseInt(process.env.STITCHER_TIMEOUT_MS || "300000", 10);
 
   try {
-    // Construct FFmpeg arguments with direct Supabase HTTPS URLs
-    const ffmpegArgs: string[] = ['-y'];
-
-    for (const url of videoUrls) {
-      ffmpegArgs.push('-i', url);
-    }
-
-    const n = videoUrls.length;
-    // Construct filter_complex stream concatenation including video and audio streams
-    let filterString = '';
-    for (let i = 0; i < n; i++) {
-      filterString += `[${i}:v][${i}:a]`;
-    }
-    filterString += `concat=n=${n}:v=1:a=1[outv][outa]`;
-
-    ffmpegArgs.push('-filter_complex', filterString);
-    ffmpegArgs.push('-map', '[outv]');
-    ffmpegArgs.push('-map', '[outa]');
-    ffmpegArgs.push('-c:v', 'libx264');
-    ffmpegArgs.push('-preset', 'fast');
-    ffmpegArgs.push('-crf', '22');
-    ffmpegArgs.push('-c:a', 'aac');
-    ffmpegArgs.push('-b:a', '192k');
-    ffmpegArgs.push('-pix_fmt', 'yuv420p');
-    ffmpegArgs.push(outputFile);
-
-    // Spawn FFmpeg binary process
-    await new Promise<void>((resolve, reject) => {
-      const ffmpegProc = spawn(getFfmpegPath(), ffmpegArgs, {
-        windowsHide: true,
-      });
-
-      let stderrLogs = '';
-
-      ffmpegProc.stderr.on('data', (data) => {
-        stderrLogs += data.toString();
-      });
-
-      ffmpegProc.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          console.error("FFmpeg process failed:", stderrLogs);
-          reject(new Error(`FFmpeg exited with code ${code}. ${stderrLogs.slice(-300)}`));
-        }
-      });
-
-      ffmpegProc.on('error', (err) => {
-        reject(err);
-      });
+    const res = await fetch(stitcherServiceUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storyId, title, videoUrls, sceneIds }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
-    if (!fs.existsSync(outputFile)) {
-      throw new Error("FFmpeg completed but output MP4 file was not generated.");
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "");
+      throw new Error(`Stitcher service failed (${res.status}): ${errorText || res.statusText}`);
     }
 
-    const outputBuffer = fs.readFileSync(outputFile);
+    const data = await res.json();
+    const finalVideoUrl = data.videoUrl || data.url;
 
-    // Upload stitched video to Supabase Storage
-    const publicUrl = await uploadFullEpisodeVideo(outputBuffer, storyId, title);
+    if (!finalVideoUrl) {
+      throw new Error(data.error || "Stitcher service completed but failed to return a valid video URL.");
+    }
 
-    // Save record to database Video table
     const videoRecord = await prisma.video.create({
       data: {
         story_id: storyId,
         title: title || "Full Episode Render",
-        video_url: publicUrl,
+        video_url: finalVideoUrl,
         scene_ids: sceneIds || [],
         status: "ready",
-      }
+      },
     });
 
     return { success: true, video: videoRecord };
   } catch (err: any) {
-    console.error("Failed to stitch episode videos:", err);
-    return { success: false, error: err?.message || "Failed to stitch episode videos." };
-  } finally {
-    // Instant cleanup: Delete temporary local files
-    try {
-      if (fs.existsSync(tempDir)) {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    } catch (cleanErr) {
-      console.warn("Temp folder cleanup warning:", cleanErr);
-    }
+    console.error("Failed to stitch episode videos via microservice:", err);
+    return {
+      success: false,
+      error: err?.message || "Video stitching failed via microservice.",
+    };
   }
 }

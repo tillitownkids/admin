@@ -84,7 +84,7 @@ export class AiService {
     });
 
     const textBlock = response.content.find(
-      (block) => block.type === "text"
+      (block) => block.type === "text" 
     );
 
     return {
