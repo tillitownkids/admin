@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Plus, Save, Upload, Loader2, X, Trash2, ArrowLeft, Sparkles, RefreshCw, Image as ImageIcon, ExternalLink } from 'lucide-react';
+import { Plus, Save, Upload, Loader2, X, Trash2, Sparkles, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
@@ -16,6 +16,8 @@ export interface LibraryItem {
   magnific_identifier?: string | null;
   generated_image_url?: string | null;
 }
+
+const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
 interface LibraryManagerProps {
   resourceName: string;
@@ -57,6 +59,7 @@ export function LibraryManager({
   const [isGeneratingSheet, setIsGeneratingSheet] = useState(false);
   const [hasGeneratedSheet, setHasGeneratedSheet] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generationNotice, setGenerationNotice] = useState<string | null>(null);
 
   // Drag & drop reference image state
   const [isDragging, setIsDragging] = useState(false);
@@ -78,11 +81,16 @@ export function LibraryManager({
   };
 
   useEffect(() => {
-    fetchItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let cancelled = false;
+    fetch(apiPath)
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Failed to load ${resourceNamePlural}`)))
+      .then((data) => { if (!cancelled) setItems(data[listKey] || []); })
+      .catch((err) => console.error(`Failed to load ${resourceNamePlural}`, err));
+    return () => { cancelled = true; };
+  }, [apiPath, listKey, resourceNamePlural]);
 
   const startCreate = () => {
+    setGenerationNotice(null);
     setName('');
     setItemDescription('');
     setReferenceImageUrl(null);
@@ -96,6 +104,7 @@ export function LibraryManager({
   };
 
   const openItem = (item: LibraryItem) => {
+    setGenerationNotice(null);
     setCurrent(item);
     setName(item.name);
     setItemDescription(item.description);
@@ -131,8 +140,8 @@ export function LibraryManager({
       setCurrent(null);
       await fetchItems();
       setViewMode('list');
-    } catch (err: any) {
-      showError(err.message || 'Failed to delete item.');
+    } catch (err: unknown) {
+      showError(errorMessage(err, 'Failed to delete item.'));
     } finally {
       setIsDeleting(false);
     }
@@ -183,17 +192,26 @@ export function LibraryManager({
       showError(`Please enter a prompt description for this ${resourceName.toLowerCase()} first.`);
       return;
     }
+    if (ownerType === 'character_reference' && pendingFile) {
+      showError('Save the character first to upload its reference image, then generate the sheet.');
+      return;
+    }
 
     setIsGeneratingSheet(true);
     setError(null);
+    setGenerationNotice(null);
 
     try {
       const payload = {
-        prompt: itemDescription,
-        reference_url: manualUploadImageUrl || ''
+        name: name.trim(),
+        prompt: itemDescription.trim(),
+        reference_url: ownerType === 'character_reference' ? (referenceImageUrl || '') : (manualUploadImageUrl || ''),
       };
 
-      const res = await fetch('https://automation.tillitown.com/webhook/generate-image', {
+      const webhookUrl = ownerType === 'character_reference'
+        ? 'https://automation.tillitown.com/webhook/generate-character-image'
+        : 'https://automation.tillitown.com/webhook/generate-image';
+      const res = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -228,10 +246,16 @@ export function LibraryManager({
         setMagnificIdentifier(returnedIdentifier);
       }
 
-      setHasGeneratedSheet(true);
-    } catch (err: any) {
-      console.error('Error generating location reference sheet:', err);
-      showError(err.message || 'Failed to generate reference sheet.');
+      if (ownerType === 'character_reference' && (!returnedUrl || !returnedIdentifier)) {
+        throw new Error('The character webhook did not return both an image URL and identifier.');
+      }
+      setHasGeneratedSheet(Boolean(returnedUrl || returnedIdentifier));
+      if (ownerType === 'character_reference') {
+        setGenerationNotice('Character reference sheet generated. Save this character to keep the image and identifier.');
+      }
+    } catch (err: unknown) {
+      console.error(`Error generating ${resourceName.toLowerCase()} reference sheet:`, err);
+      showError(errorMessage(err, 'Failed to generate reference sheet.'));
     } finally {
       setIsGeneratingSheet(false);
     }
@@ -251,7 +275,7 @@ export function LibraryManager({
         body: JSON.stringify({
           name,
           description: itemDescription,
-          reference_image_url: manualUploadImageUrl,
+          reference_image_url: pendingFile ? null : manualUploadImageUrl,
           generated_image_url: generatedImageUrl,
           magnific_identifier: magnificIdentifier
         }),
@@ -260,6 +284,7 @@ export function LibraryManager({
       const data = await res.json();
       const created: LibraryItem = data[itemKey];
 
+      let uploadWarning: string | null = null;
       if (pendingFile) {
         try {
           const formData = new FormData();
@@ -267,12 +292,18 @@ export function LibraryManager({
           formData.append('ownerType', ownerType);
           formData.append('ownerId', created.id);
           const uploadRes = await fetch('/api/images/upload', { method: 'POST', body: formData });
-          if (uploadRes.ok) {
-            const uploadData = await uploadRes.json();
-            created.reference_image_url = uploadData.publicUrl;
-          }
+          if (!uploadRes.ok) throw new Error('Image upload failed.');
+          const uploadData = await uploadRes.json();
+          const updateRes = await fetch(`${apiPath}/${created.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reference_image_url: uploadData.publicUrl }),
+          });
+          if (!updateRes.ok) throw new Error('Image uploaded but could not be attached to the new item.');
+          created.reference_image_url = uploadData.publicUrl;
         } catch (uploadErr) {
           console.error('Failed to upload image during creation', uploadErr);
+          uploadWarning = errorMessage(uploadErr, 'Image upload failed.');
         }
       }
 
@@ -281,8 +312,9 @@ export function LibraryManager({
       setPendingPreviewUrl(null);
       await fetchItems();
       setViewMode('list');
-    } catch (err: any) {
-      showError(err.message || 'Something went wrong.');
+      if (uploadWarning) showError(uploadWarning);
+    } catch (err: unknown) {
+      showError(errorMessage(err, 'Something went wrong.'));
     } finally {
       setIsSaving(false);
     }
@@ -310,8 +342,8 @@ export function LibraryManager({
       setCurrent(updated);
       await fetchItems();
       setViewMode('list');
-    } catch (err: any) {
-      showError(err.message || 'Something went wrong.');
+    } catch (err: unknown) {
+      showError(errorMessage(err, 'Something went wrong.'));
     } finally {
       setIsSaving(false);
     }
@@ -335,8 +367,8 @@ export function LibraryManager({
       setReferenceImageUrl(data.publicUrl);
       setCurrent({ ...current, reference_image_url: data.publicUrl });
       await fetchItems();
-    } catch (err: any) {
-      showError(err.message || 'Image upload failed.');
+    } catch (err: unknown) {
+      showError(errorMessage(err, 'Image upload failed.'));
     } finally {
       setIsUploadingImage(false);
     }
@@ -358,6 +390,12 @@ export function LibraryManager({
             <X className="w-4 h-4" />
           </button>
         </div>
+      )}
+
+      {generationNotice && (
+        <p role="status" className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm text-foreground">
+          {generationNotice}
+        </p>
       )}
 
       {viewMode === 'list' && (
@@ -423,32 +461,15 @@ export function LibraryManager({
                 )}
 
                 <div className="flex items-center gap-3">
-                  {/* Location Reference Sheet Generation Button */}
-                  {ownerType === 'location_reference' && (
-                    <button
-                      type="button"
-                      onClick={handleGenerateReferenceSheet}
-                      disabled={isGeneratingSheet || isSaving || isDeleting || !itemDescription.trim()}
-                      className={primaryButtonClass}
-                    >
-                      {isGeneratingSheet ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Generating...
-                        </>
-                      ) : hasGeneratedSheet ? (
-                        <>
-                          <RefreshCw className="w-4 h-4" />
-                          Regenerate
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          Generate Location Reference Sheet
-                        </>
-                      )}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleGenerateReferenceSheet}
+                    disabled={isGeneratingSheet || isSaving || isDeleting || !itemDescription.trim() || (ownerType === 'character_reference' && !name.trim())}
+                    className={primaryButtonClass}
+                  >
+                    {isGeneratingSheet ? <Loader2 className="w-4 h-4 animate-spin" /> : hasGeneratedSheet ? <RefreshCw className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+                    {isGeneratingSheet ? 'Generating...' : hasGeneratedSheet ? `Regenerate ${resourceName} Reference Sheet` : `Generate ${resourceName} Reference Sheet`}
+                  </button>
 
                   <button
                     type="button"
@@ -558,10 +579,10 @@ export function LibraryManager({
               </div>
             </div>
 
-            {/* SECTION 2: Generated Location Reference Sheet (generated_image_url & magnific_identifier) */}
-            {ownerType === 'location_reference' && (generatedImageUrl || hasGeneratedSheet || isGeneratingSheet) && (
+            {/* SECTION 2: Generated reference sheet (generated_image_url & magnific_identifier) */}
+            {(generatedImageUrl || hasGeneratedSheet || isGeneratingSheet) && (
               <div className="space-y-3 pt-4 border-t border-border/50">
-                <label className={labelClass}>Generated Location Reference Sheet</label>
+                <label className={labelClass}>Generated {resourceName} Reference Sheet</label>
 
                 <div className="relative w-full max-w-md aspect-video rounded-xl overflow-hidden border border-border shadow-sm bg-muted/30 flex items-center justify-center">
                   {isGeneratingSheet ? (
@@ -580,7 +601,7 @@ export function LibraryManager({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={generatedImageUrl}
-                        alt="Generated Location Reference Sheet"
+                        alt={`Generated ${resourceName} Reference Sheet`}
                         className="w-full h-full object-cover transition-transform duration-300 group-hover/img:scale-105"
                       />
                     </a>
