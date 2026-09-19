@@ -89,6 +89,8 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
           const identifier = (charObj as any)?.magnific_identifier;
           if (identifier) {
             characterRefs[charName] = identifier;
+          } else {
+            throw new Error(`Character "${charName}" is missing a Magnific identifier.`);
           }
         }
       }
@@ -122,6 +124,10 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
     const locIdentifier = (targetEpLoc?.Location as any)?.magnific_identifier;
     if (targetEpLoc?.Location?.name && locIdentifier) {
       locationRefs[targetEpLoc.Location.name] = locIdentifier;
+    } else if (targetEpLoc?.Location?.name) {
+      throw new Error(`Location "${targetEpLoc.Location.name}" is missing a Magnific identifier.`);
+    } else if (firstScene.locationName) {
+      throw new Error(`Location "${firstScene.locationName}" is not linked to a generated location reference.`);
     }
 
     // 4. Construct scene object (omit references section if empty)
@@ -544,5 +550,4 @@ export async function getSavedStoryboardsAction() {
   }
 
 }
-
 

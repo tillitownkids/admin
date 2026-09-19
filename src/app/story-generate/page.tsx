@@ -170,6 +170,9 @@ export default function StoryPage() {
   const [isAcceptingAll, setIsAcceptingAll] = useState<boolean>(false);
   const [activeCharacterIds, setActiveCharacterIds] = useState<string[]>([]);
   const [activeLocationIds, setActiveLocationIds] = useState<string[]>([]);
+  const [acceptedCharacterIds, setAcceptedCharacterIds] = useState<string[]>([]);
+  const [acceptedLocationIds, setAcceptedLocationIds] = useState<string[]>([]);
+  const [savePhase, setSavePhase] = useState<'references' | 'story' | null>(null);
 
   async function createCharacter(char: PendingCharacter) {
     const res = await fetch('/api/characters', {
@@ -192,7 +195,8 @@ export default function StoryPage() {
     setIsSavingCharacter(char.name);
     setError(null);
     try {
-      await createCharacter(char);
+      const characterId = await createCharacter(char);
+      setAcceptedCharacterIds((prev) => Array.from(new Set([...prev, characterId])));
       setPendingCharacters((prev) => prev.map((item, idx) => idx === index ? { ...item, added: true, rejected: false } : item));
     } catch (err: unknown) {
       setError(errorMessage(err, 'Failed to add character.'));
@@ -207,6 +211,7 @@ export default function StoryPage() {
 
   async function handleAddLocationToDb(loc: PendingLocation, index: number) {
     setIsSavingLocation(loc.name);
+    setError(null);
     try {
       const res = await fetch('/api/locations', {
         method: 'POST',
@@ -216,11 +221,11 @@ export default function StoryPage() {
 
       if (res.ok) {
         const resData = await res.json();
-        const createdLoc = resData.location || { name: loc.name, description: loc.description };
+        const createdLoc = resData.location;
+        if (!createdLoc?.id) throw new Error(`Location "${loc.name}" was not saved.`);
         setLocations((prev) => [...prev, createdLoc]);
-        if (createdLoc.id) {
-          setActiveLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
-        }
+        setActiveLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
+        setAcceptedLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
         setPendingLocations((prev) =>
           prev.map((item, idx) => (idx === index ? { ...item, added: true, rejected: false } : item))
         );
@@ -271,9 +276,20 @@ export default function StoryPage() {
 
       const allLocIds = Array.from(new Set([...activeLocationIds, ...newLocIds]));
       const allCharIds = Array.from(new Set([...activeCharacterIds, ...newCharIds]));
+      const allAcceptedLocIds = Array.from(new Set([...acceptedLocationIds, ...newLocIds]));
+      const allAcceptedCharIds = Array.from(new Set([...acceptedCharacterIds, ...newCharIds]));
       setActiveLocationIds(allLocIds);
       setActiveCharacterIds(allCharIds);
-      await finalizeSaveStory(pendingStoryText, undefined, allCharIds, allLocIds);
+      setAcceptedLocationIds(allAcceptedLocIds);
+      setAcceptedCharacterIds(allAcceptedCharIds);
+      await finalizeSaveStory(
+        pendingStoryText,
+        undefined,
+        allCharIds,
+        allLocIds,
+        allAcceptedCharIds,
+        allAcceptedLocIds,
+      );
     } catch (err: unknown) {
       setError(errorMessage(err, 'Failed to add suggested characters or locations.'));
     } finally {
@@ -285,13 +301,45 @@ export default function StoryPage() {
     storyContent: string, 
     targetRedirect?: string,
     overrideCharIds?: string[],
-    overrideLocIds?: string[]
+    overrideLocIds?: string[],
+    overrideAcceptedCharIds?: string[],
+    overrideAcceptedLocIds?: string[],
   ) {
     setIsLoading(true);
+    setError(null);
     try {
       const charIdsToSave = overrideCharIds || activeCharacterIds;
       const locIdsToSave = overrideLocIds || activeLocationIds;
+      const characterIdsToGenerate = overrideAcceptedCharIds || acceptedCharacterIds;
+      const locationIdsToGenerate = overrideAcceptedLocIds || acceptedLocationIds;
 
+      if (characterIdsToGenerate.length > 0 || locationIdsToGenerate.length > 0) {
+        setSavePhase('references');
+        const generationRes = await fetch('/api/references/generate-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            characterIds: characterIdsToGenerate,
+            locationIds: locationIdsToGenerate,
+          }),
+        });
+        const generationData = await generationRes.json().catch(() => ({}));
+        if (!generationRes.ok) {
+          const failures = Array.isArray(generationData.failed) ? generationData.failed : [];
+          const failureSummary = failures
+            .map((failure: { type?: string; id?: string; error?: string }) =>
+              failure.error || `${failure.type || 'reference'} ${failure.id || ''} failed`.trim()
+            )
+            .join('; ');
+          throw new Error(
+            failureSummary
+              ? `Some accepted references could not be generated: ${failureSummary}`
+              : generationData.error || 'Accepted references could not be generated.'
+          );
+        }
+      }
+
+      setSavePhase('story');
       const saveRes = await saveGeneratedStoryAction({
         id: pendingSavedStoryId || undefined,
         topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story",
@@ -304,6 +352,8 @@ export default function StoryPage() {
       });
 
       if (saveRes.success && saveRes.story?.id) {
+        setAcceptedCharacterIds([]);
+        setAcceptedLocationIds([]);
         setShowReviewModal(false);
         router.push(targetRedirect || `/story-generate/${saveRes.story.id}`);
       } else {
@@ -313,6 +363,7 @@ export default function StoryPage() {
     } catch (err: unknown) {
       setError(errorMessage(err, "Failed to save story."));
     } finally {
+      setSavePhase(null);
       setIsLoading(false);
     }
   }
@@ -364,7 +415,7 @@ ${contextToUse ? `- Previous Episode Summary / Context: ${contextToUse}` : ''}`
       : 'None in database';
 
     const prompt = `
-You are a creative director and storyteller for the children's animated show "Tilli & Jaksh."
+You are a creative director and storyteller for the children's animated show "Tillitown"
 
 Generation Mode Details: ${continuationHeader}
 Target Story Duration: ${duration || '2-3 minutes'}
@@ -503,13 +554,15 @@ Return ONLY valid JSON matching this exact structure:
       );
 
       if (detectedNewLocs.length > 0 || detectedNewChars.length > 0) {
+        setAcceptedCharacterIds([]);
+        setAcceptedLocationIds([]);
         setPendingLocations(detectedNewLocs.map((l) => ({ name: l.name.trim(), description: l.description || '' })));
         setPendingCharacters(detectedNewChars.map((c) => ({ name: c.name.trim(), description: c.description || '' })));
         setPendingStoryText(storyText);
         setShowReviewModal(true);
         setIsLoading(false);
       } else {
-        await finalizeSaveStory(storyText, undefined, charIds, uniqueInitialLocIds);
+        await finalizeSaveStory(storyText, undefined, charIds, uniqueInitialLocIds, [], []);
       }
     } catch (err: unknown) {
       console.error("Error generating story:", err);
@@ -834,7 +887,8 @@ Return ONLY valid JSON matching this exact structure:
               <button
                 type="button"
                 onClick={() => setShowReviewModal(false)}
-                className="text-muted-foreground hover:text-foreground p-1"
+                disabled={isLoading || isAcceptingAll}
+                className="text-muted-foreground hover:text-foreground p-1 disabled:opacity-50"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -849,12 +903,12 @@ Return ONLY valid JSON matching this exact structure:
                       <h4 className="font-bold text-foreground text-sm">{char.name}</h4>
                       {char.description && <p className="text-xs text-muted-foreground mt-0.5">{char.description}</p>}
                     </div>
-                    {char.added ? <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1"><Check className="w-4 h-4" /> Added to Database</span> : char.rejected ? <span className="text-xs text-muted-foreground">Rejected (Will not be saved)</span> : (
+                    {char.added ? <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1"><Check className="w-4 h-4" /> Accepted — reference generates when saved</span> : char.rejected ? <span className="text-xs text-muted-foreground">Rejected (Will not be saved)</span> : (
                       <div className="flex items-center gap-2">
-                        <button type="button" disabled={isSavingCharacter !== null} onClick={() => handleAddCharacterToDb(char, idx)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50">
+                        <button type="button" disabled={isSavingCharacter !== null || isLoading || isAcceptingAll} onClick={() => handleAddCharacterToDb(char, idx)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50">
                           {isSavingCharacter === char.name ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add Character
                         </button>
-                        <button type="button" onClick={() => handleRejectCharacter(idx)} className="px-3 py-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-medium">Reject</button>
+                        <button type="button" disabled={isLoading || isAcceptingAll} onClick={() => handleRejectCharacter(idx)} className="px-3 py-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-medium disabled:opacity-50">Reject</button>
                       </div>
                     )}
                   </div>
@@ -877,7 +931,7 @@ Return ONLY valid JSON matching this exact structure:
                   <div className="flex items-center gap-2">
                     {loc.added ? (
                       <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1">
-                        <Check className="w-4 h-4" /> Added to Database
+                        <Check className="w-4 h-4" /> Accepted — reference generates when saved
                       </span>
                     ) : loc.rejected ? (
                       <span className="text-xs text-muted-foreground font-medium italic">
@@ -887,7 +941,7 @@ Return ONLY valid JSON matching this exact structure:
                       <>
                         <button
                           type="button"
-                          disabled={isSavingLocation === loc.name}
+                          disabled={isSavingLocation === loc.name || isLoading || isAcceptingAll}
                           onClick={() => handleAddLocationToDb(loc, idx)}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
                         >
@@ -900,8 +954,9 @@ Return ONLY valid JSON matching this exact structure:
                         </button>
                         <button
                           type="button"
+                          disabled={isLoading || isAcceptingAll}
                           onClick={() => handleRejectLocation(idx)}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground text-xs font-medium transition cursor-pointer"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground text-xs font-medium transition cursor-pointer disabled:opacity-50"
                         >
                           Reject
                         </button>
@@ -912,6 +967,12 @@ Return ONLY valid JSON matching this exact structure:
               ))}
             </div>
 
+            {savePhase && (
+              <p className="text-sm text-primary font-medium flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {savePhase === 'references' ? 'Generating accepted references…' : 'Saving story…'}
+              </p>
+            )}
             {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
             <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
               {(pendingCharacters.some((item) => !item.added && !item.rejected) || pendingLocations.some((item) => !item.added && !item.rejected)) && (
@@ -921,7 +982,7 @@ Return ONLY valid JSON matching this exact structure:
                   disabled={isLoading || isAcceptingAll}
                   className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition disabled:opacity-50 cursor-pointer"
                 >
-                  {isAcceptingAll ? <><Loader2 className="w-4 h-4 animate-spin" />Adding All...</> : <><Check className="w-4 h-4" />Add All and Save</>}
+                  {isAcceptingAll ? <><Loader2 className="w-4 h-4 animate-spin" />{savePhase === 'references' ? 'Generating References…' : 'Adding All…'}</> : <><Check className="w-4 h-4" />Add All and Save</>}
                 </button>
               )}
 
@@ -934,11 +995,11 @@ Return ONLY valid JSON matching this exact structure:
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Saving Story...
+                    {savePhase === 'references' ? 'Generating References…' : 'Saving Story…'}
                   </>
                 ) : (
                   <>
-                    <span>Continue to Story</span>
+                    <span>Save Accepted and Continue</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

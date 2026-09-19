@@ -114,8 +114,17 @@ export function StoryboardsStage({
     });
 
     const charRefs: Record<string, string> = {};
+    const missingCharacters: string[] = [];
     for (const c of activeChars) {
-      charRefs[c.name] = c.magnific_identifier || c.id;
+      if (c.magnific_identifier) {
+        charRefs[c.name] = c.magnific_identifier;
+      } else {
+        missingCharacters.push(c.name);
+      }
+    }
+
+    if (missingCharacters.length > 0) {
+      throw new Error(`Scene #${scene.scene_number} is missing Magnific identifiers for: ${missingCharacters.join(', ')}.`);
     }
 
     // Match locations: episodeLocation matching scene
@@ -125,9 +134,12 @@ export function StoryboardsStage({
     );
 
     if (matchedEpLoc) {
-      locRefs[matchedEpLoc.Location.name] = matchedEpLoc.Location.magnific_identifier || matchedEpLoc.Location.id;
+      if (!matchedEpLoc.Location.magnific_identifier) {
+        throw new Error(`Scene #${scene.scene_number} location "${matchedEpLoc.Location.name}" is missing a Magnific identifier.`);
+      }
+      locRefs[matchedEpLoc.Location.name] = matchedEpLoc.Location.magnific_identifier;
     } else if (scene.locationName) {
-      locRefs[scene.locationName] = `loc_${scene.locationName.toLowerCase().replace(/\s+/g, '_')}`;
+      throw new Error(`Scene #${scene.scene_number} location "${scene.locationName}" is not linked to a generated location reference.`);
     }
 
     return {
