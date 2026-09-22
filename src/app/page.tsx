@@ -7,19 +7,25 @@ import { DashboardSettings } from '@/components/DashboardSettings';
 import { CreditsSection } from '@/components/CreditsSection';
 import { PageHeader } from '@/components/PageHeader';
 import { getRecentActivityAction, type RecentActivityItem } from '@/actions/getRecentActivityAction';
+import { getDashboardStatsAction, type DashboardStats } from '@/actions/getDashboardStatsAction';
 
 export default function Home() {
   const [activities, setActivities] = useState<RecentActivityItem[]>([]);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       setIsLoading(true);
       try {
-        const res = await getRecentActivityAction();
-        if (res.success && res.activities) {
-          setActivities(res.activities);
+        const [activityResult, statsResult] = await Promise.all([
+          getRecentActivityAction(),
+          getDashboardStatsAction(),
+        ]);
+        if (activityResult.success && activityResult.activities) {
+          setActivities(activityResult.activities);
         }
+        setStats(statsResult.stats);
       } catch (err) {
         console.error('Failed to load recent activities:', err);
       } finally {
@@ -53,10 +59,10 @@ export default function Home() {
       {/* Stats Cards Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { title: "Scripts Pending", value: "12", icon: FileText, color: "text-primary", bg: "bg-primary/10" },
-          { title: "Videos to Approve", value: "5", icon: CheckSquare, color: "text-amber-500", bg: "bg-amber-500/10" },
-          { title: "Storyboards Active", value: "8", icon: ImageIcon, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-          { title: "Published this week", value: "24", icon: Tv, color: "text-rose-500", bg: "bg-rose-500/10" },
+          { title: "Scripts Pending", value: stats?.scriptsPending, icon: FileText, color: "text-primary", bg: "bg-primary/10" },
+          { title: "Videos to Approve", value: stats?.videosToApprove, icon: CheckSquare, color: "text-amber-500", bg: "bg-amber-500/10" },
+          { title: "Storyboards Active", value: stats?.storyboardsActive, icon: ImageIcon, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+          { title: "Published this week", value: stats?.publishedThisWeek, icon: Tv, color: "text-rose-500", bg: "bg-rose-500/10" },
         ].map((stat, i) => (
           <div
             key={i}
@@ -68,7 +74,7 @@ export default function Home() {
                 <stat.icon size={20} strokeWidth={2} />
               </div>
             </div>
-            <div className="text-3xl font-bold tracking-tight">{stat.value}</div>
+            <div className="text-3xl font-bold tracking-tight">{stat.value ?? "—"}</div>
           </div>
         ))}
       </div>
