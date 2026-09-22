@@ -524,13 +524,14 @@ Now convert the provided story into the beat script format.`;
                       {storyCharacters.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                           {storyCharacters.map((char: any, i: number) => {
-                            const hasImage = Boolean(char.reference_image_url);
+                            const charImageUrl = char.generated_image_url || char.reference_image_url;
+                            const hasImage = Boolean(charImageUrl);
                             return (
                               <div 
                                 key={char.id || i}
                                 onClick={() => {
                                   if (hasImage) {
-                                    window.open(char.reference_image_url, '_blank', 'noopener,noreferrer');
+                                    window.open(charImageUrl, '_blank', 'noopener,noreferrer');
                                   }
                                 }}
                                 className={`group p-3 rounded-xl bg-background/60 border border-border/60 flex items-center gap-3 transition-all ${
@@ -542,7 +543,7 @@ Now convert the provided story into the beat script format.`;
                               >
                                 {hasImage ? (
                                   <img 
-                                    src={char.reference_image_url} 
+                                    src={charImageUrl}
                                     alt={char.name || 'Character'} 
                                     className="w-10 h-10 rounded-full object-cover border border-primary/30 shrink-0 group-hover:border-primary transition-colors"
                                   />

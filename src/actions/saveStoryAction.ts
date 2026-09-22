@@ -138,11 +138,14 @@ export async function saveGeneratedStoryAction(payload: {
 
     // Link characters and locations if provided
     if (story && story.id) {
-      await linkStoryCharactersAndLocationsAction(
+      const linkResult = await linkStoryCharactersAndLocationsAction(
         story.id,
         characterIds || [],
         locationIds || []
       );
+      if (!linkResult.success) {
+        return { success: false, error: linkResult.error || 'Failed to link story characters and locations.', story };
+      }
     }
 
     return { success: true, story };
@@ -179,11 +182,10 @@ export async function linkStoryCharactersAndLocationsAction(
             update: {},
           });
         } catch (e) {
-          try {
-            await supabase
-              .from('StoryCharacter')
-              .upsert([{ story_id: storyId, character_id: charId }]);
-          } catch (supaErr) {}
+          const { error } = await supabase
+            .from('StoryCharacter')
+            .upsert([{ story_id: storyId, character_id: charId }]);
+          if (error) throw error;
         }
       }
     }
@@ -212,11 +214,10 @@ export async function linkStoryCharactersAndLocationsAction(
             },
           });
         } catch (e) {
-          try {
-            await supabase
-              .from('EpisodeLocation')
-              .upsert([{ story_id: storyId, location_id: locId, order_index: i, status: "pending" }]);
-          } catch (supaErr) {}
+          const { error } = await supabase
+            .from('EpisodeLocation')
+            .upsert([{ story_id: storyId, location_id: locId, order_index: i, status: "pending" }]);
+          if (error) throw error;
         }
       }
     }

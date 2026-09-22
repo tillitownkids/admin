@@ -24,9 +24,7 @@ import {
   Clock,
   Plus,
   ArrowRight,
-  Clapperboard,
-  LayoutTemplate,
-  MapPin,
+  Users,
   Check
 } from "lucide-react";
 
@@ -57,6 +55,17 @@ interface PendingLocation {
   rejected?: boolean;
 }
 
+type PendingCharacter = PendingLocation;
+
+interface LibraryItem {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+const normalizedName = (name: string) => name.trim().toLocaleLowerCase();
+const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+
 export default function StoryPage() {
   const router = useRouter();
 
@@ -78,14 +87,17 @@ export default function StoryPage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [locations, setLocations] = useState<any[]>([]);
-  const [characters, setCharacters] = useState<any[]>([]);
+  const [locations, setLocations] = useState<LibraryItem[]>([]);
+  const [characters, setCharacters] = useState<LibraryItem[]>([]);
   const [isFetchingDetails, setIsFetchingDetails] = useState<boolean>(false);
 
   const [pendingLocations, setPendingLocations] = useState<PendingLocation[]>([]);
+  const [pendingCharacters, setPendingCharacters] = useState<PendingCharacter[]>([]);
   const [pendingStoryText, setPendingStoryText] = useState<string>('');
-  const [showLocationModal, setShowLocationModal] = useState<boolean>(false);
+  const [showReviewModal, setShowReviewModal] = useState<boolean>(false);
   const [isSavingLocation, setIsSavingLocation] = useState<string | null>(null);
+  const [isSavingCharacter, setIsSavingCharacter] = useState<string | null>(null);
+  const [pendingSavedStoryId, setPendingSavedStoryId] = useState<string | null>(null);
 
   useEffect(() => {
     loadStories();
@@ -139,6 +151,7 @@ export default function StoryPage() {
     setPreviousContext('');
     setDuration('2-3 minutes');
     setError(null);
+    setPendingSavedStoryId(null);
   }
 
   function handlePreviousEpisodeChange(episodeId: string) {
@@ -157,9 +170,48 @@ export default function StoryPage() {
   const [isAcceptingAll, setIsAcceptingAll] = useState<boolean>(false);
   const [activeCharacterIds, setActiveCharacterIds] = useState<string[]>([]);
   const [activeLocationIds, setActiveLocationIds] = useState<string[]>([]);
+  const [acceptedCharacterIds, setAcceptedCharacterIds] = useState<string[]>([]);
+  const [acceptedLocationIds, setAcceptedLocationIds] = useState<string[]>([]);
+  const [savePhase, setSavePhase] = useState<'references' | 'story' | null>(null);
+
+  async function createCharacter(char: PendingCharacter) {
+    const res = await fetch('/api/characters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: char.name.trim(), description: char.description.trim() }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Failed to add character "${char.name}".`);
+    }
+    const body = await res.json();
+    if (!body.character?.id) throw new Error(`Character "${char.name}" was not saved.`);
+    setCharacters((prev) => [...prev, body.character]);
+    setActiveCharacterIds((prev) => Array.from(new Set([...prev, body.character.id])));
+    return body.character.id as string;
+  }
+
+  async function handleAddCharacterToDb(char: PendingCharacter, index: number) {
+    setIsSavingCharacter(char.name);
+    setError(null);
+    try {
+      const characterId = await createCharacter(char);
+      setAcceptedCharacterIds((prev) => Array.from(new Set([...prev, characterId])));
+      setPendingCharacters((prev) => prev.map((item, idx) => idx === index ? { ...item, added: true, rejected: false } : item));
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to add character.'));
+    } finally {
+      setIsSavingCharacter(null);
+    }
+  }
+
+  function handleRejectCharacter(index: number) {
+    setPendingCharacters((prev) => prev.map((item, idx) => idx === index ? { ...item, rejected: true } : item));
+  }
 
   async function handleAddLocationToDb(loc: PendingLocation, index: number) {
     setIsSavingLocation(loc.name);
+    setError(null);
     try {
       const res = await fetch('/api/locations', {
         method: 'POST',
@@ -169,17 +221,20 @@ export default function StoryPage() {
 
       if (res.ok) {
         const resData = await res.json();
-        const createdLoc = resData.location || { name: loc.name, description: loc.description };
+        const createdLoc = resData.location;
+        if (!createdLoc?.id) throw new Error(`Location "${loc.name}" was not saved.`);
         setLocations((prev) => [...prev, createdLoc]);
-        if (createdLoc.id) {
-          setActiveLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
-        }
+        setActiveLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
+        setAcceptedLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
         setPendingLocations((prev) =>
           prev.map((item, idx) => (idx === index ? { ...item, added: true, rejected: false } : item))
         );
+      } else {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to add location "${loc.name}".`);
       }
-    } catch (err) {
-      console.error("Error adding location:", err);
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to add location.'));
     } finally {
       setIsSavingLocation(null);
     }
@@ -191,41 +246,52 @@ export default function StoryPage() {
     );
   }
 
-  async function handleAcceptAllLocations() {
+  async function handleAcceptAll() {
     setIsAcceptingAll(true);
+    setError(null);
     try {
+      const unaddedCharacters = pendingCharacters.filter((c) => !c.added && !c.rejected);
+      const newCharIds: string[] = [];
+      for (const char of unaddedCharacters) {
+        newCharIds.push(await createCharacter(char));
+        setPendingCharacters((prev) => prev.map((item) => item === char ? { ...item, added: true } : item));
+      }
       const unaddedLocations = pendingLocations.filter((l) => !l.added && !l.rejected);
       const newLocIds: string[] = [];
 
-      await Promise.all(
-        unaddedLocations.map(async (loc) => {
-          try {
+      for (const loc of unaddedLocations) {
             const res = await fetch('/api/locations', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: loc.name, description: loc.description || '' }),
             });
-            if (res.ok) {
-              const resData = await res.json();
-              const createdLoc = resData.location || { name: loc.name, description: loc.description };
-              setLocations((prev) => [...prev, createdLoc]);
-              if (createdLoc.id) {
-                newLocIds.push(createdLoc.id);
-              }
-            }
-          } catch (e) {
-            console.error("Failed to add location:", loc.name, e);
-          }
-        })
-      );
+            if (!res.ok) throw new Error(`Failed to add location "${loc.name}".`);
+            const resData = await res.json();
+            const createdLoc = resData.location;
+            if (!createdLoc?.id) throw new Error(`Location "${loc.name}" was not saved.`);
+            setLocations((prev) => [...prev, createdLoc]);
+            newLocIds.push(createdLoc.id);
+            setPendingLocations((prev) => prev.map((item) => item === loc ? { ...item, added: true } : item));
+      }
 
       const allLocIds = Array.from(new Set([...activeLocationIds, ...newLocIds]));
+      const allCharIds = Array.from(new Set([...activeCharacterIds, ...newCharIds]));
+      const allAcceptedLocIds = Array.from(new Set([...acceptedLocationIds, ...newLocIds]));
+      const allAcceptedCharIds = Array.from(new Set([...acceptedCharacterIds, ...newCharIds]));
       setActiveLocationIds(allLocIds);
-      setPendingLocations((prev) => prev.map((item) => ({ ...item, added: true, rejected: false })));
-
-      await finalizeSaveStory(pendingStoryText, undefined, activeCharacterIds, allLocIds);
-    } catch (err) {
-      console.error("Error accepting all locations:", err);
+      setActiveCharacterIds(allCharIds);
+      setAcceptedLocationIds(allAcceptedLocIds);
+      setAcceptedCharacterIds(allAcceptedCharIds);
+      await finalizeSaveStory(
+        pendingStoryText,
+        undefined,
+        allCharIds,
+        allLocIds,
+        allAcceptedCharIds,
+        allAcceptedLocIds,
+      );
+    } catch (err: unknown) {
+      setError(errorMessage(err, 'Failed to add suggested characters or locations.'));
     } finally {
       setIsAcceptingAll(false);
     }
@@ -235,14 +301,47 @@ export default function StoryPage() {
     storyContent: string, 
     targetRedirect?: string,
     overrideCharIds?: string[],
-    overrideLocIds?: string[]
+    overrideLocIds?: string[],
+    overrideAcceptedCharIds?: string[],
+    overrideAcceptedLocIds?: string[],
   ) {
     setIsLoading(true);
+    setError(null);
     try {
       const charIdsToSave = overrideCharIds || activeCharacterIds;
       const locIdsToSave = overrideLocIds || activeLocationIds;
+      const characterIdsToGenerate = overrideAcceptedCharIds || acceptedCharacterIds;
+      const locationIdsToGenerate = overrideAcceptedLocIds || acceptedLocationIds;
 
+      if (characterIdsToGenerate.length > 0 || locationIdsToGenerate.length > 0) {
+        setSavePhase('references');
+        const generationRes = await fetch('/api/references/generate-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            characterIds: characterIdsToGenerate,
+            locationIds: locationIdsToGenerate,
+          }),
+        });
+        const generationData = await generationRes.json().catch(() => ({}));
+        if (!generationRes.ok) {
+          const failures = Array.isArray(generationData.failed) ? generationData.failed : [];
+          const failureSummary = failures
+            .map((failure: { type?: string; id?: string; error?: string }) =>
+              failure.error || `${failure.type || 'reference'} ${failure.id || ''} failed`.trim()
+            )
+            .join('; ');
+          throw new Error(
+            failureSummary
+              ? `Some accepted references could not be generated: ${failureSummary}`
+              : generationData.error || 'Accepted references could not be generated.'
+          );
+        }
+      }
+
+      setSavePhase('story');
       const saveRes = await saveGeneratedStoryAction({
+        id: pendingSavedStoryId || undefined,
         topic: data.Concept ? (data.Concept.length > 50 ? data.Concept.slice(0, 50) + "..." : data.Concept) : "Bedtime Story",
         episode_number: "1",
         generation_type: generationType || "new",
@@ -253,14 +352,18 @@ export default function StoryPage() {
       });
 
       if (saveRes.success && saveRes.story?.id) {
-        setShowLocationModal(false);
+        setAcceptedCharacterIds([]);
+        setAcceptedLocationIds([]);
+        setShowReviewModal(false);
         router.push(targetRedirect || `/story-generate/${saveRes.story.id}`);
       } else {
+        if (saveRes.story?.id) setPendingSavedStoryId(saveRes.story.id);
         setError(saveRes.error || "Failed to save generated story to database.");
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to save story.");
+    } catch (err: unknown) {
+      setError(errorMessage(err, "Failed to save story."));
     } finally {
+      setSavePhase(null);
       setIsLoading(false);
     }
   }
@@ -276,6 +379,7 @@ export default function StoryPage() {
 
     setIsLoading(true);
     setError(null);
+    setPendingSavedStoryId(null);
 
     let globalAudience = 'Kids (4-8 years)';
     let globalTone = 'Educational & Fun';
@@ -303,27 +407,27 @@ ${contextToUse ? `- Previous Episode Summary / Context: ${contextToUse}` : ''}`
       : `\n- Generation Mode: New Story (Standalone story episode)`;
 
     const charactersListStr = characters.length > 0
-      ? characters.map((c: any) => `- Name: ${c.name}${c.description ? ` (${c.description})` : ''}`).join('\n')
+      ? characters.map((c) => `- Name: ${c.name}${c.description ? ` (${c.description})` : ''}`).join('\n')
       : 'None in database';
 
     const locationsListStr = locations.length > 0
-      ? locations.map((l: any) => `- Name: ${l.name}${l.description ? ` (${l.description})` : ''}`).join('\n')
+      ? locations.map((l) => `- Name: ${l.name}${l.description ? ` (${l.description})` : ''}`).join('\n')
       : 'None in database';
 
     const prompt = `
-You are a creative director and storyteller for the children's animated show "Tilli & Jaksh."
+You are a creative director and storyteller for the children's animated show "Tillitown"
 
 Generation Mode Details: ${continuationHeader}
 Target Story Duration: ${duration || '2-3 minutes'}
 Target Audience: ${globalAudience}
 Story Tone & Atmosphere: ${globalTone}
 
-CHARACTERS RULE & STRICT CHARACTER FIDELITY (STRICT CRITICAL):
-- You MUST strictly use ONLY the characters present in the database listed below.
-- Do NOT introduce, create, or invent any new characters under any circumstances.
-- STRICT CHARACTER FIDELITY: NEVER INVENT, ASSUME, OR FABRICATE physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment for any character.
-- DO NOT describe any character as a robot, machine, mechanical companion, or as having wheels, engines, metallic parts, glowing eyes, or spinning compasses UNLESS those exact traits are explicitly stated in their official database character description below.
-- For example: If a character is named "Tilli", describe Tilli strictly as defined in their character profile below. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
+CHARACTERS RULE & STRICT CHARACTER FIDELITY:
+- Prefer existing database characters when they can fulfill the roles in the story.
+- If the concept, overview, or plot needs a character the database cannot supply, create only the minimum new characters needed.
+- Preserve every existing character's profile exactly. Do not invent physical traits, body mechanics, technological qualities, powers, or equipment for existing characters.
+- Give each new character a short, concrete description consistent with the story. Do not add unrelated traits or abilities.
+- List every character actually present in the narrative in charactersUsed. Use the exact database name for existing characters. Do not list characters absent from the story.
 - Available Database Characters:
 ${charactersListStr}
 
@@ -355,7 +459,7 @@ Requirements:
 - TARGET AUDIENCE CONSTRAINT: Adapt vocabulary, dialogue complexity, and themes strictly for ${globalAudience}.
 - TONE & ATMOSPHERE CONSTRAINT: Maintain a strictly ${globalTone} tone and emotional atmosphere throughout the entire narrative.
 ${generationType === 'continue' ? '- Maintain plot and character continuity from the previous episode events.' : '- Create a clear, engaging standalone story.'}
-- Use ONLY characters from the database list above.
+- Use existing characters where suitable and introduce new characters only when the story needs them.
 - Include natural dialogue for every character involved.
 - Give the story a clear beginning, middle, and satisfying ending.
 - Let the lesson emerge naturally through the characters' actions and experiences.
@@ -370,6 +474,12 @@ Return ONLY valid JSON matching this exact structure:
       "name": "Location Name",
       "description": "Short description of the location setting"
     }
+  ],
+  "charactersUsed": [
+    {
+      "name": "Character Name",
+      "description": "For a new character, a brief profile grounded in the story; for an existing character, use its database description"
+    }
   ]
 }`;
 
@@ -383,6 +493,7 @@ Return ONLY valid JSON matching this exact structure:
 
       let storyText = "";
       let locationsUsed: { name: string; description: string }[] = [];
+      let charactersUsed: { name: string; description: string }[] = [];
 
       try {
         const cleanedJson = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -395,17 +506,32 @@ Return ONLY valid JSON matching this exact structure:
         if (Array.isArray(parsed.locationsUsed)) {
           locationsUsed = parsed.locationsUsed;
         }
+        if (Array.isArray(parsed.charactersUsed)) {
+          charactersUsed = parsed.charactersUsed;
+        }
       } catch {
         storyText = rawText;
       }
 
-      // Collect all character IDs available in the DB
-      const charIds = characters.map((c: any) => c.id).filter(Boolean);
+      const existingCharMap = new Map(characters.filter((c) => c.name && c.id).map((c) => [normalizedName(c.name), c.id]));
+      const charIds = Array.from(new Set(charactersUsed
+        .filter((char) => typeof char?.name === 'string')
+        .map((char) => existingCharMap.get(normalizedName(char.name)))
+        .filter((id): id is string => Boolean(id))));
       setActiveCharacterIds(charIds);
+
+      const seenNewCharacters = new Set<string>();
+      const detectedNewChars = charactersUsed.filter((char) => {
+        if (typeof char?.name !== 'string' || !char.name.trim()) return false;
+        const name = normalizedName(char.name);
+        if (existingCharMap.has(name) || seenNewCharacters.has(name)) return false;
+        seenNewCharacters.add(name);
+        return true;
+      });
 
       // Collect matched existing location IDs from DB
       const existingLocMap = new Map<string, string>();
-      locations.forEach((l: any) => {
+      locations.forEach((l) => {
         if (l.name && l.id) {
           existingLocMap.set(l.name.toLowerCase().trim(), l.id);
         }
@@ -422,22 +548,25 @@ Return ONLY valid JSON matching this exact structure:
       const uniqueInitialLocIds = Array.from(new Set(initialLocIds));
       setActiveLocationIds(uniqueInitialLocIds);
 
-      const existingLocNames = new Set(locations.map((l: any) => l.name.toLowerCase().trim()));
+      const existingLocNames = new Set(locations.map((l) => normalizedName(l.name)));
       const detectedNewLocs = locationsUsed.filter(
         (loc) => loc.name && !existingLocNames.has(loc.name.toLowerCase().trim())
       );
 
-      if (detectedNewLocs.length > 0) {
-        setPendingLocations(detectedNewLocs.map((l) => ({ name: l.name, description: l.description })));
+      if (detectedNewLocs.length > 0 || detectedNewChars.length > 0) {
+        setAcceptedCharacterIds([]);
+        setAcceptedLocationIds([]);
+        setPendingLocations(detectedNewLocs.map((l) => ({ name: l.name.trim(), description: l.description || '' })));
+        setPendingCharacters(detectedNewChars.map((c) => ({ name: c.name.trim(), description: c.description || '' })));
         setPendingStoryText(storyText);
-        setShowLocationModal(true);
+        setShowReviewModal(true);
         setIsLoading(false);
       } else {
-        await finalizeSaveStory(storyText, undefined, charIds, uniqueInitialLocIds);
+        await finalizeSaveStory(storyText, undefined, charIds, uniqueInitialLocIds, [], []);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error generating story:", err);
-      setError(err?.message || "An error occurred while generating the story.");
+      setError(errorMessage(err, "An error occurred while generating the story."));
       setIsLoading(false);
     }
   }
@@ -497,7 +626,7 @@ Return ONLY valid JSON matching this exact structure:
               <div className="col-span-full sm:col-span-2 lg:col-span-2 p-8 rounded-2xl border border-dashed border-border flex flex-col items-center justify-center text-center text-muted-foreground">
                 <BookOpen className="w-8 h-8 text-primary/40 mb-2" />
                 <p className="font-medium text-sm">No stories generated yet.</p>
-                <p className="text-xs text-muted-foreground mt-1">Click "Create New Story" above to craft your first bedtime story!</p>
+                <p className="text-xs text-muted-foreground mt-1">Click &quot;Create New Story&quot; above to craft your first bedtime story!</p>
               </div>
             ) : (
               stories.map((story) => (
@@ -554,13 +683,13 @@ Return ONLY valid JSON matching this exact structure:
               <button
                 type="submit"
                 form="story-form"
-                disabled={isLoading}
+                disabled={isLoading || isFetchingDetails}
                 className={`${primaryButtonClass} group`}
               >
-                {isLoading ? (
+                {isLoading || isFetchingDetails ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Generating Story...
+                    {isFetchingDetails ? 'Loading character library...' : 'Generating Story...'}
                   </>
                 ) : (
                   <>
@@ -741,30 +870,52 @@ Return ONLY valid JSON matching this exact structure:
         </GlassPanel>
       )}
 
-      {/* New Location Modal Dialog */}
-      {showLocationModal && (
+      {/* Review newly suggested characters and locations before saving. */}
+      {showReviewModal && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-card border border-border rounded-2xl p-6 shadow-2xl space-y-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
-                  <MapPin className="w-5 h-5 text-primary" />
-                  New Location Detected
+                  <Users className="w-5 h-5 text-primary" />
+                  New Characters or Locations Detected
                 </h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  The generated story introduced new location(s) not currently in your database. Would you like to add them to your location library?
+                  The story introduced characters or locations that are not in your libraries yet. Add the ones you want to keep.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setShowLocationModal(false)}
-                className="text-muted-foreground hover:text-foreground p-1"
+                onClick={() => setShowReviewModal(false)}
+                disabled={isLoading || isAcceptingAll}
+                className="text-muted-foreground hover:text-foreground p-1 disabled:opacity-50"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+              {pendingCharacters.length > 0 && <section className="space-y-3">
+                <h4 className="text-sm font-semibold text-foreground">New characters from the story</h4>
+                {pendingCharacters.map((char, idx) => (
+                  <div key={`${char.name}-${idx}`} className="p-4 rounded-xl border border-border bg-muted/30 space-y-3">
+                    <div>
+                      <h4 className="font-bold text-foreground text-sm">{char.name}</h4>
+                      {char.description && <p className="text-xs text-muted-foreground mt-0.5">{char.description}</p>}
+                    </div>
+                    {char.added ? <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1"><Check className="w-4 h-4" /> Accepted — reference generates when saved</span> : char.rejected ? <span className="text-xs text-muted-foreground">Rejected (Will not be saved)</span> : (
+                      <div className="flex items-center gap-2">
+                        <button type="button" disabled={isSavingCharacter !== null || isLoading || isAcceptingAll} onClick={() => handleAddCharacterToDb(char, idx)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold disabled:opacity-50">
+                          {isSavingCharacter === char.name ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add Character
+                        </button>
+                        <button type="button" disabled={isLoading || isAcceptingAll} onClick={() => handleRejectCharacter(idx)} className="px-3 py-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-medium disabled:opacity-50">Reject</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </section>}
+
+              {pendingLocations.length > 0 && <h4 className="text-sm font-semibold text-foreground border-t border-border pt-4">New locations from the story</h4>}
               {pendingLocations.map((loc, idx) => (
                 <div
                   key={idx}
@@ -780,7 +931,7 @@ Return ONLY valid JSON matching this exact structure:
                   <div className="flex items-center gap-2">
                     {loc.added ? (
                       <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1">
-                        <Check className="w-4 h-4" /> Added to Database
+                        <Check className="w-4 h-4" /> Accepted — reference generates when saved
                       </span>
                     ) : loc.rejected ? (
                       <span className="text-xs text-muted-foreground font-medium italic">
@@ -790,7 +941,7 @@ Return ONLY valid JSON matching this exact structure:
                       <>
                         <button
                           type="button"
-                          disabled={isSavingLocation === loc.name}
+                          disabled={isSavingLocation === loc.name || isLoading || isAcceptingAll}
                           onClick={() => handleAddLocationToDb(loc, idx)}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
                         >
@@ -803,8 +954,9 @@ Return ONLY valid JSON matching this exact structure:
                         </button>
                         <button
                           type="button"
+                          disabled={isLoading || isAcceptingAll}
                           onClick={() => handleRejectLocation(idx)}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground text-xs font-medium transition cursor-pointer"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-muted-foreground text-xs font-medium transition cursor-pointer disabled:opacity-50"
                         >
                           Reject
                         </button>
@@ -815,25 +967,24 @@ Return ONLY valid JSON matching this exact structure:
               ))}
             </div>
 
+            {savePhase && (
+              <p className="text-sm text-primary font-medium flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {savePhase === 'references' ? 'Generating accepted references…' : 'Saving story…'}
+              </p>
+            )}
+            {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
             <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
-              <button
-                type="button"
-                onClick={handleAcceptAllLocations}
-                disabled={isLoading || isAcceptingAll}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition disabled:opacity-50 cursor-pointer"
-              >
-                {isAcceptingAll ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Accepting All...
-                  </>
-                ) : (
-                  <>
-                    <Check className="w-4 h-4" />
-                    Accept All
-                  </>
-                )}
-              </button>
+              {(pendingCharacters.some((item) => !item.added && !item.rejected) || pendingLocations.some((item) => !item.added && !item.rejected)) && (
+                <button
+                  type="button"
+                  onClick={handleAcceptAll}
+                  disabled={isLoading || isAcceptingAll}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isAcceptingAll ? <><Loader2 className="w-4 h-4 animate-spin" />{savePhase === 'references' ? 'Generating References…' : 'Adding All…'}</> : <><Check className="w-4 h-4" />Add All and Save</>}
+                </button>
+              )}
 
               <button
                 type="button"
@@ -844,11 +995,11 @@ Return ONLY valid JSON matching this exact structure:
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Saving Story...
+                    {savePhase === 'references' ? 'Generating References…' : 'Saving Story…'}
                   </>
                 ) : (
                   <>
-                    <span>Continue to Story</span>
+                    <span>Save Accepted and Continue</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

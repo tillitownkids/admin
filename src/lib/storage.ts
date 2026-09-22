@@ -59,6 +59,24 @@ export async function processAndUploadLocationSheet(
   return data.publicUrl;
 }
 
+export async function processAndUploadCharacterSheet(
+  imageUrl: string,
+  identifier?: string | null
+): Promise<string> {
+  if (!imageUrl || !imageUrl.startsWith('http')) return imageUrl;
+  if (imageUrl.includes(`/storage/v1/object/public/${BUCKET}/character_sheets/`)) return imageUrl;
+
+  const res = await fetch(imageUrl);
+  if (!res.ok) throw new Error(`Failed to download character sheet (${res.status}): ${res.statusText}`);
+  const contentType = res.headers.get('content-type') || 'image/png';
+  if (!contentType.startsWith('image/')) throw new Error('Character sheet URL did not return an image.');
+
+  const base64 = Buffer.from(await res.arrayBuffer()).toString('base64');
+  const cleanIdentifier = identifier?.replace(/[^a-zA-Z0-9_-]/g, '_') || `character_${Date.now()}`;
+  const { publicUrl } = await uploadImageBuffer(base64, contentType, `character_sheets/${cleanIdentifier}`);
+  return publicUrl;
+}
+
 const STORYBOARDS_BUCKET = 'storyboards';
 const SCENE_VIDEOS_BUCKET = 'scene_videos';
 

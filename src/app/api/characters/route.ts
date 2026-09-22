@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
+import { processAndUploadCharacterSheet } from '@/lib/storage';
 
 export async function GET(req: NextRequest) {
   try {
@@ -30,10 +31,19 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, description, reference_image_url, magnific_identifier, generated_image_url } = body;
+    const { name, description, reference_image_url, magnific_identifier, generated_image_url: sourceGeneratedImageUrl } = body;
+    let generated_image_url = sourceGeneratedImageUrl;
 
     if (!name) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
+    }
+
+    if (typeof generated_image_url === 'string' && generated_image_url.startsWith('http')) {
+      try {
+        generated_image_url = await processAndUploadCharacterSheet(generated_image_url, magnific_identifier);
+      } catch (uploadErr) {
+        console.error('Failed to re-host generated character sheet:', uploadErr);
+      }
     }
 
     const payload: any = {
