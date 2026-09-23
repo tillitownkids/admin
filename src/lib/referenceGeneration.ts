@@ -1,6 +1,10 @@
 import { prisma } from '@/lib/prisma';
 import { supabase } from '@/lib/supabase';
-import { processAndUploadCharacterSheet, processAndUploadLocationSheet } from '@/lib/storage';
+import {
+  processAndUploadCharacterSheetAsset,
+  processAndUploadLocationSheetAsset,
+} from '@/lib/storage';
+import { recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 
 export type ReferenceType = 'character' | 'location';
 
@@ -91,37 +95,6 @@ async function loadReference(type: ReferenceType, id: string): Promise<Reference
   return data as ReferenceRecord | null;
 }
 
-async function saveGeneratedReference(
-  type: ReferenceType,
-  id: string,
-  generatedImageUrl: string,
-  magnificIdentifier: string,
-): Promise<void> {
-  const data = {
-    generated_image_url: generatedImageUrl,
-    magnific_identifier: magnificIdentifier,
-    updated_at: new Date(),
-  };
-
-  try {
-    if (type === 'character') {
-      await prisma.character.update({ where: { id }, data });
-    } else {
-      await prisma.location.update({ where: { id }, data });
-    }
-    return;
-  } catch (error) {
-    console.warn(`Prisma ${type} reference update failed, falling back to Supabase:`, error);
-  }
-
-  const table = type === 'character' ? 'Character' : 'Location';
-  const { error } = await supabase
-    .from(table)
-    .update({ ...data, updated_at: data.updated_at.toISOString() })
-    .eq('id', id);
-  if (error) throw error;
-}
-
 export async function generateReference(type: ReferenceType, id: string) {
   const record = await loadReference(type, id);
   if (!record) throw new Error(`${type === 'character' ? 'Character' : 'Location'} not found.`);
@@ -155,11 +128,19 @@ export async function generateReference(type: ReferenceType, id: string) {
     }
 
     const generated = extractGeneratedReference(await response.json());
-    const permanentUrl = type === 'character'
-      ? await processAndUploadCharacterSheet(generated.imageUrl, generated.magnificIdentifier)
-      : await processAndUploadLocationSheet(generated.imageUrl, generated.magnificIdentifier);
+    const stored = type === 'character'
+      ? await processAndUploadCharacterSheetAsset(generated.imageUrl, generated.magnificIdentifier)
+      : await processAndUploadLocationSheetAsset(generated.imageUrl, generated.magnificIdentifier);
 
-    await saveGeneratedReference(type, id, permanentUrl, generated.magnificIdentifier);
+    await recordGeneratedImageVersion({
+      ownerType: type === 'character' ? 'character_generated' : 'location_generated',
+      ownerId: id,
+      publicUrl: stored.publicUrl,
+      storagePath: stored.storagePath,
+      storageBucket: stored.storageBucket,
+      providerIdentifier: generated.magnificIdentifier,
+      promptUsed: record.description,
+    });
     return { id, type, name: record.name, skipped: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Reference generation failed.';

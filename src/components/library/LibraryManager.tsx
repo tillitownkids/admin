@@ -5,6 +5,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Plus, Save, Upload, Loader2, X, Trash2, Sparkles, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
+import { GeneratedReferenceHistory } from '@/components/library/GeneratedReferenceHistory';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
 
 export interface LibraryItem {
@@ -374,6 +375,30 @@ export function LibraryManager({
     }
   };
 
+  const generatedOwnerType = ownerType === 'character_reference'
+    ? 'character_generated' as const
+    : 'location_generated' as const;
+
+  const handleHistoryRestored = async (asset: {
+    public_url: string;
+    provider_identifier: string | null;
+  }) => {
+    setGeneratedImageUrl(asset.public_url);
+    setMagnificIdentifier(asset.provider_identifier);
+    setHasGeneratedSheet(true);
+    setCurrent((existing) => existing ? {
+      ...existing,
+      generated_image_url: asset.public_url,
+      magnific_identifier: asset.provider_identifier,
+    } : existing);
+    setItems((existing) => existing.map((item) => item.id === current?.id ? {
+      ...item,
+      generated_image_url: asset.public_url,
+      magnific_identifier: asset.provider_identifier,
+    } : item));
+    setGenerationNotice(`${resourceName} reference sheet restored.`);
+  };
+
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
       <PageHeader
@@ -584,31 +609,45 @@ export function LibraryManager({
               <div className="space-y-3 pt-4 border-t border-border/50">
                 <label className={labelClass}>Generated {resourceName} Reference Sheet</label>
 
-                <div className="relative w-full max-w-md aspect-video rounded-xl overflow-hidden border border-border shadow-sm bg-muted/30 flex items-center justify-center">
-                  {isGeneratingSheet ? (
-                    <div className="flex flex-col items-center justify-center space-y-2 text-primary p-6 text-center">
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                      <p className="text-xs font-semibold">Generating reference sheet with AI...</p>
-                    </div>
-                  ) : generatedImageUrl ? (
-                    <a
-                      href={generatedImageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="group/img relative w-full h-full block cursor-pointer"
-                      title="Click to open in new tab"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={generatedImageUrl}
-                        alt={`Generated ${resourceName} Reference Sheet`}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover/img:scale-105"
+                <div className={`grid grid-cols-1 gap-5 ${viewMode === 'edit' ? 'lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.85fr)]' : ''}`}>
+                  <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-border shadow-sm bg-muted/30 flex items-center justify-center">
+                    {isGeneratingSheet ? (
+                      <div className="flex flex-col items-center justify-center space-y-2 text-primary p-6 text-center">
+                        <Loader2 className="w-8 h-8 animate-spin" />
+                        <p className="text-xs font-semibold">Generating reference sheet with AI...</p>
+                      </div>
+                    ) : generatedImageUrl ? (
+                      <a
+                        href={generatedImageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group/img relative w-full h-full block cursor-pointer"
+                        title="Click to open in new tab"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={generatedImageUrl}
+                          alt={`Generated ${resourceName} Reference Sheet`}
+                          className="w-full h-full object-cover transition-transform duration-300 group-hover/img:scale-105"
+                        />
+                      </a>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center p-6 text-muted-foreground text-center space-y-1">
+                        <ImageIcon className="w-8 h-8 text-muted-foreground/50" />
+                        <p className="text-xs">No reference sheet generated yet.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {viewMode === 'edit' && current && (
+                    <div className="rounded-xl border border-border bg-muted/10 p-4">
+                      <GeneratedReferenceHistory
+                        ownerType={generatedOwnerType}
+                        ownerId={current.id}
+                        resourceName={resourceName}
+                        disabled={isSaving || isDeleting || isGeneratingSheet}
+                        onRestored={handleHistoryRestored}
                       />
-                    </a>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-6 text-muted-foreground text-center space-y-1">
-                      <ImageIcon className="w-8 h-8 text-muted-foreground/50" />
-                      <p className="text-xs">No reference sheet generated yet.</p>
                     </div>
                   )}
                 </div>

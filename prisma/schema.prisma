@@ -71,17 +71,20 @@ model EpisodeLocation {
 }
 
 model ImageAsset {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  owner_type   String
-  owner_id     String   @db.Uuid
-  storage_path String
-  public_url   String
-  source       String
-  prompt_used  String?
-  is_selected  Boolean  @default(false)
-  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_type          String
+  owner_id            String   @db.Uuid
+  storage_path        String
+  public_url          String
+  source              String
+  prompt_used         String?
+  is_selected         Boolean  @default(false)
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  provider_identifier String?
+  storage_bucket      String?
 
   @@index([owner_type, owner_id], map: "idx_image_asset_owner")
+  @@index([owner_type, owner_id, created_at(sort: Desc)], map: "idx_image_asset_owner_history")
 }
 
 model Location {

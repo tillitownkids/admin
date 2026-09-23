@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
-import { processAndUploadCharacterSheet } from '@/lib/storage';
+import { processAndUploadCharacterSheetAsset, type StoredImageAsset } from '@/lib/storage';
+import { recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -38,12 +39,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json();
     const { name, description, reference_image_url, magnific_identifier, generated_image_url: sourceGeneratedImageUrl } = body;
     let generated_image_url = sourceGeneratedImageUrl;
+    let generatedAsset: StoredImageAsset | null = null;
 
     if (typeof generated_image_url === 'string' && generated_image_url.startsWith('http')) {
       try {
-        generated_image_url = await processAndUploadCharacterSheet(generated_image_url, magnific_identifier);
+        generatedAsset = await processAndUploadCharacterSheetAsset(generated_image_url, magnific_identifier);
+        generated_image_url = generatedAsset.publicUrl;
       } catch (uploadErr) {
         console.error('Failed to re-host generated character sheet:', uploadErr);
+        generatedAsset = {
+          publicUrl: generated_image_url,
+          storageBucket: null,
+          storagePath: generated_image_url,
+        };
       }
     }
 
@@ -78,6 +86,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
       if (error) throw error;
       character = data;
+    }
+
+    if (generatedAsset && generated_image_url) {
+      await recordGeneratedImageVersion({
+        ownerType: 'character_generated',
+        ownerId: id,
+        publicUrl: generated_image_url,
+        storagePath: generatedAsset.storagePath,
+        storageBucket: generatedAsset.storageBucket,
+        providerIdentifier: magnific_identifier ?? null,
+        promptUsed: character.description,
+      });
     }
 
     return NextResponse.json({ character });
