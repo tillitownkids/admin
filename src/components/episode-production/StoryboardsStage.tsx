@@ -5,13 +5,12 @@ import { Image as ImageIcon, Sparkles, Loader2, Check, RefreshCw, ExternalLink, 
 
 
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
-import type { CharacterRow, EpisodeLocationRow, SceneRow } from './types';
+import type { EpisodeLocationRow, SceneRow } from './types';
 
 
 
 interface StoryboardsStageProps {
   scenes: SceneRow[];
-  characters: CharacterRow[];
   episodeLocations: EpisodeLocationRow[];
   onRefetchScenes: () => Promise<void>;
   onConfirmed: () => Promise<void> | void;
@@ -81,7 +80,6 @@ function extractMagnificIdentifier(data: any): string | null {
 
 export function StoryboardsStage({
   scenes,
-  characters,
   episodeLocations,
   onRefetchScenes,
   onConfirmed,
@@ -105,13 +103,9 @@ export function StoryboardsStage({
   const buildPayloadItem = (scene: SceneRow, sceneIdx: number) => {
     const imagePrompt = scene.storyboard_prompt || scene.description || '';
 
-    // Match characters appearing in prompt/description
-    const activeChars = characters.filter((c) => {
-      if (c.name && (imagePrompt.toLowerCase().includes(c.name.toLowerCase()) || scene.description.toLowerCase().includes(c.name.toLowerCase()))) {
-        return true;
-      }
-      return false;
-    });
+    const activeChars = (scene.SceneCharacter || []).flatMap((link) =>
+      link.Character ? [link.Character] : []
+    );
 
     const charRefs: Record<string, string> = {};
     const missingCharacters: string[] = [];
@@ -322,7 +316,6 @@ export function StoryboardsStage({
             key={scene.id || idx}
             scene={scene}
             sceneIdx={idx}
-            characters={characters}
             episodeLocations={episodeLocations}
             overrideImageUrl={generatedUrls[scene.id]}
             buildPayloadItem={buildPayloadItem}
@@ -351,7 +344,6 @@ export function StoryboardsStage({
 function StoryboardItem({
   scene,
   sceneIdx,
-  characters,
   episodeLocations,
   overrideImageUrl,
   buildPayloadItem,
@@ -359,7 +351,6 @@ function StoryboardItem({
 }: {
   scene: SceneRow;
   sceneIdx: number;
-  characters: CharacterRow[];
   episodeLocations: EpisodeLocationRow[];
   overrideImageUrl?: string;
   buildPayloadItem: (scene: SceneRow, sceneIdx: number) => any;
@@ -380,8 +371,9 @@ function StoryboardItem({
     }
   }, [overrideImageUrl, scene.storyboard_image_url]);
 
-  const promptText = (scene.storyboard_prompt || scene.description || '').toLowerCase();
-  const sceneChars = characters.filter((c) => c.name && promptText.includes(c.name.toLowerCase()));
+  const sceneChars = (scene.SceneCharacter || []).flatMap((link) =>
+    link.Character ? [link.Character] : []
+  );
 
   const handleGenerateSingle = async () => {
     setIsGeneratingSingle(true);

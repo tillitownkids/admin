@@ -57,7 +57,7 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
   };
 
   const fetchCharacters = async () => {
-    const res = await fetch('/api/characters');
+    const res = await fetch(`/api/characters?storyId=${encodeURIComponent(storyId)}`);
     if (res.ok) {
       const data = await res.json();
       setCharacters(data.characters || []);
@@ -209,7 +209,6 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
         {activeStage === 'storyboards' && (
           <StoryboardsStage
             scenes={scenes}
-            characters={characters}
             episodeLocations={episodeLocations}
             onRefetchScenes={async () => {
               await fetchScenes(episodeLocations);

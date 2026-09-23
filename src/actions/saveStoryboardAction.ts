@@ -62,20 +62,10 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
         include: { Character: true }
       }).catch(() => []);
 
-      const availableCharacters = storyChars.length > 0
-        ? storyChars.map(sc => sc.Character)
-        : await prisma.character.findMany().catch(() => []);
+      const availableCharacters = storyChars.map(sc => sc.Character);
 
       // Determine which character names belong to firstScene
-      let sceneCharNames = firstScene.characterNames || [];
-
-      // Fallback: if characterNames array is empty, search storyboardPrompt and description for character names
-      if (sceneCharNames.length === 0) {
-        const promptText = (firstScene.storyboardPrompt + " " + (firstScene.description || "")).toLowerCase();
-        sceneCharNames = availableCharacters
-          .filter(c => c && promptText.includes(c.name.toLowerCase()))
-          .map(c => c.name);
-      }
+      const sceneCharNames = firstScene.characterNames || [];
 
       for (const charObj of availableCharacters) {
         if (!charObj?.name) continue;
@@ -242,9 +232,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       include: { Character: true }
     }).catch(() => []);
 
-    const availableCharacters = storyChars.length > 0
-      ? storyChars.map(sc => sc.Character)
-      : await prisma.character.findMany().catch(() => []);
+    const availableCharacters = storyChars.map(sc => sc.Character);
 
     const savedScenes = [];
 
@@ -340,17 +328,6 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
         matchedCharIds = availableCharacters
           .filter(c => c && sceneInput.characterNames!.some(name => name.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(name.toLowerCase())))
           .map(c => c.id);
-      }
-
-      if (matchedCharIds.length === 0) {
-        const promptText = (sceneInput.storyboardPrompt + " " + (sceneInput.description || "")).toLowerCase();
-        matchedCharIds = availableCharacters
-          .filter(c => c && promptText.includes(c.name.toLowerCase()))
-          .map(c => c.id);
-
-        if (matchedCharIds.length === 0 && availableCharacters.length > 0) {
-          matchedCharIds = availableCharacters.map(c => c.id);
-        }
       }
 
       if (updatedScene?.id && matchedCharIds.length > 0) {
@@ -550,4 +527,3 @@ export async function getSavedStoryboardsAction() {
   }
 
 }
-
