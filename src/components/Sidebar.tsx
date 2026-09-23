@@ -18,8 +18,7 @@ export const navItems = [
   { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
   { name: "Video Production", path: "/episode-production", icon: Clapperboard },
   { name: "Video Stitching", path: "/video-stitching", icon: Film },
-  { name: "Video Approval", path: "/video-approval", icon: CheckSquare },
-  { name: "YouTube Publishing", path: "/youtube-publishing", icon: Tv },
+  { name: "Video Publishing", path: "/video-approval", icon: CheckSquare },
 ];
 
 export default function Sidebar() {

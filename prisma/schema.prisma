@@ -141,19 +141,59 @@ model StoryCharacter {
 }
 
 model Video {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  story_id   String?   @db.Uuid
-  title      String
-  video_url  String
-  duration   String?
-  scene_ids  String[]
-  status     String?   @default("ready")
-  created_at DateTime? @default(now()) @db.Timestamptz(6)
-  Story      Story?    @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  story_id      String?         @db.Uuid
+  title         String
+  video_url     String
+  duration      String?
+  scene_ids     String[]
+  status        String?         @default("ready")
+  created_at    DateTime?       @default(now()) @db.Timestamptz(6)
+  Story         Story?          @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  YouTubeUpload YouTubeUpload[]
 }
 
 model Setting {
   key        String    @id
   value      String
   updated_at DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
+}
+
+model YouTubeConnection {
+  id            String   @id @default("primary")
+  channel_id    String   @unique
+  channel_title String?
+  refresh_token String
+  scopes        String[] @default([])
+  connected_by  String?  @db.Uuid
+  connected_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model YouTubeUpload {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  video_id                 String    @db.Uuid
+  title                    String    @db.VarChar(100)
+  description              String    @default("")
+  tags                     String[]  @default([])
+  category_id              String    @default("1")
+  privacy_status           String    @default("private")
+  made_for_kids            Boolean   @default(true)
+  contains_synthetic_media Boolean   @default(false)
+  status                   String    @default("queued")
+  progress                 Int       @default(0)
+  youtube_video_id         String?
+  youtube_url              String?
+  error_message            String?
+  accepted_by              String?   @db.Uuid
+  created_at               DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime  @default(now()) @db.Timestamptz(6)
+  uploaded_at              DateTime? @db.Timestamptz(6)
+  channel_id               String
+  Video                    Video     @relation(fields: [video_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([video_id, channel_id])
+  @@index([created_at(sort: Desc)])
+  @@index([status])
 }

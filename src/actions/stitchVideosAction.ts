@@ -3,11 +3,41 @@
 import { prisma } from "@/lib/prisma";
 import { deleteFullEpisodeVideoFromStorage } from "@/lib/storage";
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export interface StitchVideosInput {
   storyId: string;
   title: string;
   videoUrls: string[];
   sceneIds: string[];
+}
+
+export async function getAllEpisodeVideosAction() {
+  try {
+    const videos = await prisma.video.findMany({
+      include: {
+        Story: {
+          select: {
+            topic: true,
+            episode_number: true,
+          },
+        },
+        YouTubeUpload: true,
+      },
+      orderBy: { created_at: "desc" },
+    });
+
+    return { success: true, videos };
+  } catch (err: unknown) {
+    console.error("Failed to fetch stitched videos:", err);
+    return {
+      success: false,
+      videos: [],
+      error: getErrorMessage(err, "Failed to fetch stitched videos"),
+    };
+  }
 }
 
 export async function getEpisodeVideosAction(storyId: string) {
@@ -22,9 +52,9 @@ export async function getEpisodeVideosAction(storyId: string) {
     });
 
     return { success: true, videos };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Failed to fetch episode videos:", err);
-    return { success: false, videos: [], error: err?.message || "Failed to fetch videos" };
+    return { success: false, videos: [], error: getErrorMessage(err, "Failed to fetch videos") };
   }
 }
 
@@ -47,9 +77,9 @@ export async function deleteEpisodeVideoAction(videoId: string) {
     });
 
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Failed to delete video:", err);
-    return { success: false, error: err?.message || "Failed to delete video" };
+    return { success: false, error: getErrorMessage(err, "Failed to delete video") };
   }
 }
 
@@ -77,7 +107,7 @@ export async function stitchEpisodeVideosAction(input: StitchVideosInput) {
       throw new Error(`Stitcher service failed (${res.status}): ${errorText || res.statusText}`);
     }
 
-    const data = await res.json();
+    const data: { videoUrl?: string; url?: string; error?: string } = await res.json();
     const finalVideoUrl = data.videoUrl || data.url;
 
     if (!finalVideoUrl) {
@@ -95,11 +125,11 @@ export async function stitchEpisodeVideosAction(input: StitchVideosInput) {
     });
 
     return { success: true, video: videoRecord };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Failed to stitch episode videos via microservice:", err);
     return {
       success: false,
-      error: err?.message || "Video stitching failed via microservice.",
+      error: getErrorMessage(err, "Video stitching failed via microservice."),
     };
   }
 }
