@@ -23,12 +23,33 @@ export async function uploadImageBuffer(
 
 const LOCATION_STYLESHEET_BUCKET = 'location_style_sheets';
 
-export async function processAndUploadLocationSheet(
+export interface StoredImageAsset {
+  publicUrl: string;
+  storageBucket: string | null;
+  storagePath: string;
+}
+
+function existingStoredAsset(imageUrl: string, bucket: string): StoredImageAsset | null {
+  const marker = `/storage/v1/object/public/${bucket}/`;
+  if (!imageUrl.includes(marker)) return null;
+
+  return {
+    publicUrl: imageUrl,
+    storageBucket: bucket,
+    storagePath: imageUrl.split(marker)[1]?.split('?')[0] || imageUrl,
+  };
+}
+
+export async function processAndUploadLocationSheetAsset(
   imageUrl: string,
   identifier?: string | null
-): Promise<string> {
-  if (!imageUrl || !imageUrl.startsWith('http')) return imageUrl;
-  if (imageUrl.includes(`/storage/v1/object/public/${LOCATION_STYLESHEET_BUCKET}/`)) return imageUrl;
+): Promise<StoredImageAsset> {
+  if (!imageUrl || !imageUrl.startsWith('http')) {
+    return { publicUrl: imageUrl, storageBucket: null, storagePath: imageUrl };
+  }
+
+  const existing = existingStoredAsset(imageUrl, LOCATION_STYLESHEET_BUCKET);
+  if (existing) return existing;
 
   const res = await fetch(imageUrl);
   if (!res.ok) {
@@ -41,13 +62,15 @@ export async function processAndUploadLocationSheet(
   const fileBuffer = Buffer.from(arrayBuffer);
 
   const cleanIdentifier = identifier ? identifier.replace(/[^a-zA-Z0-9_-]/g, '_') : `loc_${Date.now()}`;
-  const fileName = `${cleanIdentifier}.${ext}`;
+  // Keep every generated version at an immutable path so an older history URL
+  // can never be overwritten by a later generation using the same identifier.
+  const fileName = `${cleanIdentifier}_${Date.now()}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from(LOCATION_STYLESHEET_BUCKET)
     .upload(fileName, fileBuffer, {
       contentType,
-      upsert: true,
+      upsert: false,
     });
 
   if (uploadError) {
@@ -56,15 +79,30 @@ export async function processAndUploadLocationSheet(
   }
 
   const { data } = supabase.storage.from(LOCATION_STYLESHEET_BUCKET).getPublicUrl(fileName);
-  return data.publicUrl;
+  return {
+    publicUrl: data.publicUrl,
+    storageBucket: LOCATION_STYLESHEET_BUCKET,
+    storagePath: fileName,
+  };
 }
 
-export async function processAndUploadCharacterSheet(
+export async function processAndUploadLocationSheet(
   imageUrl: string,
   identifier?: string | null
 ): Promise<string> {
-  if (!imageUrl || !imageUrl.startsWith('http')) return imageUrl;
-  if (imageUrl.includes(`/storage/v1/object/public/${BUCKET}/character_sheets/`)) return imageUrl;
+  return (await processAndUploadLocationSheetAsset(imageUrl, identifier)).publicUrl;
+}
+
+export async function processAndUploadCharacterSheetAsset(
+  imageUrl: string,
+  identifier?: string | null
+): Promise<StoredImageAsset> {
+  if (!imageUrl || !imageUrl.startsWith('http')) {
+    return { publicUrl: imageUrl, storageBucket: null, storagePath: imageUrl };
+  }
+
+  const existing = existingStoredAsset(imageUrl, BUCKET);
+  if (existing) return existing;
 
   const res = await fetch(imageUrl);
   if (!res.ok) throw new Error(`Failed to download character sheet (${res.status}): ${res.statusText}`);
@@ -73,8 +111,15 @@ export async function processAndUploadCharacterSheet(
 
   const base64 = Buffer.from(await res.arrayBuffer()).toString('base64');
   const cleanIdentifier = identifier?.replace(/[^a-zA-Z0-9_-]/g, '_') || `character_${Date.now()}`;
-  const { publicUrl } = await uploadImageBuffer(base64, contentType, `character_sheets/${cleanIdentifier}`);
-  return publicUrl;
+  const { path, publicUrl } = await uploadImageBuffer(base64, contentType, `character_sheets/${cleanIdentifier}`);
+  return { publicUrl, storageBucket: BUCKET, storagePath: path };
+}
+
+export async function processAndUploadCharacterSheet(
+  imageUrl: string,
+  identifier?: string | null
+): Promise<string> {
+  return (await processAndUploadCharacterSheetAsset(imageUrl, identifier)).publicUrl;
 }
 
 const STORYBOARDS_BUCKET = 'storyboards';
