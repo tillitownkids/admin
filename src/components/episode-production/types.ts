@@ -12,6 +12,7 @@ export interface CharacterRow {
   name: string;
   description: string;
   reference_image_url: string | null;
+  generated_image_url?: string | null;
   magnific_identifier?: string | null;
 }
 
@@ -44,6 +45,10 @@ export interface SceneRow {
   video_magnific_identifier?: string | null;
   script_beats?: string | null;
   beat_numbers?: number[] | string | null;
+  SceneCharacter?: Array<{
+    character_id: string;
+    Character: CharacterRow;
+  }>;
 }
 
 

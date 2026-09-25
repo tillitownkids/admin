@@ -6,20 +6,56 @@ import { recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 
 export async function GET(req: NextRequest) {
   try {
+    const storyId = req.nextUrl.searchParams.get('storyId');
     let characters: any = null;
+
     try {
-      characters = await prisma.character.findMany({
-        orderBy: { created_at: 'desc' }
-      });
+      characters = storyId
+        ? await prisma.character.findMany({
+            where: {
+              StoryCharacter: {
+                some: { story_id: storyId },
+              },
+            },
+            orderBy: { created_at: 'desc' },
+          })
+        : await prisma.character.findMany({
+            orderBy: { created_at: 'desc' },
+          });
     } catch (e) {}
 
     if (!characters || characters.length === 0) {
-      const { data, error } = await supabase
-        .from('Character')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      characters = data;
+      if (storyId) {
+        const { data: links, error: linksError } = await supabase
+          .from('StoryCharacter')
+          .select('character_id')
+          .eq('story_id', storyId);
+
+        if (linksError) throw linksError;
+
+        const characterIds = (links || [])
+          .map((link: { character_id: string | null }) => link.character_id)
+          .filter((id): id is string => Boolean(id));
+
+        if (characterIds.length > 0) {
+          const { data, error } = await supabase
+            .from('Character')
+            .select('*')
+            .in('id', characterIds)
+            .order('created_at', { ascending: false });
+          if (error) throw error;
+          characters = data;
+        } else {
+          characters = [];
+        }
+      } else {
+        const { data, error } = await supabase
+          .from('Character')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        characters = data;
+      }
     }
 
     return NextResponse.json({ characters: characters || [] });

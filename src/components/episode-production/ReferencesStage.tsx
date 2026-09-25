@@ -42,13 +42,14 @@ export function ReferencesStage({
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {characters.map((char) => {
-              const hasImage = Boolean(char.reference_image_url);
+              const imageUrl = char.generated_image_url || char.reference_image_url;
+              const hasImage = Boolean(imageUrl);
               return (
                 <div
                   key={char.id}
                   onClick={() => {
-                    if (hasImage && char.reference_image_url) {
-                      window.open(char.reference_image_url, '_blank', 'noopener,noreferrer');
+                    if (imageUrl) {
+                      window.open(imageUrl, '_blank', 'noopener,noreferrer');
                     }
                   }}
                   className={`group p-4 rounded-xl border border-border bg-card flex items-start gap-3 transition-all ${
@@ -58,10 +59,10 @@ export function ReferencesStage({
                   }`}
                   title={hasImage ? `Click to view ${char.name} reference image` : undefined}
                 >
-                  {hasImage && char.reference_image_url ? (
+                  {imageUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
-                      src={char.reference_image_url}
+                      src={imageUrl}
                       alt={char.name}
                       className="w-12 h-12 rounded-full object-cover border border-primary/30 shrink-0 group-hover:border-primary transition-colors"
                     />

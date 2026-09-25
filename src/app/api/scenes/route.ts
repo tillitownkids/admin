@@ -18,6 +18,11 @@ export async function GET(req: NextRequest) {
 
       scenes = await prisma.scene.findMany({
         where,
+        include: {
+          SceneCharacter: {
+            include: { Character: true },
+          },
+        },
         orderBy: { order_index: 'asc' }
       });
     } catch (e) {}
@@ -30,7 +35,23 @@ export async function GET(req: NextRequest) {
 
       const { data, error } = await query;
       if (!error && data) {
-        scenes = data;
+        const sceneIds = data.map((scene) => scene.id);
+        let sceneCharacterRows: any[] = [];
+
+        if (sceneIds.length > 0) {
+          const { data: links, error: linksError } = await supabase
+            .from('SceneCharacter')
+            .select('scene_id, character_id, Character(*)')
+            .in('scene_id', sceneIds);
+
+          if (linksError) throw linksError;
+          sceneCharacterRows = links || [];
+        }
+
+        scenes = data.map((scene) => ({
+          ...scene,
+          SceneCharacter: sceneCharacterRows.filter((link) => link.scene_id === scene.id),
+        }));
       }
     }
 
