@@ -648,7 +648,12 @@ Return ONLY valid JSON with this structure:
           </div>
 
           {/* Existing Saved Storyboards Cards */}
-          {savedStoryboards.map((sb) => (
+          {isFetchingScripts ? (
+            <div className="col-span-full py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              <p className="text-sm">Fetching storyboards from database...</p>
+            </div>
+          ) : savedStoryboards.map((sb) => (
             <div
               key={sb.id}
               onClick={() => router.push(`/storyboard/${sb.id}`)}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Clapperboard } from 'lucide-react';
+import { Clapperboard, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { getSavedStoryboardsAction } from '@/actions/saveStoryboardAction';
 
@@ -55,6 +55,13 @@ export default function EpisodeProductionIndexPage() {
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {isLoading && (
+          <div className="col-span-full py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            <p className="text-sm">Fetching video productions from database...</p>
+          </div>
+        )}
+
         {!isLoading && storyboards.length === 0 && (
           <p className="text-sm text-muted-foreground col-span-full">
             No episodes with saved storyboards found. Create a storyboard in Storyboard Generator first.

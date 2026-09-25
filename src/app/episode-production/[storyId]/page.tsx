@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, use } from 'react';
-import { Clapperboard, CheckCircle2 } from 'lucide-react';
+import { Clapperboard, CheckCircle2, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
 import { ProductionStepper, type ProductionStageKey } from '@/components/episode-production/ProductionStepper';
@@ -139,8 +139,9 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
 
   if (isLoading || !story) {
     return (
-      <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
-        <p className="text-muted-foreground">Loading production workspace...</p>
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm font-medium text-muted-foreground">Loading production workspace...</p>
       </div>
     );
   }
