@@ -47,6 +47,7 @@ export function LibraryManager({
 }: LibraryManagerProps) {
   const [viewMode, setViewMode] = useState<'list' | 'create' | 'edit'>('list');
   const [items, setItems] = useState<LibraryItem[]>([]);
+  const [isFetchingItems, setIsFetchingItems] = useState(true);
   const [current, setCurrent] = useState<LibraryItem | null>(null);
   const [name, setName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -86,7 +87,8 @@ export function LibraryManager({
     fetch(apiPath)
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Failed to load ${resourceNamePlural}`)))
       .then((data) => { if (!cancelled) setItems(data[listKey] || []); })
-      .catch((err) => console.error(`Failed to load ${resourceNamePlural}`, err));
+      .catch((err) => console.error(`Failed to load ${resourceNamePlural}`, err))
+      .finally(() => { if (!cancelled) setIsFetchingItems(false); });
     return () => { cancelled = true; };
   }, [apiPath, listKey, resourceNamePlural]);
 
@@ -436,7 +438,12 @@ export function LibraryManager({
             <p className="text-sm text-muted-foreground mt-1 text-center">Create a new reusable {resourceName.toLowerCase()}</p>
           </div>
 
-          {items.map((item) => {
+          {isFetchingItems ? (
+            <div className="col-span-full py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              <p className="text-sm">Fetching {resourceNamePlural.toLowerCase()} from database...</p>
+            </div>
+          ) : items.map((item) => {
             const cardImageUrl = item.generated_image_url || item.reference_image_url;
             return (
               <div
