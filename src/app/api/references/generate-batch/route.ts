@@ -56,7 +56,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ successful: [], failed: [] });
     }
 
-    const settled = await runWithConcurrency(items, 3, (item) => generateReference(item.type, item.id));
+    // Keep external generation, storage uploads, and DB history writes from
+    // exhausting the serverless/direct database connection pool.
+    const settled = await runWithConcurrency(items, 2, (item) => generateReference(item.type, item.id));
     const successful = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     const failed: BatchFailure[] = settled.flatMap((result, index) => {
       if (result.status === 'fulfilled') return [];
