@@ -225,7 +225,6 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
         {activeStage === 'video' && (
           <VideoStage
             scenes={scenes}
-            characters={characters}
             episodeLocations={episodeLocations}
             onRefetchScenes={async () => {
               await fetchScenes(episodeLocations);

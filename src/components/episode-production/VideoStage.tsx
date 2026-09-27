@@ -7,12 +7,11 @@ import { Video, FileText, Loader2, Check, RefreshCw, ExternalLink, Code, Film, U
 
 import { labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
 import { callAi } from '@/actions/actions';
-import type { CharacterRow, EpisodeLocationRow, SceneRow } from './types';
+import type { EpisodeLocationRow, SceneRow } from './types';
 
 
 interface VideoStageProps {
   scenes: SceneRow[];
-  characters: CharacterRow[];
   episodeLocations: EpisodeLocationRow[];
   onRefetchScenes: () => Promise<void>;
   onConfirmed: () => Promise<void> | void;
@@ -166,7 +165,6 @@ Return ONLY the formatted video prompt text matching the exact template above, w
 
 export function VideoStage({
   scenes,
-  characters,
   episodeLocations,
   onRefetchScenes,
   onConfirmed,
@@ -203,19 +201,27 @@ export function VideoStage({
 
   // Helper to build payload item for a scene
   const buildVideoPayloadItem = (scene: SceneRow, vPrompt: string) => {
-    const promptText = (scene.storyboard_prompt || scene.description || '').toLowerCase();
+    if (!scene.magnific_identifier) {
+      throw new Error(`Scene #${scene.scene_number} storyboard is missing its Magnific identifier.`);
+    }
 
-    // Active characters in this scene
-    const activeChars = characters.filter((c) => {
-      if (c.name && (promptText.includes(c.name.toLowerCase()) || scene.description.toLowerCase().includes(c.name.toLowerCase()))) {
-        return true;
-      }
-      return false;
-    });
+    // SceneCharacter is the authoritative character list for this scene.
+    const activeChars = (scene.SceneCharacter || []).flatMap((link) =>
+      link.Character ? [link.Character] : []
+    );
 
     const charRefs: Record<string, string> = {};
+    const missingCharacters: string[] = [];
     for (const c of activeChars) {
-      if (c.name) charRefs[c.name] = c.magnific_identifier || c.id;
+      if (c.magnific_identifier) {
+        charRefs[c.name] = c.magnific_identifier;
+      } else {
+        missingCharacters.push(c.name);
+      }
+    }
+
+    if (missingCharacters.length > 0) {
+      throw new Error(`Scene #${scene.scene_number} is missing Magnific identifiers for: ${missingCharacters.join(', ')}.`);
     }
 
     // Active location for this scene
@@ -224,16 +230,20 @@ export function VideoStage({
       (el) => el.id === scene.episode_location_id || el.Location.name.toLowerCase() === scene.locationName.toLowerCase()
     );
 
-    if (matchedEpLoc) {
-      locRefs[matchedEpLoc.Location.name] = matchedEpLoc.Location.magnific_identifier || matchedEpLoc.Location.id;
-    } else if (scene.locationName) {
-      locRefs[scene.locationName] = `loc_${scene.locationName.toLowerCase().replace(/\s+/g, '_')}`;
+    if (!matchedEpLoc) {
+      throw new Error(`Scene #${scene.scene_number} location "${scene.locationName || 'Unknown'}" is not linked to an episode location reference.`);
     }
+
+    if (!matchedEpLoc.Location.magnific_identifier) {
+      throw new Error(`Scene #${scene.scene_number} location "${matchedEpLoc.Location.name}" is missing a Magnific identifier.`);
+    }
+
+    locRefs[matchedEpLoc.Location.name] = matchedEpLoc.Location.magnific_identifier;
 
     return {
       id: scene.id,
       videoPrompt: vPrompt,
-      magnific_identifier: scene.magnific_identifier || null,
+      magnific_identifier: scene.magnific_identifier,
       references: {
         characters: charRefs,
         locations: locRefs,
@@ -459,8 +469,6 @@ export function VideoStage({
               key={scene.id}
               scene={scene}
               sceneIdx={sceneIdx}
-              characters={characters}
-              episodeLocations={episodeLocations}
               videoPrompt={videoPrompts[scene.id]}
               overrideVideoUrl={generatedVideoUrls[scene.id]}
               onGeneratePrompt={async (newPrompt) => {
@@ -493,8 +501,6 @@ export function VideoStage({
 function VideoSceneCard({
   scene,
   sceneIdx,
-  characters,
-  episodeLocations,
   videoPrompt: initialVideoPrompt,
   overrideVideoUrl,
   onGeneratePrompt,
@@ -503,8 +509,6 @@ function VideoSceneCard({
 }: {
   scene: SceneRow;
   sceneIdx: number;
-  characters: CharacterRow[];
-  episodeLocations: EpisodeLocationRow[];
   videoPrompt?: string;
   overrideVideoUrl?: string;
   onGeneratePrompt: (prompt: string) => void;
@@ -538,8 +542,9 @@ function VideoSceneCard({
 
   const activeVideoUrl = returnedVideoUrl || scene.video_url;
 
-  const promptText = (scene.storyboard_prompt || scene.description || '').toLowerCase();
-  const sceneChars = characters.filter((c) => c.name && promptText.includes(c.name.toLowerCase()));
+  const sceneChars = (scene.SceneCharacter || []).flatMap((link) =>
+    link.Character ? [link.Character] : []
+  );
 
   // 1. Regenerate ONLY the AI Video Prompt
   const handleRegeneratePromptOnly = async () => {
