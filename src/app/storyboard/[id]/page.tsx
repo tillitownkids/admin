@@ -246,7 +246,12 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
     setIsAiChatLoading(true);
 
     try {
-      const res = await brainstormStoryboardAction(prompt, generatedScenes, query);
+      const res = await brainstormStoryboardAction(
+        prompt,
+        generatedScenes,
+        query,
+        storyCharacters.map((c) => c.name)
+      );
 
       if (res.success && res.summary) {
         setChatHistory((prev) => [

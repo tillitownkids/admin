@@ -235,6 +235,16 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
       return { success: true, characters: [], locations: [] };
     }
 
+    // Some callers (e.g. the storyboard page) pass a Script id; cast and locations belong to its Story.
+    try {
+      const { data: scriptRow } = await supabase
+        .from('Script')
+        .select('story_id')
+        .eq('id', storyId)
+        .maybeSingle();
+      if (scriptRow?.story_id) storyId = scriptRow.story_id;
+    } catch (e) {}
+
     // --- Fetch Characters via StoryCharacter joined with Character ---
     let characters: any[] = [];
     try {

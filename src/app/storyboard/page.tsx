@@ -26,6 +26,7 @@ import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction, getSavedStoryboardsAction } from "@/actions/saveStoryboardAction";
 import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
 import { parseAiJson } from "@/lib/parseAiJson";
+import { matchCharactersByName } from "@/lib/characterNames";
 
 
 interface DatabaseScript {
@@ -197,9 +198,12 @@ ${storyLocations.map(l => `- "${l.name}": ${l.description || 'No visual descript
 Assign the exact matching location name in the "location_name" field for each scene. Use these official location descriptions directly to populate the Environment section for each scene prompt.`
       : "";
 
-    const characterPromptSection = storyCharacters.length > 0
-      ? `OFFICIAL CHARACTER PROFILES FOR THIS STORY:
-${storyCharacters.map(c => `- ${c.name}: ${c.description || 'Standard character'}`).join("\n")}`
+    // Character names double as reference-image keys downstream, so they must be copied exactly.
+    const castPromptSection = storyCharacters.length > 0
+      ? `OFFICIAL EPISODE CAST (exact names):
+${storyCharacters.map(c => `- "${c.name}"`).join("\n")}
+
+For each scene, list in "character_names" ONLY the characters who physically appear on screen in that scene's beats, copying their names EXACTLY as written above (character-for-character, no nicknames, no shortening). Do not list characters who are only mentioned, heard off-screen, or not in the cast list.`
       : "";
 
     // PASS 1: Detect all scenes across the ENTIRE script at once (100% natural scene boundaries)
@@ -229,6 +233,8 @@ Start a new scene when:
 
 Every beat must belong to exactly ONE scene.
 Never reorder, skip, duplicate, or omit any beats.
+
+${castPromptSection}
 
 ${locationPromptSection}
 
@@ -281,6 +287,16 @@ ${prompt}`;
           ? scene.beat_numbers.join(", ")
           : (scene.beat_numbers || "");
 
+        const { matched: sceneCast } = matchCharactersByName(storyCharacters, scene.character_names || []);
+        const characterPromptSection = sceneCast.length > 0
+          ? `CHARACTERS IN THIS SCENE (use these exact names; a reference image of each is attached to the image request):
+${sceneCast.map(c => `- "${c.name}": ${c.description || 'Standard character'}`).join("\n")}
+
+Refer to every character ONLY by the exact name in quotes above, every time (no nicknames, pronoun-only references, or role words like "father" in place of the name). Do NOT include any character not listed here. Do NOT describe their physical appearance (species, colors, face, hair, body, outfit) — the attached reference images define it. Describe only expression, pose, action and position in frame.`
+          : storyCharacters.length > 0
+          ? `No cast characters appear in this scene. Do NOT add any named characters.`
+          : "";
+
         const pass2Prompt = `You are a professional storyboard artist for a 3D animated children's series.
 
 Your task is to generate a production-ready storyboard image-generation prompt for Scene #${scene.scene_number || idx + 1}: "${scene.title || 'Scene'}".
@@ -295,8 +311,8 @@ Your task is to generate a production-ready storyboard image-generation prompt f
    - NEVER CLONE, DUPLICATE, REPLICATE, OR RENDER MULTIPLE COPIES OF ANY CHARACTER IN THE SAME SCENE.
    - Every named character MUST appear as EXACTLY ONE (1) single individual character figure.
    - FORBIDDEN: DO NOT depict twin copies, cloned figures, or multiple instances of any character standing or hovering side-by-side. Describe every character strictly as a single unique individual figure.
-4. For example: If a character is named "Tilli", describe Tilli strictly as defined in the official character profile or script. DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
-5. Keep all character descriptions 100% faithful to the official character profiles provided below. Only describe character clothing, expressions, posture, and physical actions relevant to each beat.
+4. For example: If a character is named "Tilli", DO NOT add "on wheels", "robot", "mechanical companion", or any unmentioned fantasy/scifi traits.
+5. Character looks come from the attached reference images, not from text. Only describe expressions, posture, and physical actions relevant to each beat.
 
 ${characterPromptSection}
 
@@ -349,7 +365,7 @@ ${scene.scene_script_beats || ''}
 Return ONLY valid JSON with this structure:
 
 {
-  "storyboard_prompt": "Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.\n\nCreate a [GRID] 3D animation panel grid, [NUMBER] panels, for a full-color 3D animated children's film.\n\nScene: ${scene.title || 'Scene'}\n\nEnvironment: [location, time of day, lighting and important environmental details]\n\nCharacters: [characters present and strictly their appearance as explicitly defined in their official character profile without any added qualities or fictional traits]\n\nPanel 1: [visual description based on Beat 1]\n\nPanel 2: [visual description based on Beat 2]\n\n...\n\nMaintain 3D CGI visual continuity across all panels. Number each panel in the corner.\n\nStyle Directive: Clean 3D CGI digital animation render only. No 2D sketches, no pencil outlines, no hand-drawn artwork."
+  "storyboard_prompt": "Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.\n\nCreate a [GRID] 3D animation panel grid, [NUMBER] panels, for a full-color 3D animated children's film.\n\nScene: ${scene.title || 'Scene'}\n\nEnvironment: [location, time of day, lighting and important environmental details]\n\nCharacters: [exact names of the characters present, each as one single individual, matching their attached reference images — no appearance description]\n\nPanel 1: [visual description based on Beat 1]\n\nPanel 2: [visual description based on Beat 2]\n\n...\n\nMaintain 3D CGI visual continuity across all panels. Number each panel in the corner.\n\nStyle Directive: Clean 3D CGI digital animation render only. No 2D sketches, no pencil outlines, no hand-drawn artwork."
 }`;
 
         try {
