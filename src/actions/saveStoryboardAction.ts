@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { supabase } from "@/lib/supabase";
+import { matchCharactersByName } from "@/lib/characterNames";
 
 export interface ConfirmSceneInput {
   scriptId: string;
@@ -62,27 +63,14 @@ export async function buildStoryboardPayloadAction(scriptId: string, scenes: Con
         include: { Character: true }
       }).catch(() => []);
 
-      const availableCharacters = storyChars.map(sc => sc.Character);
+      const availableCharacters = storyChars.map(sc => sc.Character).filter(Boolean);
+      const { matched } = matchCharactersByName(availableCharacters, firstScene.characterNames || []);
 
-      // Determine which character names belong to firstScene
-      const sceneCharNames = firstScene.characterNames || [];
-
-      for (const charObj of availableCharacters) {
-        if (!charObj?.name) continue;
-        const charName = charObj.name;
-
-        const isPresent = sceneCharNames.some(
-          name => name.toLowerCase().includes(charName.toLowerCase()) || charName.toLowerCase().includes(name.toLowerCase())
-        );
-
-        if (isPresent) {
-          const identifier = (charObj as any)?.magnific_identifier;
-          if (identifier) {
-            characterRefs[charName] = identifier;
-          } else {
-            throw new Error(`Character "${charName}" is missing a Magnific identifier.`);
-          }
+      for (const charObj of matched) {
+        if (!charObj.magnific_identifier) {
+          throw new Error(`Character "${charObj.name}" is missing a Magnific identifier.`);
         }
+        characterRefs[charObj.name] = charObj.magnific_identifier;
       }
     }
 
@@ -232,7 +220,7 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       include: { Character: true }
     }).catch(() => []);
 
-    const availableCharacters = storyChars.map(sc => sc.Character);
+    const availableCharacters = storyChars.map(sc => sc.Character).filter(Boolean);
 
     const savedScenes = [];
 
@@ -321,32 +309,35 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
       }
 
 
-      // Resolve character IDs for this scene
-      let matchedCharIds: string[] = [];
+      // Replace this scene's character links whenever a cast list is supplied (even an empty one),
+      // so stale links from earlier generations never leak extra reference images into the storyboard.
+      if (updatedScene?.id && Array.isArray(sceneInput.characterNames)) {
+        const { matched, unmatched } = matchCharactersByName(availableCharacters, sceneInput.characterNames);
+        if (unmatched.length > 0) {
+          console.warn(`Scene #${sceneInput.sceneNumber}: no story character named ${unmatched.map(n => `"${n}"`).join(", ")}; not linked.`);
+        }
+        const matchedCharIds = matched.map(c => c.id);
 
-      if (sceneInput.characterNames && sceneInput.characterNames.length > 0) {
-        matchedCharIds = availableCharacters
-          .filter(c => c && sceneInput.characterNames!.some(name => name.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(name.toLowerCase())))
-          .map(c => c.id);
-      }
-
-      if (updatedScene?.id && matchedCharIds.length > 0) {
         try {
           await prisma.sceneCharacter.deleteMany({
             where: { scene_id: updatedScene.id }
           });
-          await prisma.sceneCharacter.createMany({
-            data: matchedCharIds.map(charId => ({
-              scene_id: updatedScene.id,
-              character_id: charId
-            })),
-            skipDuplicates: true
-          });
+          if (matchedCharIds.length > 0) {
+            await prisma.sceneCharacter.createMany({
+              data: matchedCharIds.map(charId => ({
+                scene_id: updatedScene.id,
+                character_id: charId
+              })),
+              skipDuplicates: true
+            });
+          }
         } catch (scErr) {
           console.warn("Prisma SceneCharacter insert failed, attempting Supabase fallback:", scErr);
           await supabase.from('SceneCharacter').delete().eq('scene_id', updatedScene.id);
-          const rows = matchedCharIds.map(charId => ({ scene_id: updatedScene.id, character_id: charId }));
-          await supabase.from('SceneCharacter').insert(rows);
+          if (matchedCharIds.length > 0) {
+            const rows = matchedCharIds.map(charId => ({ scene_id: updatedScene.id, character_id: charId }));
+            await supabase.from('SceneCharacter').insert(rows);
+          }
         }
       }
 
