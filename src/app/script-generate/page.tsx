@@ -121,6 +121,7 @@ export default function ScriptGeneratePage() {
   const [isDetailsLoading, setIsDetailsLoading] = useState<boolean>(false);
   const [isGeneratingScript, setIsGeneratingScript] = useState<boolean>(false);
   const [history, setHistory] = useState<ScriptHistory[]>([]);
+  const [isFetchingHistory, setIsFetchingHistory] = useState<boolean>(true);
   const [scriptContent, setScriptContent] = useState<ScriptContent>({ recap: '', scenes: [] });
   const [error, setError] = useState<string | null>(null);
 
@@ -147,6 +148,7 @@ export default function ScriptGeneratePage() {
   };
 
   const fetchHistory = async () => {
+    setIsFetchingHistory(true);
     try {
       const res = await fetch('/api/scripts');
       if (res.ok) {
@@ -155,6 +157,8 @@ export default function ScriptGeneratePage() {
       }
     } catch (e) {
       console.error("Failed to load history from DB", e);
+    } finally {
+      setIsFetchingHistory(false);
     }
   };
 
@@ -675,7 +679,12 @@ Now convert the provided story into the beat script format.`;
             <p className="text-sm text-muted-foreground mt-1 text-center">Generate a new structured script</p>
           </div>
 
-          {history.map((record) => (
+          {isFetchingStories || isFetchingHistory ? (
+            <div className="col-span-full py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              <p className="text-sm">Fetching scripts from database...</p>
+            </div>
+          ) : history.map((record) => (
             <div
               key={record.id}
               onClick={() => loadHistoryRecord(record)}

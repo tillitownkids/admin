@@ -2,6 +2,53 @@ import { supabase } from '@/lib/supabase';
 
 const BUCKET = 'episode-assets';
 
+const STORAGE_UPLOAD_ATTEMPTS = 3;
+
+function isTransientStorageError(error: unknown): boolean {
+  const candidate = error as {
+    message?: string;
+    status?: number;
+    statusCode?: number;
+    originalError?: { message?: string; code?: string; cause?: { code?: string } };
+  } | null;
+  const status = candidate?.statusCode ?? candidate?.status;
+  const code = candidate?.originalError?.code ?? candidate?.originalError?.cause?.code;
+  const message = `${candidate?.message || ''} ${candidate?.originalError?.message || ''}`.toLowerCase();
+
+  return status === 408
+    || status === 429
+    || (typeof status === 'number' && status >= 500)
+    || ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(code || '')
+    || message.includes('fetch failed')
+    || message.includes('connection reset')
+    || message.includes('network');
+}
+
+async function uploadToStorageWithRetry(
+  bucket: string,
+  path: string,
+  body: Buffer,
+  contentType: string,
+): Promise<void> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= STORAGE_UPLOAD_ATTEMPTS; attempt += 1) {
+    const { error } = await supabase.storage.from(bucket).upload(path, body, {
+      contentType,
+      // A reset can happen after Storage accepted the first upload but before
+      // the response arrived. Upsert makes the retry idempotent for this path.
+      upsert: attempt > 1,
+    });
+
+    if (!error) return;
+    lastError = error;
+    if (!isTransientStorageError(error) || attempt === STORAGE_UPLOAD_ATTEMPTS) break;
+    await new Promise((resolve) => setTimeout(resolve, 300 * (2 ** (attempt - 1))));
+  }
+
+  throw lastError;
+}
+
 export async function uploadImageBuffer(
   base64: string,
   mimeType: string,
@@ -11,11 +58,7 @@ export async function uploadImageBuffer(
   const path = `${pathPrefix}/${Date.now()}.${ext}`;
   const buffer = Buffer.from(base64, 'base64');
 
-  const { error } = await supabase.storage.from(BUCKET).upload(path, buffer, {
-    contentType: mimeType,
-    upsert: false,
-  });
-  if (error) throw error;
+  await uploadToStorageWithRetry(BUCKET, path, buffer, mimeType);
 
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
   return { path, publicUrl: data.publicUrl };
@@ -66,15 +109,10 @@ export async function processAndUploadLocationSheetAsset(
   // can never be overwritten by a later generation using the same identifier.
   const fileName = `${cleanIdentifier}_${Date.now()}.${ext}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from(LOCATION_STYLESHEET_BUCKET)
-    .upload(fileName, fileBuffer, {
-      contentType,
-      upsert: false,
-    });
-
-  if (uploadError) {
-    console.error('Error uploading location sheet to Supabase storage:', uploadError);
+  try {
+    await uploadToStorageWithRetry(LOCATION_STYLESHEET_BUCKET, fileName, fileBuffer, contentType);
+  } catch (uploadError) {
+    console.error('Error uploading location sheet to Supabase storage after retries:', uploadError);
     throw uploadError;
   }
 

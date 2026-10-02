@@ -23,6 +23,8 @@ ${input.storyExcerpt}
 
 Split this into a sequence of distinct scenes (a scene = one continuous beat of action worth its own storyboard panel), in order.
 
+HARD DURATION LIMIT: Each scene will become one video clip and MUST take no more than 15 seconds at natural pacing. Estimate spoken dialogue, pauses, physical actions, reactions, camera movement, and transitions. Start a new scene before any content that would push the current scene over 15 seconds. Do not speed up, compress, omit, or overlap content to make it fit; create additional scenes instead.
+
 You MUST return your response ONLY as a valid JSON array of objects. Do NOT include any preamble, explanation, or markdown code blocks — return raw JSON only.
 CRITICAL: Escape all newlines (\\n) and double quotes (\\") inside string values. Do not output actual unescaped line breaks inside the strings.
 

@@ -80,19 +80,27 @@ function extractGeneratedReference(data: unknown): GeneratedReference {
 }
 
 async function loadReference(type: ReferenceType, id: string): Promise<ReferenceRecord | null> {
+  const table = type === 'character' ? 'Character' : 'Location';
+  try {
+    // Batch generation can keep several requests open while external image
+    // services respond. Prefer Supabase's HTTP API here so those reads do not
+    // consume scarce direct Prisma connections.
+    const { data, error } = await supabase.from(table).select('*').eq('id', id).maybeSingle();
+    if (!error && data) return data as ReferenceRecord;
+    if (error) console.warn(`Supabase ${type} lookup failed, falling back to Prisma:`, error);
+  } catch (error) {
+    console.warn(`Supabase ${type} lookup failed, falling back to Prisma:`, error);
+  }
+
   try {
     const record = type === 'character'
       ? await prisma.character.findUnique({ where: { id } })
       : await prisma.location.findUnique({ where: { id } });
     if (record) return record as ReferenceRecord;
   } catch (error) {
-    console.warn(`Prisma ${type} lookup failed, falling back to Supabase:`, error);
+    console.warn(`Prisma ${type} lookup failed:`, error);
   }
-
-  const table = type === 'character' ? 'Character' : 'Location';
-  const { data, error } = await supabase.from(table).select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
-  return data as ReferenceRecord | null;
+  return null;
 }
 
 export async function generateReference(type: ReferenceType, id: string) {
