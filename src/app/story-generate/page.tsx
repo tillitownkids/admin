@@ -446,6 +446,18 @@ Given Inputs:
 - Target Audience: ${globalAudience}
 - Story Tone & Atmosphere: ${globalTone}
 
+STRICT FINISHED-EPISODE RUNTIME LIMIT:
+- The selected story duration is ${duration || '2-3 minutes'}. This is the runtime budget for the FINISHED ANIMATED EPISODE, not the time needed to read the narrative aloud.
+- Treat this duration as a hard upper limit. For a range, use its upper bound as the maximum (for example, "2-3 minutes" means at most 180 seconds). Do not substitute a fixed duration for the selected story duration.
+- Budget the complete beginning, middle, and ending within this limit, including natural spoken dialogue, pauses, reactions, action, establishing moments, transitions, and a brief ending hold.
+- Estimate speech at a natural, unhurried pace appropriate to the audience and tone. Do not assume dialogue or physical actions take no time.
+- Allow compatible actions to happen during dialogue where natural, but do not assume unrelated or sequential events happen simultaneously to make the runtime fit.
+- Keep the number of events, locations, conversations, and plot complications achievable within the available runtime. Avoid repetitive reactions, unnecessary detours, and extended celebrations.
+- If the concept or overview is too large, simplify supporting events and shorten dialogue while preserving the central conflict, essential character roles, lesson, and satisfying ending.
+- Never fit the runtime by rushing speech or action, cutting words off, leaving the resolution incomplete, or assigning unrealistically short durations.
+- Before returning, internally estimate the full episode runtime and revise the story until it fits the selected limit. Keep this planning internal; retain the requested narrative and JSON output format.
+- The Episode Recap is metadata and is excluded from episode runtime.
+
 STORY FORMATTING RULES (STRICT & MANDATORY):
 - Write a single, continuous, warm bedtime narrative story.
 - Do NOT divide or split the story into "Part 1", "Part 2", "Part 3", chapters, or sub-sections.
