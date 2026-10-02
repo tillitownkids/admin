@@ -31,6 +31,7 @@ import { matchCharactersByName } from "@/lib/characterNames";
 
 interface DatabaseScript {
   id: string;
+  story_id?: string | null;
   topic?: string;
   episode_number?: string;
   title?: string;
@@ -174,7 +175,7 @@ export default function StoryboardPage() {
 
     async function loadEpisodeContext() {
       try {
-        const res = await getStoryCharactersAndLocationsAction(selectedScript);
+        const res = await getStoryCharactersAndLocationsAction(scriptObj?.story_id || selectedScript);
         if (res.success) {
           setStoryLocations(res.locations || []);
           setStoryCharacters(res.characters || []);
@@ -226,25 +227,25 @@ CRITICAL GRID CAP (STRICT MAX 6 BEATS PER SCENE):
 - If a continuous scene sequence in the same location contains more than 6 beats (e.g., Beats 17 through 24), you MUST split them into consecutive scenes (e.g., Scene 5: Beats 17-22 [6 beats], Scene 6: Beats 23-24 [2 beats]).
 - This guarantees every scene cleanly fits standard panel grids (max 2x3 grid).
 
-CRITICAL VIDEO DURATION CAP (STRICT MAX 15 SECONDS PER SCENE):
-- Every scene will later be generated as one continuous video clip, so its complete content MUST play naturally within 15 seconds or less.
+CRITICAL CONTENT DURATION CAP (STRICT MAX 8 SECONDS PER SCENE):
+- Every scene will later be generated as one continuous video clip. Group no more than 8 seconds of naturally paced content per scene, leaving headroom within the 15-second video ceiling for pauses, reactions, and natural movement.
 - Estimate each beat's realistic screen time from its dialogue, WPM, explicit <-Break x seconds-> markers, actions, camera movements, reactions, and transitions.
 - Dialogue duration = spoken-word count / stated WPM × 60, plus every explicit break. Allow additional time for visible actions, reactions, and camera movement; never assume they happen instantaneously.
-- Add the estimated durations of consecutive beats before grouping them. If adding the next beat would make the scene exceed 15 seconds, start a new consecutive scene BEFORE that beat, even when the current scene has fewer than 6 beats and the location has not changed.
+- Add the estimated durations of consecutive beats before grouping them. If adding the next beat would make the scene exceed 8 seconds, start a new consecutive scene BEFORE that beat, even when the current scene has fewer than 6 beats and the location has not changed.
 - Do NOT speed up, shorten, omit, overlap, or compress dialogue or actions merely to fit the limit. Prefer more short scenes over one rushed scene.
-- The 6-beat cap and 15-second cap are independent hard limits. Whichever limit is reached first MUST split the scene.
-- A beat that is itself close to or longer than 15 seconds must remain alone and must never be combined with another beat.
+- The 6-beat cap and 8-second content cap are independent hard limits. Whichever limit is reached first MUST split the scene.
+- A beat that is itself close to or longer than 8 seconds must remain alone and must never be combined with another beat.
 
 Start a new scene when:
 - A significant location change or INT/EXT change occurs.
 - A significant time-of-day change occurs.
 - A new dramatic sequence starts.
 - The beat count reaches 6 beats (split into a new scene sheet).
-- Adding the next beat would push the scene's natural estimated runtime above 15 seconds.
+- Adding the next beat would push the scene's natural estimated runtime above 8 seconds.
 
 Every beat must belong to exactly ONE scene.
 Never reorder, skip, duplicate, or omit any beats.
-After grouping, verify both conditions for every scene: no more than 6 beats AND no more than 15 seconds estimated runtime.
+After grouping, verify both conditions for every scene: no more than 6 beats AND no more than 8 seconds estimated runtime (except an indivisible longer beat, which must stand alone).
 
 ${castPromptSection}
 
@@ -263,7 +264,7 @@ Return ONLY valid JSON with this structure:
       "location_name": "Location Name",
       "character_names": ["Character Name 1", "Character Name 2"],
       "beat_numbers": [1, 2, 3],
-      "estimated_duration_seconds": 12.5,
+      "estimated_duration_seconds": 7.5,
       "scene_script_beats": "Full exact text of all script beats grouped into this scene (including beat headers, [ACTION], [DIALOGUE], [CAMERA], [MOTION], and [SFX] lines)."
     }
   ]
@@ -365,7 +366,7 @@ Scene Number: ${scene.scene_number || idx + 1}
 Title: ${scene.title || 'Scene'}
 Location Name: ${scene.location_name || ''}
 Beats Included: ${beatNums}
-Estimated Natural Runtime: ${scene.estimated_duration_seconds || '15 seconds or less'}
+Estimated Natural Runtime: ${scene.estimated_duration_seconds || '8 seconds or less'}
 
 Target Scene Script Beats:
 """
@@ -530,13 +531,14 @@ Return ONLY valid JSON with this structure:
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                       {storyCharacters.map((char: any, i: number) => {
-                        const hasImage = Boolean(char.reference_image_url);
+                        const imageUrl = char.generated_image_url || char.reference_image_url;
+                        const hasImage = Boolean(imageUrl);
                         return (
                           <div 
                             key={char.id || i}
                             onClick={() => {
                               if (hasImage) {
-                                window.open(char.reference_image_url, '_blank', 'noopener,noreferrer');
+                                window.open(imageUrl, '_blank', 'noopener,noreferrer');
                               }
                             }}
                             className={`group p-3 rounded-xl bg-background/60 border border-border/60 flex items-center gap-3 transition-all ${
@@ -548,7 +550,7 @@ Return ONLY valid JSON with this structure:
                           >
                             {hasImage ? (
                               <img 
-                                src={char.reference_image_url} 
+                                src={imageUrl} 
                                 alt={char.name || 'Character'} 
                                 className="w-10 h-10 rounded-full object-cover border border-primary/30 shrink-0 group-hover:border-primary transition-colors"
                               />
@@ -586,8 +588,11 @@ Return ONLY valid JSON with this structure:
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                       {storyLocations.map((loc: any, i: number) => {
-                        const hasImage = Boolean(loc.Location?.generated_image_url || loc.Location?.reference_image_url);
-                        const imgUrl = loc.Location?.generated_image_url || loc.Location?.reference_image_url;
+                        const imgUrl = loc.generated_image_url
+                          || loc.reference_image_url
+                          || loc.Location?.generated_image_url
+                          || loc.Location?.reference_image_url;
+                        const hasImage = Boolean(imgUrl);
                         return (
                           <div 
                             key={loc.id || i}
