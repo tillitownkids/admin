@@ -151,9 +151,9 @@ ${location} — ${sceneOverview}
 
 Generate a single continuous 3D animated video, Pixar/DreamWorks style, full color, maximum 15 seconds total duration, landscape 16:9. Follow the [ACTION], [CAMERA], and [MOTION] instructions from the attached script exactly, in order, for all Beats. Use the attached storyboard panel to match framing, character design, and environment at each beat.
 
-Steady, natural real-time pacing — do NOT speed up, rush, or compress the action to fit the duration. The total video duration MUST be a maximum of 15 seconds (0:00 to 0:15.0 max). Scale and allocate the beat timestamps sequentially so that the entire scene fits within 15 seconds total. Use this timing as the pacing guide:
+Steady, natural real-time pacing — do NOT speed up, rush, or compress the action to fit the duration. Scenes are grouped to target no more than 8 seconds of content, leaving room for natural pauses, reactions, and movement within the 15-second video ceiling. The total video duration MUST be a maximum of 15 seconds (0:00 to 0:15.0 max). Allocate beat timestamps sequentially using their natural duration, spoken-word count at the specified WPM, and all explicit dialogue breaks. Do not increase WPM, shorten pauses, or compress actions to fit. Use this timing as the pacing guide:
 
-[Generate explicit timestamp ranges for each Beat scaled to fit within a maximum of 15.0 seconds total, e.g.:
+[Generate explicit timestamp ranges for each Beat at natural pacing within a maximum of 15.0 seconds total, e.g.:
 [0:00–0:02.5] Beat 1 — Title
 [0:02.5–0:05.0] Beat 2 — Title
 ...up to maximum 0:15.0 total]

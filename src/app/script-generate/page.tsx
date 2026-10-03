@@ -305,9 +305,9 @@ Do not invent new events that are not supported by the story.
 
 3. Preserve dialogue.
 
-Keep important dialogue from the original story as closely as possible.
+Preserve ALL original spoken dialogue word-for-word, with the original speaker and order. Do not shorten, paraphrase, omit, duplicate, or invent spoken lines. Pause tags may be inserted without changing the spoken words.
 
-Do not unnecessarily rewrite dialogue.
+Do not turn descriptive narrative or the Episode Recap into additional dialogue. The Episode Recap is metadata, not an additional scene or a repeat of the story's events.
 
 4. Make every beat visually actionable.
 
@@ -382,6 +382,19 @@ Each beat should contain enough detail for a storyboard or video-generation syst
 12. Do not add explanations outside the beat script.
 
 Return ONLY the completed beat script.
+
+---
+
+## NATURAL PACING & MODEST RUNTIME FLEXIBILITY
+
+- Adapt the existing story compactly without expanding its scope. If an episode duration is explicitly supplied in the source, use it as a target with modest flexibility, not a reason to alter dialogue. Do not invent a fixed episode duration when none is supplied.
+- Preserve every original dialogue word and all essential story events. Natural, complete delivery takes priority over forcing an exact episode runtime; a small runtime overrun is acceptable. Do not return a runtime warning or interrupt generation solely because of that overrun.
+- Never increase WPM to fit a duration, rush speech, cut off words or final syllables, remove necessary pauses, or shorten dialogue. Choose WPM for the emotional context, not to squeeze content into a clip.
+- Do not add extra conversations, redundant establishing moments, repeated reactions, unnecessary camera movements, or prolonged silent holds that are not needed to communicate the original story.
+- Keep meaningful physical changes as distinct beats, but do not create additional standalone beats for incidental gestures or reactions that naturally accompany an existing action or dialogue.
+- Let compatible movement, expressions, and camera framing happen during speech or its pauses. Describe that overlap in MOTION. Do not overlap speakers or force unrelated sequential actions to happen simultaneously.
+- Review the full adaptation before returning: all original dialogue is intact, the ending is complete, and unnecessary expansion has been removed. Keep this review internal and return only the beat script.
+- Episode-level runtime flexibility does not increase downstream per-video duration limits. Do not instruct downstream generation to squeeze overlong content into a single clip.
 
 ---
 

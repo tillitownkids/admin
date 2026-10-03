@@ -229,42 +229,72 @@ export async function linkStoryCharactersAndLocationsAction(
   }
 }
 
-export async function getStoryCharactersAndLocationsAction(storyId: string) {
+export async function getStoryCharactersAndLocationsAction(storyOrScriptId: string) {
   try {
-    if (!storyId) {
+    if (!storyOrScriptId) {
       return { success: true, characters: [], locations: [] };
     }
 
-    // Some callers (e.g. the storyboard page) pass a Script id; cast and locations belong to its Story.
-    try {
-      const { data: scriptRow } = await supabase
-        .from('Script')
-        .select('story_id')
-        .eq('id', storyId)
-        .maybeSingle();
-      if (scriptRow?.story_id) storyId = scriptRow.story_id;
-    } catch (e) {}
+    let resolvedStoryId = storyOrScriptId;
 
-    // --- Fetch Characters via StoryCharacter joined with Character ---
+    // Callers normally provide a Story ID. The storyboard generator selects a
+    // Script, though, and older Script rows may not expose story_id client-side.
+    // Resolve that relation here so both call patterns load the same context.
+    try {
+      const { data: script } = await supabase
+        .from('Script')
+        .select('story_id, topic')
+        .eq('id', storyOrScriptId)
+        .maybeSingle();
+
+      if (script?.story_id) {
+        resolvedStoryId = script.story_id;
+      } else if (script?.topic) {
+        const { data: matchedStory } = await supabase
+          .from('Story')
+          .select('id')
+          .eq('topic', script.topic)
+          .order('generated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (matchedStory?.id) resolvedStoryId = matchedStory.id;
+      }
+    } catch (error) {
+      console.warn('Supabase script-to-story lookup failed, trying Prisma:', error);
+      try {
+        const script = await prisma.script.findUnique({ where: { id: storyOrScriptId } });
+        if (script?.story_id) {
+          resolvedStoryId = script.story_id;
+        } else if (script?.topic) {
+          const matchedStory = await prisma.story.findFirst({
+            where: { topic: script.topic },
+            orderBy: { generated_at: 'desc' },
+          });
+          if (matchedStory?.id) resolvedStoryId = matchedStory.id;
+        }
+      } catch (prismaError) {
+        console.warn('Prisma script-to-story lookup failed:', prismaError);
+      }
+    }
+
     let characters: any[] = [];
     try {
       const { data: scData, error: scErr } = await supabase
         .from('StoryCharacter')
         .select('*, Character(*)')
-        .eq('story_id', storyId);
+        .eq('story_id', resolvedStoryId);
 
       if (!scErr && scData) {
         characters = scData.map((sc: any) => sc.Character).filter(Boolean);
       }
     } catch (e) {}
 
-    // Fallback Supabase without join
     if (characters.length === 0) {
       try {
         const { data: scIds } = await supabase
           .from('StoryCharacter')
           .select('character_id')
-          .eq('story_id', storyId);
+          .eq('story_id', resolvedStoryId);
 
         if (scIds && scIds.length > 0) {
           const charIds = scIds.map((row: any) => row.character_id).filter(Boolean);
@@ -283,7 +313,7 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
     if (characters.length === 0) {
       try {
         const scPrisma = await prisma.storyCharacter.findMany({
-          where: { story_id: storyId },
+          where: { story_id: resolvedStoryId },
           include: { Character: true }
         });
         if (scPrisma && scPrisma.length > 0) {
@@ -298,7 +328,7 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
       const { data: elData, error: elErr } = await supabase
         .from('EpisodeLocation')
         .select('*, Location(*)')
-        .eq('story_id', storyId)
+        .eq('story_id', resolvedStoryId)
         .order('order_index', { ascending: true });
 
       if (!elErr && elData) {
@@ -322,7 +352,7 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
         const { data: elList } = await supabase
           .from('EpisodeLocation')
           .select('*')
-          .eq('story_id', storyId)
+          .eq('story_id', resolvedStoryId)
           .order('order_index', { ascending: true });
 
         if (elList && elList.length > 0) {
@@ -359,7 +389,7 @@ export async function getStoryCharactersAndLocationsAction(storyId: string) {
     if (locations.length === 0) {
       try {
         const elPrisma = await prisma.episodeLocation.findMany({
-          where: { story_id: storyId },
+          where: { story_id: resolvedStoryId },
           include: { Location: true },
           orderBy: { order_index: 'asc' }
         });

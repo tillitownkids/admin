@@ -45,7 +45,7 @@ export class AiService {
       return await this.callClaude(prompt, maxTokens);
     } catch (error) {
       console.error("AI Service Error:", error);
-      return { text: "" };
+      throw error;
     }
   }
 
@@ -63,18 +63,18 @@ export class AiService {
 
       const response = await this.bedrockClient.send(command);
       return response.output?.message?.content?.[0];
-    } catch (err: any) {
-      console.error(`Bedrock Error for modelId "${modelId}":`, err?.message || err);
+    } catch (err: unknown) {
+      console.error(`Bedrock Error for modelId "${modelId}":`, err instanceof Error ? err.message : err);
       return null;
     }
   }
 
   private async callClaude(prompt: string, maxTokens: number) {
-    const safeMaxTokens = Math.min(maxTokens || 4096, 8192);
-
-    const response = await this.anthropicClient.messages.create({
+    // Large output budgets require streaming in the Anthropic SDK. Collect
+    // the completed message here to preserve the existing { text } contract.
+    const stream = this.anthropicClient.messages.stream({
       model: "claude-sonnet-4-5-20250929",
-      max_tokens: safeMaxTokens,
+      max_tokens: maxTokens,
       messages: [
         {
           role: "user",
@@ -83,12 +83,23 @@ export class AiService {
       ],
     });
 
-    const textBlock = response.content.find(
-      (block) => block.type === "text" 
-    );
+    const response = await stream.finalMessage();
+
+    if (response.stop_reason === "max_tokens") {
+      throw new Error("AI generation reached its output limit before finishing. The incomplete response was not accepted. Try generating the content in smaller sections.");
+    }
+
+    const text = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("");
+
+    if (!text.trim()) {
+      throw new Error("Claude returned no text. Please retry generation.");
+    }
 
     return {
-      text: textBlock?.text ?? "",
+      text,
     };
   }
 }
