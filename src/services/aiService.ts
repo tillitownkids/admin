@@ -50,6 +50,7 @@ export class AiService {
   }
 
   private async callBedrock(prompt: string, modelId: string) {
+    let response;
     try {
       const command = new ConverseCommand({
         modelId,
@@ -61,12 +62,21 @@ export class AiService {
         ],
       });
 
-      const response = await this.bedrockClient.send(command);
-      return response.output?.message?.content?.[0];
+      response = await this.bedrockClient.send(command);
     } catch (err: unknown) {
       console.error(`Bedrock Error for modelId "${modelId}":`, err instanceof Error ? err.message : err);
       return null;
     }
+    // Incomplete output must not be accepted or silently retried on another model.
+    if (response.stopReason === 'max_tokens' || response.stopReason === 'model_context_window_exceeded') {
+      throw new Error('Kimi/Bedrock reached its token limit before finishing. The incomplete response was not accepted.');
+    }
+    if (response.stopReason !== 'end_turn' && response.stopReason !== 'stop_sequence') {
+      throw new Error(`Bedrock did not return a completed text response (${response.stopReason || 'unknown stop reason'}).`);
+    }
+    const text = (response.output?.message?.content || []).map(block => block.text || '').join('');
+    if (!text.trim()) throw new Error('Bedrock returned no text. Please retry generation.');
+    return { text };
   }
 
   private async callClaude(prompt: string, maxTokens: number) {
