@@ -5,6 +5,9 @@ import { prisma } from '@/lib/prisma';
 import { processAndUploadStoryboardImage, processAndUploadSceneVideo } from '@/lib/storage';
 import { parseShotPlan, serializeShotPlan } from '@/lib/sceneShots';
 
+// The generator's own link is temporary. A clip left on it disappears later and breaks stitching.
+const TEMPORARY_CLIP_WARNING = 'The clip was saved, but copying it to permanent storage failed, so it is on a temporary link that will stop working. Regenerate this clip to store it properly.';
+
 async function loadVideoPrompt(id: string): Promise<string | null> {
   const { data, error } = await supabase.from('Scene').select('video_prompt').eq('id', id).maybeSingle();
   if (!error && data) return data.video_prompt;
@@ -32,6 +35,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date() };
+    let warning: string | undefined;
     if (storyboard_prompt !== undefined) updatePayload.storyboard_prompt = storyboard_prompt;
     if (script_beats !== undefined) updatePayload.script_beats = script_beats;
     if (beat_numbers !== undefined) updatePayload.beat_numbers = beat_numbers;
@@ -61,6 +65,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           permanentVideoUrl = await processAndUploadSceneVideo(video_url, video_magnific_identifier, id);
         } catch (err) {
           console.warn('Failed to upload scene video to permanent storage, using original URL:', err);
+          warning = TEMPORARY_CLIP_WARNING;
         }
       }
       updatePayload.video_url = permanentVideoUrl;
@@ -89,6 +94,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         permanentClipUrl = await processAndUploadSceneVideo(clipUrl, `shot${shot.shot}_${clipIdentifier || Date.now()}`, id);
       } catch (err) {
         console.warn('Failed to upload shot clip to permanent storage, using original URL:', err);
+        warning = TEMPORARY_CLIP_WARNING;
       }
       shot.videoUrl = permanentClipUrl;
       shot.magnificId = clipIdentifier;
@@ -135,7 +141,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       throw new Error(`Failed to update scene ${id}`);
     }
 
-    return NextResponse.json({ scene });
+    return NextResponse.json({ scene, warning });
   } catch (error: any) {
     console.error("Error updating scene:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

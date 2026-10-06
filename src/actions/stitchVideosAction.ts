@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { deleteFullEpisodeVideoFromStorage } from "@/lib/storage";
+import { DEFAULT_STITCHER_TIMEOUT_MS, describeStitcherError, parseStitcherResponse } from "@/lib/stitcher";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -12,6 +13,8 @@ export interface StitchVideosInput {
   title: string;
   videoUrls: string[];
   sceneIds: string[];
+  /** One label per clip, in the same order as videoUrls, used to name a clip in an error. */
+  clipLabels?: string[];
 }
 
 export async function getAllEpisodeVideosAction() {
@@ -83,36 +86,52 @@ export async function deleteEpisodeVideoAction(videoId: string) {
   }
 }
 
+// The stitcher downloads every clip by its link, so one dead link fails the whole episode.
+// Checking first lets the error name the clip instead.
+async function unreachableClips(videoUrls: string[], clipLabels?: string[]): Promise<string[]> {
+  const results = await Promise.all(videoUrls.map(async (url, index) => {
+    const label = clipLabels?.[index] || `Clip ${index + 1}`;
+    try {
+      const res = await fetch(url, {
+        headers: { Range: "bytes=0-0" },
+        signal: AbortSignal.timeout(20_000),
+        cache: "no-store",
+      });
+      await res.body?.cancel();
+      return res.ok ? null : `${label} (HTTP ${res.status})`;
+    } catch (err: unknown) {
+      return `${label} (${getErrorMessage(err, "unreachable")})`;
+    }
+  }));
+  return results.filter((result): result is string => result !== null);
+}
+
 export async function stitchEpisodeVideosAction(input: StitchVideosInput) {
-  const { storyId, title, videoUrls, sceneIds } = input;
+  const { storyId, title, videoUrls, sceneIds, clipLabels } = input;
 
   if (!storyId || !videoUrls || videoUrls.length === 0) {
     return { success: false, error: "No video URLs provided for stitching." };
   }
 
   const stitcherServiceUrl = process.env.STITCHER_SERVICE_URL || "http://localhost:3001/stitch";
-  // Increased timeout limit to 5 minutes (300,000 ms) to accommodate slow renders or Render cold starts
-  const timeoutMs = parseInt(process.env.STITCHER_TIMEOUT_MS || "300000", 10);
+  const timeoutMs = parseInt(process.env.STITCHER_TIMEOUT_MS || String(DEFAULT_STITCHER_TIMEOUT_MS), 10);
 
   try {
+    const unreachable = await unreachableClips(videoUrls, clipLabels);
+    if (unreachable.length > 0) {
+      return {
+        success: false,
+        error: `Nothing was sent to the stitcher because ${unreachable.length === 1 ? "this clip" : "these clips"} could not be downloaded: ${unreachable.join("; ")}. Regenerate ${unreachable.length === 1 ? "it" : "them"} in Video Production.`,
+      };
+    }
+
     const res = await fetch(stitcherServiceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ storyId, title, videoUrls, sceneIds }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => "");
-      throw new Error(`Stitcher service failed (${res.status}): ${errorText || res.statusText}`);
-    }
-
-    const data: { videoUrl?: string; url?: string; error?: string } = await res.json();
-    const finalVideoUrl = data.videoUrl || data.url;
-
-    if (!finalVideoUrl) {
-      throw new Error(data.error || "Stitcher service completed but failed to return a valid video URL.");
-    }
+    const finalVideoUrl = parseStitcherResponse(res.status, await res.text());
 
     const videoRecord = await prisma.video.create({
       data: {
@@ -129,7 +148,7 @@ export async function stitchEpisodeVideosAction(input: StitchVideosInput) {
     console.error("Failed to stitch episode videos via microservice:", err);
     return {
       success: false,
-      error: getErrorMessage(err, "Video stitching failed via microservice."),
+      error: describeStitcherError(err, stitcherServiceUrl, timeoutMs),
     };
   }
 }

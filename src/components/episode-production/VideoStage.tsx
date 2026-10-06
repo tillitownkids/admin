@@ -300,8 +300,10 @@ export function VideoStage({
         },
       }),
     });
-    const updatedPlan = parseShotPlan((await saved.json())?.scene?.video_prompt);
+    const result = await saved.json();
+    const updatedPlan = parseShotPlan(result?.scene?.video_prompt);
     if (updatedPlan) rememberPlan(scene.id, updatedPlan);
+    if (result?.warning) throw new Error(`Shot ${shotNumber}: ${result.warning}`);
   };
 
   // Runs one piece of work for a scene, showing its progress and reporting its error on the scene.
