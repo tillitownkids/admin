@@ -29,6 +29,8 @@ async function uploadToStorageWithRetry(
   path: string,
   body: Buffer,
   contentType: string,
+  // For paths that are meant to be replaced when saved again.
+  overwrite = false,
 ): Promise<void> {
   let lastError: unknown;
 
@@ -37,7 +39,7 @@ async function uploadToStorageWithRetry(
       contentType,
       // A reset can happen after Storage accepted the first upload but before
       // the response arrived. Upsert makes the retry idempotent for this path.
-      upsert: attempt > 1,
+      upsert: overwrite || attempt > 1,
     });
 
     if (!error) return;
@@ -223,15 +225,10 @@ export async function processAndUploadSceneVideo(
   const prefix = sceneId ? `${sceneId.replace(/[^a-zA-Z0-9_-]/g, '_')}_` : '';
   const fileName = `${prefix}${cleanIdentifier}.${ext}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from(SCENE_VIDEOS_BUCKET)
-    .upload(fileName, fileBuffer, {
-      contentType,
-      upsert: true,
-    });
-
-  if (uploadError) {
-    console.error('Error uploading scene video clip to Supabase storage:', uploadError);
+  try {
+    await uploadToStorageWithRetry(SCENE_VIDEOS_BUCKET, fileName, fileBuffer, contentType, true);
+  } catch (uploadError) {
+    console.error('Error uploading scene video clip to Supabase storage after retries:', uploadError);
     throw uploadError;
   }
 

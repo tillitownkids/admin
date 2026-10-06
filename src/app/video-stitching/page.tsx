@@ -158,7 +158,8 @@ export default function VideoStitchingPage() {
         storyId: selectedStoryId,
         title: titleToUse,
         videoUrls,
-        sceneIds
+        sceneIds,
+        clipLabels: scenes.map(s => `scene ${s.scene_number}${s.shot !== null ? ` shot ${s.shot}` : ""}`)
       });
 
       if (res.success && res.video) {
@@ -168,7 +169,8 @@ export default function VideoStitchingPage() {
         setError(res.error || "Failed to stitch videos.");
       }
     } catch (err: any) {
-      setError(err?.message || "An unexpected error occurred during video stitching.");
+      // The action returns its own errors; reaching here means the request itself was cut off.
+      setError(`The stitching request was cut off before the server answered (${err?.message || "no details"}). No video was saved. Try again.`);
     } finally {
       setIsStitching(false);
     }
