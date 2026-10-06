@@ -8,7 +8,7 @@ const exported = {};
 new Function('exports', compiled)(exported);
 const { parseStoryboardJson, validateScenePlan, validateSceneOutput, mapWithConcurrency } = exported;
 
-const scene = (number, beats) => ({ scene_number: number, title: 'Scene', location_name: 'Square', character_names: ['Tilli'], beat_numbers: beats, estimated_duration_seconds: 7 });
+const scene = (number, beats) => ({ scene_number: number, title: 'Scene', location_name: 'Square', character_names: ['Tilli'], beat_numbers: beats });
 const valid = { total_beats: 3, scenes: [scene(1, [1, 2]), scene(2, [3])] };
 assert.equal(validateScenePlan(valid).length, 2);
 for (const invalid of [
@@ -16,10 +16,10 @@ for (const invalid of [
   { ...valid, scenes: [scene(1, [1]), scene(2, [3])] },
   { ...valid, scenes: [scene(1, [1, 2]), scene(2, [2])] },
   { ...valid, scenes: [scene(1, [2, 1]), scene(2, [3])] },
-  { total_beats: 7, scenes: [scene(1, [1, 2, 3, 4, 5, 6, 7])] },
-  { total_beats: 2, scenes: [{ ...scene(1, [1, 2]), estimated_duration_seconds: 9 }] },
+  // A scene is one 2x2 storyboard grid, so it holds at most 4 beats.
+  { total_beats: 5, scenes: [scene(1, [1, 2, 3, 4, 5])] },
 ]) assert.throws(() => validateScenePlan(invalid));
-assert.doesNotThrow(() => validateScenePlan({ total_beats: 1, scenes: [{ ...scene(1, [1]), estimated_duration_seconds: 10 }] }));
+assert.doesNotThrow(() => validateScenePlan({ total_beats: 4, scenes: [scene(1, [1, 2, 3, 4])] }));
 assert.deepEqual(parseStoryboardJson('```json\n{"scenes":[]}\n```'), { scenes: [] });
 assert.throws(() => parseStoryboardJson('{"scenes":['));
 const output = { beat_numbers: [1], scene_script_beats: 'BEAT 1\nHello.', storyboard_prompt: 'Render scene.' };

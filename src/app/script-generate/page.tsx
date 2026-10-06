@@ -224,13 +224,13 @@ For every beat, use exactly this structure:
 
 **[EMOTION]** State the primary emotional tone (e.g. Excited, Normal, Emotional, Fearful, Curious).
 
-**[WPM]** Target speech rate in Words Per Minute (e.g. 185 WPM for Excited, 145 WPM for Normal, 105 WPM for Emotional).
+**[WPM]** Target speech rate in Words Per Minute (e.g. 132 WPM for Excited, 126 WPM for Normal, 105 WPM for Emotional).
 
 **[ACTION]** What happens in this beat.
 
 **[DIALOGUE]** Spoken dialogue, if any. Format as CharacterName: "Spoken line". When multiple dialogue lines or sentences occur, use explicit pause tags between lines (e.g. Character: "Line one" <-Break 1.5 seconds-> "Line two"). If there is no dialogue, omit this tag.
 
-**[CAMERA]** Describe the camera shot, framing, movement, and angle.
+**[CAMERA]** One shot: shot size, angle, and one camera move with a speed word (e.g. Medium shot, eye level, slow push-in.).
 
 **[MOTION]** Describe the important physical movements or visual changes that occur during the beat.
 
@@ -257,15 +257,17 @@ INT — OLD HOUSE — EVENING — Warm lantern light fills the room.
 
 ## EMOTION & WPM PACING GUIDELINES
 
+All speech is unhurried: about 2 to 2.2 words per second. WPM never goes above 132. Excitement comes from performance, expression, and cutting to a new shot, never from faster speech.
+
 Choose the **EMOTION** and **WPM** for each beat based on the narrative context:
 
-1. **Excited / Energetic / Panicked** (Target WPM: 170 – 210 WPM, Default: 185 WPM)
+1. **Excited / Energetic / Panicked** (Target WPM: 126 – 132 WPM, Default: 132 WPM)
    - Use for high-energy moments, big discoveries, joyful celebration, shouting, or frantic activity.
 
-2. **Normal / Neutral / Conversational** (Target WPM: 130 – 160 WPM, Default: 145 WPM)
+2. **Normal / Neutral / Conversational** (Target WPM: 120 – 130 WPM, Default: 126 WPM)
    - Use for standard dialogue, casual banter, explanations, or steady narration.
 
-3. **Emotional / Slow / Dramatic** (Target WPM: 90 – 120 WPM, Default: 105 WPM)
+3. **Emotional / Slow / Dramatic** (Target WPM: 95 – 120 WPM, Default: 105 WPM)
    - Use for sad, gentle, intimate, or serious moments, dramatic revelations, bedtime/calm scenes, or long pauses.
 
 ---
@@ -278,6 +280,7 @@ To improve audio quality and TTS delivery:
   - Jaksh: "Threshold number seven complete," <-Break 1.5 seconds-> "Jaksh? Where are you hiding?"
   - Jaksh: "Faster, faster!" <-Break 1 second-> Mom: "Hold on tight!" <-Break 1.5 seconds->
 - Choose appropriate break durations (e.g. <-Break 0.5 seconds-> for short pauses, <-Break 1.5 seconds-> for speaker turns, <-Break 2.5 seconds-> for dramatic beats).
+- Every break counts toward its beat's 8-second clip (see BEAT RULES 1). If the words plus the breaks do not fit, move the next sentence or the next speaker's reply into the following beat instead of shortening the break.
 
 ---
 
@@ -296,6 +299,12 @@ Better:
 - Beat 1: Jaksh runs to the window.
 - Beat 2: Jaksh looks through the window and sees the desert.
 - Beat 3: Jaksh calls Tilli.
+
+Each beat becomes ONE camera shot and ONE short video clip of 4 to 8 seconds.
+
+Aim for at most about 14 spoken words in a beat, or about 10 when the beat contains a <-Break-> tag, so its speech fits an 8-second clip at an unhurried pace.
+
+When a line or an exchange is longer, continue it in the next beat: split at a sentence or clause boundary, and give each beat its own framing. Every spoken word must still appear exactly once and in order; continuing a line in the next beat is the only way to shorten a beat. Never drop, shorten, or reword a line to meet this target. An over-long beat is acceptable; a missing word is not.
 
 2. Preserve the original story.
 
@@ -319,24 +328,21 @@ Avoid abstract descriptions unless they can be represented visually.
 
 Do not put camera directions, sound effects, or animation instructions inside ACTION.
 
-6. CAMERA describes HOW the scene is filmed.
+6. CAMERA describes HOW the beat is filmed, as exactly one shot.
 
-Include useful information such as:
-- wide shot
-- close-up
-- medium shot
-- over-the-shoulder
-- tracking shot
-- crane shot
-- pan
-- tilt
-- push-in
-- pull-back
-- orbit
-- low angle
-- high angle
+Write it as: shot size, angle, one camera move with a speed word. Example: "Medium shot, eye level, slow push-in."
 
-Do not use unnecessary camera movements. Choose the camera direction that best communicates the beat.
+Use only this vocabulary:
+- Shot size: wide shot, medium wide shot, medium shot, medium close-up, close-up, extreme close-up
+- Angle: eye level, low angle, high angle, over-the-shoulder, POV, child-eye height
+- Camera move: static (locked-off), push-in, pull-back, pan left, pan right, tilt up, tilt down, tracking shot, orbit, crane up, crane down
+- Speed: slow, smooth, gentle, gradual. Never "fast", "quick", or "whip".
+
+One primary camera move per beat; two combined moves is the maximum. Never cut inside a beat: no "then cutting to" and no second framing. If the moment needs a second framing, it is a second beat.
+
+Change the shot size or the camera move from one beat to the next (for example wide shot, then medium shot, then close-up as the emotion rises). Two beats in a row with the same shot size and the same move make the episode feel flat.
+
+Never use loose phrases such as "camera looks at" or "camera captures". Camera movement belongs only in CAMERA; subject movement belongs only in MOTION.
 
 7. MOTION describes PHYSICAL MOVEMENT.
 

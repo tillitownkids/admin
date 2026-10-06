@@ -3,6 +3,14 @@ import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
 
 import { processAndUploadStoryboardImage, processAndUploadSceneVideo } from '@/lib/storage';
+import { parseShotPlan, serializeShotPlan } from '@/lib/sceneShots';
+
+async function loadVideoPrompt(id: string): Promise<string | null> {
+  const { data, error } = await supabase.from('Scene').select('video_prompt').eq('id', id).maybeSingle();
+  if (!error && data) return data.video_prompt;
+  const scene = await prisma.scene.findUnique({ where: { id }, select: { video_prompt: true } });
+  return scene?.video_prompt ?? null;
+}
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -20,6 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       video_magnific_identifier,
       script_beats,
       beat_numbers,
+      shot_clip,
     } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date() };
@@ -57,7 +66,36 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       updatePayload.video_url = permanentVideoUrl;
     }
 
-    if (video_magnific_identifier !== undefined) updatePayload.video_magnific_identifier = video_magnific_identifier;
+    // In a shot clip update the identifier belongs to the shot, not to the scene's unique column.
+    if (video_magnific_identifier !== undefined && shot_clip === undefined) updatePayload.video_magnific_identifier = video_magnific_identifier;
+
+    // One generated shot clip. It is merged into the scene's shot plan here, on the
+    // server, so each save starts from the stored plan rather than a client copy.
+    if (shot_clip !== undefined) {
+      const clipUrl = shot_clip?.video_url;
+      if (typeof clipUrl !== 'string' || !clipUrl.startsWith('http')) {
+        return NextResponse.json({ error: 'shot_clip.video_url must be a video URL.' }, { status: 400 });
+      }
+      const plan = parseShotPlan(await loadVideoPrompt(id));
+      const shot = plan?.shots.find((item) => item.shot === Number(shot_clip.shot));
+      if (!plan || !shot) {
+        return NextResponse.json({ error: `Scene has no planned shot ${shot_clip?.shot}.` }, { status: 400 });
+      }
+
+      const clipIdentifier = shot_clip.video_magnific_identifier || null;
+      let permanentClipUrl = clipUrl;
+      try {
+        // A new file name per generation, so a regenerated clip never reuses a cached URL.
+        permanentClipUrl = await processAndUploadSceneVideo(clipUrl, `shot${shot.shot}_${clipIdentifier || Date.now()}`, id);
+      } catch (err) {
+        console.warn('Failed to upload shot clip to permanent storage, using original URL:', err);
+      }
+      shot.videoUrl = permanentClipUrl;
+      shot.magnificId = clipIdentifier;
+      updatePayload.video_prompt = serializeShotPlan(plan);
+      // video_url keeps meaning "this scene has video" for readers that predate shots.
+      updatePayload.video_url = plan.shots.find((item) => item.videoUrl)?.videoUrl ?? null;
+    }
 
 
 

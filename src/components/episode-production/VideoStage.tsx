@@ -1,15 +1,27 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
+import { AlertTriangle, BookOpen, Check, ChevronDown, Film, FileText, ListVideo, Loader2, MapPin, RefreshCw, Square, User, Video } from 'lucide-react';
 
-import { Video, FileText, Loader2, Check, RefreshCw, ExternalLink, Code, Film, User, MapPin, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
-
-
-import { labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
-import { callAi } from '@/actions/actions';
+import { planSceneShotsAction } from '@/actions/planSceneShotsAction';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  SHOT_CAP_SECONDS,
+  SHOT_DURATIONS,
+  parseShotPlan,
+  sceneBeats,
+  serializeShotPlan,
+  type SceneShot,
+  type SceneShotPlan,
+  type ShotSceneContext,
+} from '@/lib/sceneShots';
 import { assertVideoWebhookResponse, videoWebhookAccepted, unconfirmedVideoResponse } from '@/lib/videoWebhook';
 import type { EpisodeLocationRow, SceneRow } from './types';
-
 
 interface VideoStageProps {
   scenes: SceneRow[];
@@ -126,51 +138,64 @@ function extractVideoMagnificIdentifier(data: any): string | null {
   return null;
 }
 
-function buildVideoAiInstruction(scene: SceneRow, sceneIdx: number = 0): string {
-  const sceneNum = scene.scene_number || sceneIdx + 1;
-  const location = scene.locationName || 'LOCATION';
-  const sceneOverview = scene.description || '';
-  const beatsText = scene.script_beats || scene.description || '';
-  const storyboardPromptText = scene.storyboard_prompt || scene.description || '';
+function sceneCharacters(scene: SceneRow) {
+  return (scene.SceneCharacter || []).flatMap((link) => (link.Character ? [link.Character] : []));
+}
 
-  return `You are a cinematic director for a 3D animated children's film. Take the following script beats, location context, and storyboard details for Scene #${sceneNum}, and format a video generation prompt for video generation AI (like Luma, Runway, Sora, Kling).
+function shotContext(scene: SceneRow): ShotSceneContext {
+  return {
+    locationName: scene.locationName || '',
+    characterNames: sceneCharacters(scene).map((character) => character.name),
+    scriptBeats: scene.script_beats || '',
+    beatNumbers: Array.isArray(scene.beat_numbers) ? scene.beat_numbers : undefined,
+    description: scene.description || '',
+  };
+}
 
-Target Scene Data:
-- Location Header: ${location}
-- Scene Overview: ${sceneOverview}
+// One request per shot. `shot` and `duration` are additions to the scene payload the webhook already accepts.
+function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: EpisodeLocationRow[]) {
+  if (!scene.magnific_identifier) {
+    throw new Error(`Scene #${scene.scene_number} storyboard is missing its Magnific identifier.`);
+  }
 
-Script Beats (Contains exact dialogues, actions, camera, motion, WPM/emotion, and SFX):
-"""
-${beatsText}
-"""
+  // SceneCharacter is the authoritative character list for this scene.
+  const charRefs: Record<string, string> = {};
+  const missingCharacters: string[] = [];
+  for (const character of sceneCharacters(scene)) {
+    if (character.magnific_identifier) charRefs[character.name] = character.magnific_identifier;
+    else missingCharacters.push(character.name);
+  }
+  if (missingCharacters.length > 0) {
+    throw new Error(`Scene #${scene.scene_number} is missing Magnific identifiers for: ${missingCharacters.join(', ')}.`);
+  }
 
-Storyboard Image Prompt / Art Direction:
-"""
-${storyboardPromptText}
-"""
+  const matchedEpLoc = episodeLocations.find(
+    (el) => el.id === scene.episode_location_id || el.Location.name.toLowerCase() === scene.locationName.toLowerCase()
+  );
+  if (!matchedEpLoc) {
+    throw new Error(`Scene #${scene.scene_number} location "${scene.locationName || 'Unknown'}" is not linked to an episode location reference.`);
+  }
+  if (!matchedEpLoc.Location.magnific_identifier) {
+    throw new Error(`Scene #${scene.scene_number} location "${matchedEpLoc.Location.name}" is missing a Magnific identifier.`);
+  }
 
-You MUST format the output video prompt EXACTLY according to the following template structure:
+  return {
+    scenes: [{
+      id: scene.id,
+      shot: shot.shot,
+      duration: shot.seconds,
+      videoPrompt: shot.prompt,
+      magnific_identifier: scene.magnific_identifier,
+      references: {
+        characters: charRefs,
+        locations: { [matchedEpLoc.Location.name]: matchedEpLoc.Location.magnific_identifier },
+      },
+    }],
+  };
+}
 
-## SCRIPT
-
-${location} — ${sceneOverview}
-
-[Include all BEATs from the Script Beats as-is, preserving **BEAT N — Title**, [ACTION], [DIALOGUE], [CAMERA], [MOTION], [SFX], [EMOTION], and [WPM]]
-
-(Use attached storyboard panels and reference images as visual reference)
-
-Generate a single continuous 3D animated video, Pixar/DreamWorks style, full color, maximum 15 seconds total duration, landscape 16:9. Follow the [ACTION], [CAMERA], and [MOTION] instructions from the attached script exactly, in order, for all Beats. Use the attached storyboard panel to match framing, character design, and environment at each beat.
-
-Steady, natural real-time pacing — do NOT speed up, rush, or compress the action to fit the duration. Scenes are grouped to target no more than 8 seconds of content, leaving room for natural pauses, reactions, and movement within the 15-second video ceiling. The total video duration MUST be a maximum of 15 seconds (0:00 to 0:15.0 max). Allocate beat timestamps sequentially using their natural duration, spoken-word count at the specified WPM, and all explicit dialogue breaks. Do not increase WPM, shorten pauses, or compress actions to fit. Use this timing as the pacing guide:
-
-[Generate explicit timestamp ranges for each Beat at natural pacing within a maximum of 15.0 seconds total, e.g.:
-[0:00–0:02.5] Beat 1 — Title
-[0:02.5–0:05.0] Beat 2 — Title
-...up to maximum 0:15.0 total]
-
-Consistent character design, location design, and lighting throughout, per the attached reference sheets. No morphing, warping, or distorted geometry. No extra characters.
-
-Return ONLY the formatted video prompt text matching the exact template above, without any markdown code blocks, preamble, or extra commentary.`;
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : 'Operation failed.';
 }
 
 export function VideoStage({
@@ -179,681 +204,539 @@ export function VideoStage({
   onRefetchScenes,
   onConfirmed,
 }: VideoStageProps) {
-  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  // Plans saved in this session. The ref is what long-running generation reads; the state is what renders.
+  const plansRef = useRef<Record<string, SceneShotPlan>>({});
+  const [savedPlans, setSavedPlans] = useState<Record<string, SceneShotPlan>>({});
+  const [activity, setActivity] = useState<Record<string, string>>({});
+  const [sceneErrors, setSceneErrors] = useState<Record<string, string>>({});
+  const [isRunningAll, setIsRunningAll] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [globalMessage, setGlobalMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [lastPayload, setLastPayload] = useState<any | null>(null);
-  const [showPayloadDebug, setShowPayloadDebug] = useState(false);
-  const [videoPrompts, setVideoPrompts] = useState<Record<string, string>>({});
-  const [generatedVideoUrls, setGeneratedVideoUrls] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const stopRequested = useRef(false);
 
-
-  // Filter only scenes with generated storyboard images
-  const generatedScenes = scenes
-    .filter((s) => Boolean(s.storyboard_image_url))
+  const storyboardScenes = scenes
+    .filter((scene) => Boolean(scene.storyboard_image_url))
     .sort((a, b) => a.scene_number - b.scene_number || a.order_index - b.order_index);
 
-  // Un-generated video scenes (checks DB fields and local state)
-  const pendingScenes = generatedScenes.filter((s) => {
-    const hasPrompt = Boolean(s.video_prompt || videoPrompts[s.id]);
-    const hasVideo = Boolean(s.video_url || generatedVideoUrls[s.id]);
-    return !hasPrompt || !hasVideo;
-  });
+  const rememberPlan = (sceneId: string, plan: SceneShotPlan) => {
+    plansRef.current = { ...plansRef.current, [sceneId]: plan };
+    setSavedPlans(plansRef.current);
+  };
+  const currentPlan = (scene: SceneRow) => plansRef.current[scene.id] ?? parseShotPlan(scene.video_prompt);
+  const setSceneActivity = (sceneId: string, text: string | null) =>
+    setActivity((prev) => {
+      const next = { ...prev };
+      if (text) next[sceneId] = text;
+      else delete next[sceneId];
+      return next;
+    });
+  const setSceneError = (sceneId: string, text: string | null) =>
+    setSceneErrors((prev) => {
+      const next = { ...prev };
+      if (text) next[sceneId] = text;
+      else delete next[sceneId];
+      return next;
+    });
 
-
-  // Helper to build video prompt for a scene via AI
-  const generateVideoPromptForScene = async (scene: SceneRow, sceneIdx: number = 0): Promise<string> => {
-    const videoAiInstruction = buildVideoAiInstruction(scene, sceneIdx);
-    const response = await callAi(videoAiInstruction);
-    const resultText = typeof response === 'string' ? response : (response as any)?.text || '';
-    return resultText.trim();
+  const savePlan = async (scene: SceneRow, plan: SceneShotPlan) => {
+    await saveSceneUpdate(`/api/scenes/${scene.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_prompt: serializeShotPlan(plan) }),
+    });
+    rememberPlan(scene.id, plan);
   };
 
-  // Helper to build payload item for a scene
-  const buildVideoPayloadItem = (scene: SceneRow, vPrompt: string) => {
-    if (!scene.magnific_identifier) {
-      throw new Error(`Scene #${scene.scene_number} storyboard is missing its Magnific identifier.`);
-    }
-
-    // SceneCharacter is the authoritative character list for this scene.
-    const activeChars = (scene.SceneCharacter || []).flatMap((link) =>
-      link.Character ? [link.Character] : []
-    );
-
-    const charRefs: Record<string, string> = {};
-    const missingCharacters: string[] = [];
-    for (const c of activeChars) {
-      if (c.magnific_identifier) {
-        charRefs[c.name] = c.magnific_identifier;
-      } else {
-        missingCharacters.push(c.name);
-      }
-    }
-
-    if (missingCharacters.length > 0) {
-      throw new Error(`Scene #${scene.scene_number} is missing Magnific identifiers for: ${missingCharacters.join(', ')}.`);
-    }
-
-    // Active location for this scene
-    const locRefs: Record<string, string> = {};
-    const matchedEpLoc = episodeLocations.find(
-      (el) => el.id === scene.episode_location_id || el.Location.name.toLowerCase() === scene.locationName.toLowerCase()
-    );
-
-    if (!matchedEpLoc) {
-      throw new Error(`Scene #${scene.scene_number} location "${scene.locationName || 'Unknown'}" is not linked to an episode location reference.`);
-    }
-
-    if (!matchedEpLoc.Location.magnific_identifier) {
-      throw new Error(`Scene #${scene.scene_number} location "${matchedEpLoc.Location.name}" is missing a Magnific identifier.`);
-    }
-
-    locRefs[matchedEpLoc.Location.name] = matchedEpLoc.Location.magnific_identifier;
-
-    return {
-      id: scene.id,
-      videoPrompt: vPrompt,
-      magnific_identifier: scene.magnific_identifier,
-      references: {
-        characters: charRefs,
-        locations: locRefs,
-      },
-    };
-  };
-
-  // Group Generation ("Generate All Video Prompts")
-  const handleGenerateAllVideos = async () => {
-    const targetScenes = pendingScenes.length > 0 ? pendingScenes : generatedScenes;
-    if (targetScenes.length === 0) return;
-
-    setIsGeneratingAll(true);
-    setGlobalMessage(null);
-
+  // Writes the shot list for each scene. Returns the plans that were saved.
+  const planScenes = async (targets: SceneRow[]): Promise<Record<string, SceneShotPlan>> => {
+    const planned: Record<string, SceneShotPlan> = {};
+    targets.forEach((scene) => {
+      setSceneError(scene.id, null);
+      setSceneActivity(scene.id, 'Planning shots…');
+    });
     try {
-      const payloadItems = [];
-      const newPrompts: Record<string, string> = {};
-
-      for (const scene of targetScenes) {
-        let vPrompt = videoPrompts[scene.id];
-        if (!vPrompt) {
-          vPrompt = await generateVideoPromptForScene(scene);
-          newPrompts[scene.id] = vPrompt;
+      const results = await planSceneShotsAction(
+        targets.map((scene) => ({ ...shotContext(scene), previousPlan: currentPlan(scene) }))
+      );
+      for (const [index, result] of results.entries()) {
+        const scene = targets[index];
+        try {
+          if (!result.ok) throw new Error(result.error);
+          await savePlan(scene, result.plan);
+          planned[scene.id] = result.plan;
+        } catch (error) {
+          setSceneError(scene.id, `Shot planning failed: ${errorText(error)}`);
         }
-        payloadItems.push(buildVideoPayloadItem(scene, vPrompt));
       }
-
-      const allPromptsMap: Record<string, string> = { ...videoPrompts, ...newPrompts };
-      setVideoPrompts(allPromptsMap);
-      const fullPayload = { scenes: payloadItems };
-      setLastPayload(fullPayload);
-
-      // 1. Immediately save generated video prompts to DB
-      if (Object.keys(newPrompts).length > 0) {
-        await Promise.all(
-          Object.entries(newPrompts).map(([scId, pText]) =>
-            saveSceneUpdate(`/api/scenes/${scId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ video_prompt: pText }),
-            })
-          )
-        );
-      }
-
-      // 2. Dispatch webhook
-      try {
-        const res = await sendVideoWebhook(fullPayload);
-
-        if (res) {
-          const responseBody = await res.text();
-          const data: any = assertVideoWebhookResponse(res.status, responseBody);
-
-
-          const newVideoUrls: Record<string, { url: string; magnificId?: string | null }> = {};
-          let rawScenes: any[] = [];
-
-          if (Array.isArray(data)) {
-            data.forEach((item: any) => {
-              const d = item.body || item.json || item;
-              const subScenes = Array.isArray(d.result?.scenes)
-                ? d.result.scenes
-                : Array.isArray(d.scenes)
-                ? d.scenes
-                : [item];
-              rawScenes.push(...subScenes);
-            });
-          } else if (data && typeof data === 'object') {
-            const d = data.body || data.json || data;
-            rawScenes = Array.isArray(d.result?.scenes)
-              ? d.result.scenes
-              : Array.isArray(d.scenes)
-              ? d.scenes
-              : [data];
-          }
-
-          rawScenes.forEach((item: any, idx: number) => {
-            const url = extractVideoUrl(item);
-            const magId = extractVideoMagnificIdentifier(item);
-            if (url) {
-              const itemId = item.id || item.sceneId || item.scene_id;
-              const targetScene = targetScenes.find((s) => s.id === itemId) || targetScenes[idx];
-              if (targetScene) {
-                newVideoUrls[targetScene.id] = { url, magnificId: magId };
-              }
-            }
-          });
-
-          if (Object.keys(newVideoUrls).length > 0) {
-            const urlMap: Record<string, string> = {};
-            Object.entries(newVideoUrls).forEach(([scId, info]) => {
-              urlMap[scId] = info.url;
-            });
-            setGeneratedVideoUrls((prev) => ({ ...prev, ...urlMap }));
-            await Promise.all(
-              Object.entries(newVideoUrls).map(([scId, info]) =>
-                saveSceneUpdate(`/api/scenes/${scId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    video_prompt: allPromptsMap[scId] || undefined,
-                    video_url: info.url,
-                    video_magnific_identifier: info.magnificId || undefined,
-                  }),
-                })
-              )
-            );
-            await onRefetchScenes();
-            const completedCount = Object.keys(newVideoUrls).length;
-            if (completedCount < targetScenes.length && !videoWebhookAccepted(res.status, data)) {
-              throw new Error(`${completedCount} of ${targetScenes.length} videos returned. The remaining video submissions are unconfirmed.`);
-            }
-            setGlobalMessage({ type: 'success', text: completedCount === targetScenes.length
-              ? `${completedCount} videos returned and saved.`
-              : `${completedCount} videos saved; webhook accepted the request, but remaining videos are not ready yet.` });
-          } else {
-            await onRefetchScenes();
-            if (!videoWebhookAccepted(res.status, data)) throw unconfirmedVideoResponse(res.status, responseBody);
-            setGlobalMessage({ type: 'success', text: 'Webhook accepted the video request. No completed videos returned yet.' });
-          }
-        } else {
-          await onRefetchScenes();
-          throw new Error('No response from the video webhook. Generation is unconfirmed.');
-        }
-      } catch (webhookErr) {
-        console.warn('Group webhook dispatch error:', webhookErr);
-        throw webhookErr;
-      }
-
-
-
-    } catch (err: any) {
-      console.error('Error generating all video prompts:', err);
-      setGlobalMessage({ type: 'error', text: err.message || 'Failed to generate video prompts.' });
+    } catch (error) {
+      targets.forEach((scene) => setSceneError(scene.id, `Shot planning failed: ${errorText(error)}`));
     } finally {
-      setIsGeneratingAll(false);
+      targets.forEach((scene) => setSceneActivity(scene.id, null));
+    }
+    return planned;
+  };
+
+  const generateShot = async (scene: SceneRow, shotNumber: number) => {
+    const shot = currentPlan(scene)?.shots.find((item) => item.shot === shotNumber);
+    if (!shot) throw new Error(`Scene #${scene.scene_number} has no planned shot ${shotNumber}.`);
+
+    const res = await sendVideoWebhook(buildShotPayload(scene, shot, episodeLocations));
+    const responseBody = await res.text();
+    const data = assertVideoWebhookResponse(res.status, responseBody);
+    const clipUrl = extractVideoUrl(data);
+    if (!clipUrl) {
+      if (!videoWebhookAccepted(res.status, data)) throw unconfirmedVideoResponse(res.status, responseBody);
+      throw new Error(`Shot ${shotNumber}: the webhook accepted the request but returned no clip, so nothing was saved for this shot.`);
+    }
+
+    const saved = await saveSceneUpdate(`/api/scenes/${scene.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shot_clip: {
+          shot: shotNumber,
+          video_url: clipUrl,
+          video_magnific_identifier: extractVideoMagnificIdentifier(data) || undefined,
+        },
+      }),
+    });
+    const updatedPlan = parseShotPlan((await saved.json())?.scene?.video_prompt);
+    if (updatedPlan) rememberPlan(scene.id, updatedPlan);
+  };
+
+  // Runs one piece of work for a scene, showing its progress and reporting its error on the scene.
+  const runForScene = async (scene: SceneRow, work: () => Promise<void>): Promise<boolean> => {
+    setSceneError(scene.id, null);
+    try {
+      await work();
+      return true;
+    } catch (error) {
+      console.error(`Video stage error in scene #${scene.scene_number}:`, error);
+      setSceneError(scene.id, errorText(error));
+      return false;
+    } finally {
+      setSceneActivity(scene.id, null);
     }
   };
 
+  // Plans the scene if needed, then generates every shot that has no clip yet. Returns clips generated.
+  const generateRemaining = async (scene: SceneRow): Promise<number> => {
+    const plan = currentPlan(scene) ?? (await planScenes([scene]))[scene.id];
+    if (!plan) return 0;
 
+    let generated = 0;
+    const total = plan.shots.length;
+    await runForScene(scene, async () => {
+      for (const { shot } of plan.shots) {
+        if (stopRequested.current) return;
+        if (currentPlan(scene)?.shots.find((item) => item.shot === shot)?.videoUrl) continue;
+        setSceneActivity(scene.id, `Generating shot ${shot} of ${total}…`);
+        await generateShot(scene, shot);
+        generated += 1;
+      }
+    });
+    return generated;
+  };
 
+  const handlePlan = async (scene: SceneRow) => {
+    await planScenes([scene]);
+    await onRefetchScenes();
+  };
+
+  const handleGenerateShot = async (scene: SceneRow, shotNumber: number) => {
+    await runForScene(scene, async () => {
+      setSceneActivity(scene.id, `Generating shot ${shotNumber}…`);
+      await generateShot(scene, shotNumber);
+    });
+    await onRefetchScenes();
+  };
+
+  const handleGenerateRemaining = async (scene: SceneRow) => {
+    stopRequested.current = false;
+    await generateRemaining(scene);
+    await onRefetchScenes();
+  };
+
+  const handleSavePrompt = async (scene: SceneRow, shotNumber: number, prompt: string) => {
+    await runForScene(scene, async () => {
+      const plan = currentPlan(scene);
+      if (!plan) return;
+      await savePlan(scene, {
+        ...plan,
+        shots: plan.shots.map((shot) => (shot.shot === shotNumber ? { ...shot, prompt } : shot)),
+      });
+    });
+  };
+
+  const handleGenerateAll = async () => {
+    stopRequested.current = false;
+    setIsRunningAll(true);
+    setNotice(null);
+    let generated = 0;
+    try {
+      for (const scene of storyboardScenes) {
+        if (stopRequested.current) break;
+        generated += await generateRemaining(scene);
+      }
+      await onRefetchScenes();
+      setNotice({
+        type: 'success',
+        text: stopRequested.current
+          ? `Stopped. ${generated} clip${generated === 1 ? '' : 's'} generated and saved.`
+          : `${generated} clip${generated === 1 ? '' : 's'} generated and saved. Scenes with problems show their own message.`,
+      });
+    } catch (error) {
+      setNotice({ type: 'error', text: errorText(error) });
+    } finally {
+      setIsRunningAll(false);
+    }
+  };
 
   const handleConfirmClick = async () => {
     setIsConfirming(true);
     try {
-      const updatePromises = generatedScenes.map((scene) => {
-        const vPrompt = videoPrompts[scene.id] || scene.video_prompt;
-        const vUrl = generatedVideoUrls[scene.id] || scene.video_url;
-        if (vPrompt || vUrl) {
-          return saveSceneUpdate(`/api/scenes/${scene.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              video_prompt: vPrompt || undefined,
-              video_url: vUrl || undefined,
-            }),
-          });
-        }
-        return Promise.resolve();
-      });
-
-      await Promise.all(updatePromises);
       await onRefetchScenes();
       await onConfirmed();
-    } catch (err: any) {
-      console.error('Error confirming video stage:', err);
+    } catch (error) {
+      setNotice({ type: 'error', text: errorText(error) });
     } finally {
       setIsConfirming(false);
     }
   };
 
+  const sceneViews = storyboardScenes.map((scene) => {
+    const plan = savedPlans[scene.id] ?? parseShotPlan(scene.video_prompt);
+    const beats = sceneBeats(shotContext(scene));
+    const remaining = plan ? plan.shots.filter((shot) => !shot.videoUrl).length : beats.length;
+    return { scene, plan, beats, remaining };
+  });
+  const remainingClips = sceneViews.reduce((total, view) => total + view.remaining, 0);
 
   return (
     <div className="space-y-6">
-      {/* Top Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-2">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
-            <Video className="w-5 h-5 text-primary" />
+          <h3 className="flex items-center gap-2 text-lg font-bold text-foreground">
+            <Video className="size-5 text-primary" />
             Video Production
           </h3>
           <p className="text-sm text-muted-foreground">
-            Generate cinematic AI video prompts and videos for scenes with completed storyboards.
+            Each beat is one shot and one short clip. Plan a scene&apos;s shots, then generate or redo clips one at a time.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleGenerateAllVideos}
-            disabled={isGeneratingAll || generatedScenes.length === 0}
-            className={primaryButtonClass}
-          >
-            {isGeneratingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
-            {pendingScenes.length === 0
-              ? `Regenerate All Videos (${generatedScenes.length})`
-              : pendingScenes.length === generatedScenes.length
-              ? `Generate All Videos (${generatedScenes.length})`
-              : `Generate Remaining Videos (${pendingScenes.length} remaining)`}
-          </button>
+        <div className="flex items-center gap-2">
+          {isRunningAll && (
+            <Button variant="outline" onClick={() => { stopRequested.current = true; }}>
+              <Square />
+              Stop after current clip
+            </Button>
+          )}
+          <Button onClick={handleGenerateAll} disabled={isRunningAll || remainingClips === 0}>
+            {isRunningAll ? <Loader2 className="animate-spin" /> : <Video />}
+            Generate remaining clips ({remainingClips})
+          </Button>
         </div>
       </div>
 
-      {globalMessage && (
-        <div
-          className={`p-4 rounded-xl border text-sm flex items-center gap-2 ${
-            globalMessage.type === 'success'
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-              : 'bg-destructive/10 text-destructive border-destructive/20'
-          }`}
-        >
-          <span>{globalMessage.text}</span>
-        </div>
+      {notice && (
+        <Alert variant={notice.type === 'error' ? 'destructive' : 'default'}>
+          {notice.type === 'error' ? <AlertTriangle /> : <Check />}
+          <AlertDescription>{notice.text}</AlertDescription>
+        </Alert>
       )}
 
-
-      {/* Scene Items Grid */}
-      {generatedScenes.length === 0 ? (
-        <div className="p-12 text-center border border-dashed border-border/80 rounded-xl space-y-2 bg-card/40">
-          <Film className="w-8 h-8 text-muted-foreground mx-auto" />
-          <h3 className="text-base font-bold text-foreground">No Storyboards Generated Yet</h3>
-          <p className="text-sm text-muted-foreground">
-            Please complete and generate storyboards in Stage 4 first to enable video generation.
-          </p>
-        </div>
+      {sceneViews.length === 0 ? (
+        <Alert>
+          <Film />
+          <AlertTitle>No storyboards generated yet</AlertTitle>
+          <AlertDescription>Generate storyboards in the Storyboards stage first to enable video generation.</AlertDescription>
+        </Alert>
       ) : (
         <div className="space-y-4">
-          {generatedScenes.map((scene, sceneIdx) => (
-            <VideoSceneCard
+          {sceneViews.map(({ scene, plan, beats }, sceneIdx) => (
+            <SceneShotsCard
               key={scene.id}
               scene={scene}
               sceneIdx={sceneIdx}
-              videoPrompt={videoPrompts[scene.id]}
-              overrideVideoUrl={generatedVideoUrls[scene.id]}
-              onGeneratePrompt={async (newPrompt) => {
-                setVideoPrompts((prev) => ({ ...prev, [scene.id]: newPrompt }));
-              }}
-              onRefetchScenes={onRefetchScenes}
-              buildVideoPayloadItem={buildVideoPayloadItem}
+              plan={plan}
+              parsedBeatNumbers={beats.map((beat) => beat.number)}
+              activity={activity[scene.id]}
+              error={sceneErrors[scene.id]}
+              disabled={isRunningAll || Boolean(activity[scene.id])}
+              onPlan={() => handlePlan(scene)}
+              onGenerateRemaining={() => handleGenerateRemaining(scene)}
+              onGenerateShot={(shotNumber) => handleGenerateShot(scene, shotNumber)}
+              onSavePrompt={(shotNumber, prompt) => handleSavePrompt(scene, shotNumber, prompt)}
             />
           ))}
-
         </div>
       )}
 
-      {/* Confirm Stage Button */}
-      <div className="pt-4 border-t border-border/60 flex justify-end">
-        <button
-          type="button"
-          onClick={handleConfirmClick}
-          disabled={isConfirming}
-          className={primaryButtonClass}
-        >
-          {isConfirming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+      <div className="flex justify-end border-t border-border/60 pt-4">
+        <Button onClick={handleConfirmClick} disabled={isConfirming || isRunningAll}>
+          {isConfirming ? <Loader2 className="animate-spin" /> : <Check />}
           Confirm Video Stage
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
-function VideoSceneCard({
+function SceneShotsCard({
   scene,
   sceneIdx,
-  videoPrompt: initialVideoPrompt,
-  overrideVideoUrl,
-  onGeneratePrompt,
-  onRefetchScenes,
-  buildVideoPayloadItem,
+  plan,
+  parsedBeatNumbers,
+  activity,
+  error,
+  disabled,
+  onPlan,
+  onGenerateRemaining,
+  onGenerateShot,
+  onSavePrompt,
 }: {
   scene: SceneRow;
   sceneIdx: number;
-  videoPrompt?: string;
-  overrideVideoUrl?: string;
-  onGeneratePrompt: (prompt: string) => void;
-  onRefetchScenes: () => Promise<void>;
-  buildVideoPayloadItem: (scene: SceneRow, vPrompt: string) => any;
+  plan: SceneShotPlan | null;
+  parsedBeatNumbers: (number | null)[];
+  activity?: string;
+  error?: string;
+  disabled: boolean;
+  onPlan: () => void;
+  onGenerateRemaining: () => void;
+  onGenerateShot: (shotNumber: number) => void;
+  onSavePrompt: (shotNumber: number, prompt: string) => void;
 }) {
-  const [videoPromptText, setVideoPromptText] = useState(initialVideoPrompt || scene.video_prompt || '');
-  const [returnedVideoUrl, setReturnedVideoUrl] = useState<string | null>(overrideVideoUrl || scene.video_url || null);
-  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
-  const [isSendingVideo, setIsSendingVideo] = useState(false);
-  const [isPromptOpen, setIsPromptOpen] = useState(false);
-  const [isScriptBeatsOpen, setIsScriptBeatsOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (initialVideoPrompt) {
-      setVideoPromptText(initialVideoPrompt);
-    } else if (scene.video_prompt) {
-      setVideoPromptText(scene.video_prompt);
-    }
-  }, [initialVideoPrompt, scene.video_prompt]);
-
-  useEffect(() => {
-    if (overrideVideoUrl) {
-      setReturnedVideoUrl(overrideVideoUrl);
-    } else if (scene.video_url) {
-      setReturnedVideoUrl(scene.video_url);
-    }
-  }, [overrideVideoUrl, scene.video_url]);
-
-  const activeVideoUrl = returnedVideoUrl || scene.video_url;
-
-  const sceneChars = (scene.SceneCharacter || []).flatMap((link) =>
-    link.Character ? [link.Character] : []
+  const sceneNumber = scene.scene_number || sceneIdx + 1;
+  const characters = sceneCharacters(scene);
+  const expectedBeats = Array.isArray(scene.beat_numbers) ? scene.beat_numbers.length : 0;
+  const scriptIncomplete = expectedBeats > parsedBeatNumbers.length;
+  const planOutdated = Boolean(plan) && (
+    plan!.shots.length !== parsedBeatNumbers.length ||
+    plan!.shots.some((shot, index) => shot.beat !== parsedBeatNumbers[index])
   );
-
-  // 1. Regenerate ONLY the AI Video Prompt
-  const handleRegeneratePromptOnly = async () => {
-    setIsGeneratingPrompt(true);
-    setError(null);
-    setStatusMessage(null);
-
-    try {
-      const videoAiInstruction = buildVideoAiInstruction(scene, sceneIdx);
-      const response = await callAi(videoAiInstruction);
-      const generatedPrompt = (typeof response === 'string' ? response : (response as any)?.text || '').trim();
-
-      setVideoPromptText(generatedPrompt);
-      onGeneratePrompt(generatedPrompt);
-      setIsPromptOpen(true);
-
-      // Save prompt to DB immediately
-      await saveSceneUpdate(`/api/scenes/${scene.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_prompt: generatedPrompt }),
-      });
-      await onRefetchScenes();
-      setStatusMessage('Video prompt saved. No video generation was requested.');
-    } catch (err: any) {
-      console.error('Error generating video prompt:', err);
-      setError(err.message || 'Operation failed');
-    } finally {
-      setIsGeneratingPrompt(false);
-    }
-  };
-
-  // 2. Send ONLY the Video Request to Webhook (using current prompt)
-  const handleSendVideoWebhookOnly = async () => {
-    setIsSendingVideo(true);
-    setError(null);
-    setStatusMessage(null);
-
-    try {
-      let currentPrompt = videoPromptText;
-      if (!currentPrompt) {
-        const videoAiInstruction = buildVideoAiInstruction(scene, sceneIdx);
-        const response = await callAi(videoAiInstruction);
-        currentPrompt = (typeof response === 'string' ? response : (response as any)?.text || '').trim();
-        setVideoPromptText(currentPrompt);
-        onGeneratePrompt(currentPrompt);
-        setIsPromptOpen(true);
-      }
-
-      // Always save video_prompt to DB first
-      await saveSceneUpdate(`/api/scenes/${scene.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_prompt: currentPrompt }),
-      });
-
-      const itemPayload = buildVideoPayloadItem(scene, currentPrompt);
-      const payload = { scenes: [itemPayload] };
-
-      const res = await sendVideoWebhook(payload);
-
-      if (res) {
-        const responseBody = await res.text();
-        const data = assertVideoWebhookResponse(res.status, responseBody);
-
-
-        const vUrl = extractVideoUrl(data);
-        const vMagId = extractVideoMagnificIdentifier(data);
-
-        if (vUrl) {
-          setReturnedVideoUrl(vUrl);
-          await saveSceneUpdate(`/api/scenes/${scene.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              video_prompt: currentPrompt,
-              video_url: vUrl,
-              video_magnific_identifier: vMagId || undefined,
-            }),
-          });
-          await onRefetchScenes();
-          setStatusMessage('Video returned and saved.');
-        } else {
-          await onRefetchScenes();
-          if (!videoWebhookAccepted(res.status, data)) throw unconfirmedVideoResponse(res.status, responseBody);
-          setStatusMessage('Webhook accepted the video request. No completed video returned yet.');
-        }
-      } else {
-        await onRefetchScenes();
-        throw new Error('No response from the video webhook. Generation is unconfirmed.');
-      }
-    } catch (err: any) {
-      console.error('Error sending video request:', err);
-      setError(err.message || 'Operation failed');
-    } finally {
-      setIsSendingVideo(false);
-    }
-  };
-
-
+  const clipCount = plan ? plan.shots.filter((shot) => shot.videoUrl).length : 0;
+  const shotCount = plan ? plan.shots.length : parsedBeatNumbers.length;
+  const isGrid = shotCount > 1;
 
   return (
-    <div className="p-5 rounded-xl border border-border bg-card space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-border/50">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10 text-primary text-xs font-bold shrink-0">
-            #{scene.scene_number || sceneIdx + 1}
-          </span>
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-base font-bold text-foreground line-clamp-1">
-                {scene.description || `Scene #${scene.scene_number || sceneIdx + 1}`}
-              </h4>
-              {scene.beat_numbers && (
-                <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-xs font-bold border border-emerald-500/20">
-                  Beats {Array.isArray(scene.beat_numbers) ? scene.beat_numbers.join(', ') : scene.beat_numbers}
-                </span>
-              )}
-            </div>
-            {scene.locationName && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 font-medium">
-                <MapPin className="w-3 h-3 text-emerald-500" />
-                {scene.locationName}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Collapsible Script Beats & Dialogues Accordion */}
-      {scene.script_beats && (
-        <div className="border border-border/50 rounded-xl overflow-hidden bg-muted/10">
-          <button
-            type="button"
-            onClick={() => setIsScriptBeatsOpen(!isScriptBeatsOpen)}
-            className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-foreground bg-muted/20 hover:bg-muted/40 transition-colors"
-          >
-            <span className="flex items-center gap-2">
-              <BookOpen className="w-3.5 h-3.5 text-emerald-500" />
-              Script Beats & Spoken Dialogues
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <Badge variant="secondary">#{sceneNumber}</Badge>
+          <span className="line-clamp-1">{scene.description || `Scene #${sceneNumber}`}</span>
+        </CardTitle>
+        <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {scene.locationName && (
+            <span className="flex items-center gap-1">
+              <MapPin className="size-3" />
+              {scene.locationName}
             </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground font-normal">
-              {isScriptBeatsOpen ? 'Hide Beats' : 'Show Beats'}
-              {isScriptBeatsOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </span>
-          </button>
-          {isScriptBeatsOpen && (
-            <div className="p-3 border-t border-border/40 bg-background/50">
-              <p className="text-xs font-mono text-foreground leading-relaxed whitespace-pre-wrap">
-                {scene.script_beats}
-              </p>
-            </div>
           )}
-        </div>
-      )}
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {statusMessage && <p className="text-sm text-emerald-500 font-medium">{statusMessage}</p>}
-
-      {/* Media & Details Row (Top Aligned) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-        {/* Left Column (1/3): Characters in this Scene + Storyboard Image Preview */}
-        <div className="space-y-4">
-          {/* Characters in this scene */}
-          {sceneChars.length > 0 && (
-            <div className="space-y-1.5">
-              <label className={labelClass}>Characters in this scene</label>
-              <div className="flex flex-wrap gap-2">
-                {sceneChars.map((c) => (
-                  <span
-                    key={c.id}
-                    className="px-2.5 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20 flex items-center gap-1.5"
-                  >
-                    <User className="w-3.5 h-3.5 text-primary" />
-                    {c.name}
-                  </span>
-                ))}
-              </div>
-            </div>
+          {scene.beat_numbers && (
+            <span>Beats {Array.isArray(scene.beat_numbers) ? scene.beat_numbers.join(', ') : scene.beat_numbers}</span>
           )}
+          <span>{clipCount} of {shotCount} clip{shotCount === 1 ? '' : 's'}</span>
+        </CardDescription>
+        <CardAction className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onPlan} disabled={disabled}>
+            <ListVideo />
+            {plan ? 'Re-plan shots' : 'Plan shots'}
+          </Button>
+          <Button size="sm" onClick={onGenerateRemaining} disabled={disabled || (Boolean(plan) && clipCount === shotCount)}>
+            <Video />
+            Generate remaining clips
+          </Button>
+        </CardAction>
+      </CardHeader>
 
-          {/* Storyboard Image Reference */}
-          <div className="space-y-1.5">
-            <label className={labelClass}>Storyboard Image Reference</label>
-            {scene.storyboard_image_url ? (
+      <CardContent className="gap-4">
+        {activity && (
+          <Alert>
+            <Loader2 className="animate-spin" />
+            <AlertDescription>{activity}</AlertDescription>
+          </Alert>
+        )}
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {scriptIncomplete && (
+          <Alert variant="destructive">
+            <AlertTriangle />
+            <AlertTitle>Saved script text is incomplete</AlertTitle>
+            <AlertDescription>
+              Only {parsedBeatNumbers.length} of this scene&apos;s {expectedBeats} beats are in its saved script, so the other beats get no shot. Regenerate this episode&apos;s storyboard to restore them.
+            </AlertDescription>
+          </Alert>
+        )}
+        {planOutdated && (
+          <Alert>
+            <AlertTriangle />
+            <AlertDescription>The shot plan no longer matches this scene&apos;s beats. Re-plan the shots before generating.</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-3">
+          <div className="space-y-3">
+            {scene.storyboard_image_url && (
               <a
                 href={scene.storyboard_image_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Click to open full storyboard image in new tab"
-                className="block overflow-hidden rounded-xl border border-border group cursor-pointer"
+                title="Open the full storyboard image in a new tab"
+                className="block overflow-hidden rounded-lg border"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={scene.storyboard_image_url}
-                  alt={`Scene ${scene.scene_number}`}
-                  className="w-full object-cover max-h-[220px] transition-transform duration-200 group-hover:scale-[1.02]"
-                />
+                <img src={scene.storyboard_image_url} alt={`Storyboard for scene ${sceneNumber}`} className="max-h-[220px] w-full object-cover" />
               </a>
-            ) : (
-              <div className="p-6 text-center border border-dashed border-border rounded-xl text-xs text-muted-foreground">
-                No Storyboard Image
+            )}
+            {characters.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {characters.map((character) => (
+                  <Badge key={character.id} variant="outline">
+                    <User />
+                    {character.name}
+                  </Badge>
+                ))}
               </div>
             )}
           </div>
-        </div>
 
-        {/* Right Column (2/3): Generated Video Clip & Prompt Dropdown */}
-        <div className="md:col-span-2 space-y-4">
-          {/* HTML5 Video Player */}
-          {activeVideoUrl && (
-            <div className="space-y-1.5">
-              <label className={labelClass}>Generated Video Clip</label>
-              <video
-                controls
-                src={activeVideoUrl}
-                className="w-full rounded-xl border border-border max-h-[260px] bg-black object-contain"
+          <div className="space-y-3 md:col-span-2">
+            {!plan && (
+              <p className="text-sm text-muted-foreground">
+                No shots planned yet. Planning writes one short prompt per beat ({shotCount} shot{shotCount === 1 ? '' : 's'}); no video is generated until you ask for it.
+              </p>
+            )}
+            {plan?.shots.map((shot) => (
+              <ShotRow
+                key={shot.shot}
+                shot={shot}
+                isGrid={isGrid}
+                disabled={disabled}
+                onGenerate={() => onGenerateShot(shot.shot)}
+                onSavePrompt={(prompt) => onSavePrompt(shot.shot, prompt)}
               />
-            </div>
-          )}
-
-          {/* Video Prompt Dropdown Accordion */}
-          <div className="border border-border/50 rounded-xl overflow-hidden bg-muted/10">
-            <button
-              type="button"
-              onClick={() => setIsPromptOpen(!isPromptOpen)}
-              className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-foreground bg-muted/20 hover:bg-muted/40 transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                <FileText className="w-3.5 h-3.5 text-primary" />
-                Generated Video Prompt
-              </span>
-              <span className="flex items-center gap-1.5 text-muted-foreground font-normal">
-                {isPromptOpen ? 'Hide' : 'Show Prompt'}
-                {isPromptOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </span>
-            </button>
-            {isPromptOpen && (
-              <div className="p-3 border-t border-border/40">
-                {videoPromptText ? (
-                  <p className="text-xs font-mono text-foreground leading-relaxed whitespace-pre-wrap">
-                    {videoPromptText}
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground italic">
-                    Click &quot;Generate Video&quot; below to generate video prompt for this scene.
-                  </p>
-                )}
+            ))}
+            {clipCount === 0 && scene.video_url && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">Earlier full-scene clip. It is replaced once this scene has shot clips.</p>
+                <video controls src={scene.video_url} className="max-h-[220px] w-full rounded-lg border bg-black object-contain" />
               </div>
             )}
           </div>
         </div>
-      </div>
 
-
-
-      {/* Action Buttons */}
-      <div className="pt-2 flex items-center justify-end gap-3">
-        {videoPromptText && (
-          <button
-            type="button"
-            onClick={handleRegeneratePromptOnly}
-            disabled={isGeneratingPrompt || isSendingVideo}
-            className={primaryButtonClass}
-          >
-            {isGeneratingPrompt ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <FileText className="w-4 h-4" />
-            )}
-            Regenerate Video Prompt
-          </button>
+        {scene.script_beats && (
+          <Collapsible>
+            <CollapsibleTrigger
+              render={
+                <Button variant="ghost" size="sm" className="group/trigger">
+                  <BookOpen />
+                  Script beats and dialogue
+                  <ChevronDown className="transition-transform group-data-[panel-open]/trigger:rotate-180" />
+                </Button>
+              }
+            />
+            <CollapsibleContent>
+              <p className="mt-2 whitespace-pre-wrap rounded-lg border bg-muted/30 p-3 font-mono text-xs leading-relaxed">
+                {scene.script_beats}
+              </p>
+            </CollapsibleContent>
+          </Collapsible>
         )}
-
-        <button
-          type="button"
-          onClick={handleSendVideoWebhookOnly}
-          disabled={isSendingVideo || isGeneratingPrompt}
-          className={primaryButtonClass}
-        >
-          {isSendingVideo ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Video className="w-4 h-4" />
-          )}
-          {videoPromptText ? 'Regenerate Video' : 'Generate Video'}
-        </button>
-      </div>
-
-
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
+function ShotRow({
+  shot,
+  isGrid,
+  disabled,
+  onGenerate,
+  onSavePrompt,
+}: {
+  shot: SceneShot;
+  isGrid: boolean;
+  disabled: boolean;
+  onGenerate: () => void;
+  onSavePrompt: (prompt: string) => void;
+}) {
+  // The draft resets whenever the saved prompt changes (after a save or a re-plan).
+  const [draft, setDraft] = useState({ source: shot.prompt, text: shot.prompt });
+  if (draft.source !== shot.prompt) setDraft({ source: shot.prompt, text: shot.prompt });
+
+  const longestClip = SHOT_DURATIONS[SHOT_DURATIONS.length - 1];
+  const overCap = shot.seconds > SHOT_CAP_SECONDS;
+
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-medium">
+            Shot {shot.shot}{shot.title ? ` — ${shot.title}` : ''}
+          </span>
+          {isGrid && <Badge variant="outline">Panel {shot.shot}</Badge>}
+          {shot.beat !== null && <Badge variant="outline">Beat {shot.beat}</Badge>}
+          <Badge variant="secondary">{shot.seconds} s</Badge>
+          {shot.dialogueWords > 0 && <Badge variant="outline">{shot.dialogueWords} words</Badge>}
+          {overCap && <Badge variant="destructive">Over {SHOT_CAP_SECONDS} s cap</Badge>}
+        </div>
+        <Button size="sm" variant={shot.videoUrl ? 'outline' : 'default'} onClick={onGenerate} disabled={disabled}>
+          {shot.videoUrl ? <RefreshCw /> : <Video />}
+          {shot.videoUrl ? 'Regenerate clip' : 'Generate clip'}
+        </Button>
+      </div>
+
+      {overCap && (
+        <p className="text-xs text-destructive">
+          {shot.neededSeconds > longestClip
+            ? `This dialogue needs about ${shot.neededSeconds} s at an unhurried pace, more than the longest ${longestClip} s clip, so it will be rushed or cut off. Split this beat into shorter beats in the script.`
+            : `This dialogue needs about ${shot.neededSeconds} s at an unhurried pace. To stay within ${SHOT_CAP_SECONDS} s, split it across two beats in the script.`}
+        </p>
+      )}
+
+      {shot.videoUrl && (
+        <video controls src={shot.videoUrl} className="max-h-[260px] w-full rounded-lg border bg-black object-contain" />
+      )}
+
+      <Collapsible>
+        <CollapsibleTrigger
+          render={
+            <Button variant="ghost" size="sm" className="group/trigger">
+              <FileText />
+              Shot prompt
+              <ChevronDown className="transition-transform group-data-[panel-open]/trigger:rotate-180" />
+            </Button>
+          }
+        />
+        <CollapsibleContent>
+          <div className="mt-2 space-y-2">
+            <Textarea
+              value={draft.text}
+              onChange={(event) => setDraft({ source: shot.prompt, text: event.target.value })}
+              disabled={disabled}
+              aria-label={`Prompt for shot ${shot.shot}`}
+              className="font-mono text-xs md:text-xs"
+            />
+            {draft.text !== shot.prompt && (
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setDraft({ source: shot.prompt, text: shot.prompt })}>
+                  Discard
+                </Button>
+                <Button size="sm" onClick={() => onSavePrompt(draft.text)} disabled={disabled || !draft.text.trim()}>
+                  <Check />
+                  Save prompt
+                </Button>
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
