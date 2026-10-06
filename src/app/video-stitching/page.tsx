@@ -21,6 +21,9 @@ import {
   deleteEpisodeVideoAction
 } from "@/actions/stitchVideosAction";
 import { getSavedStoryboardsAction, getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { sceneClips } from "@/lib/sceneShots";
 
 interface StoryOption {
   id: string;
@@ -28,6 +31,7 @@ interface StoryOption {
   episode_number?: string;
 }
 
+// One clip to stitch. A scene generated shot by shot contributes one entry per shot.
 interface SceneClip {
   id: string;
   scene_number: number;
@@ -35,6 +39,8 @@ interface SceneClip {
   location_name?: string;
   video_url: string;
   beat_numbers?: any;
+  /** Null for an older scene with a single full-scene clip. */
+  shot: number | null;
 }
 
 interface SavedVideo {
@@ -50,6 +56,7 @@ export default function VideoStitchingPage() {
   const [stories, setStories] = useState<StoryOption[]>([]);
   const [selectedStoryId, setSelectedStoryId] = useState<string>("");
   const [scenes, setScenes] = useState<SceneClip[]>([]);
+  const [incompleteScenes, setIncompleteScenes] = useState<string[]>([]);
   const [savedVideos, setSavedVideos] = useState<SavedVideo[]>([]);
 
   const [customTitle, setCustomTitle] = useState("");
@@ -85,6 +92,7 @@ export default function VideoStitchingPage() {
   useEffect(() => {
     if (!selectedStoryId) {
       setScenes([]);
+      setIncompleteScenes([]);
       setSavedVideos([]);
       return;
     }
@@ -107,11 +115,17 @@ export default function VideoStitchingPage() {
         ]);
 
         if (sbRes.success && sbRes.scenes) {
-          const videoScenes = (sbRes.scenes as any[])
-            .filter((sc: any) => Boolean(sc.video_url))
+          const orderedScenes = [...(sbRes.scenes as any[])]
             .sort((a: any, b: any) => (a.scene_number || 0) - (b.scene_number || 0));
+          const incomplete: string[] = [];
+          const clips = orderedScenes.flatMap((sc: any) => {
+            const { clips: sceneClipList, missingShots } = sceneClips(sc);
+            if (missingShots > 0) incomplete.push(`#${sc.scene_number} (${missingShots} missing)`);
+            return sceneClipList.map((clip) => ({ ...sc, video_url: clip.url, shot: clip.shot }));
+          });
 
-          setScenes(videoScenes);
+          setScenes(clips);
+          setIncompleteScenes(incomplete);
         }
 
         if (videosRes.success && videosRes.videos) {
@@ -136,7 +150,7 @@ export default function VideoStitchingPage() {
     setSuccessMsg(null);
 
     const videoUrls = scenes.map(s => s.video_url);
-    const sceneIds = scenes.map(s => s.id);
+    const sceneIds = Array.from(new Set(scenes.map(s => s.id)));
     const titleToUse = customTitle.trim() || "Full Episode Render";
 
     try {
@@ -261,10 +275,10 @@ export default function VideoStitchingPage() {
           <div>
             <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
               <Layers size={18} className="text-primary" />
-              Generated Scene Clips ({scenes.length})
+              Generated Clips ({scenes.length})
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Individual scene video clips generated for this episode in sequential order
+              Every shot clip generated for this episode, in scene and shot order
             </p>
           </div>
 
@@ -291,12 +305,22 @@ export default function VideoStitchingPage() {
               ) : (
                 <>
                   <Sparkles size={14} />
-                  Stitch Full Episode ({scenes.length} Scenes)
+                  Stitch Full Episode ({scenes.length} Clips)
                 </>
               )}
             </button>
           </div>
         </div>
+
+        {incompleteScenes.length > 0 && (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>Some scenes are missing shot clips</AlertTitle>
+            <AlertDescription>
+              Scenes {incompleteScenes.join(', ')}. Stitching now leaves those shots out of the episode. Generate them in Video Production first.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Scene Clips Grid */}
         {isLoadingScenes ? (
@@ -316,7 +340,7 @@ export default function VideoStitchingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {scenes.map((scene, idx) => (
               <div
-                key={scene.id}
+                key={`${scene.id}-${scene.shot ?? 'scene'}`}
                 className="bg-muted/20 border border-border/70 rounded-xl overflow-hidden flex flex-col group hover:border-primary/40 transition-all"
               >
                 {/* Header Badge */}
@@ -326,6 +350,7 @@ export default function VideoStitchingPage() {
                       #{scene.scene_number || idx + 1}
                     </span>
                     {scene.description ? scene.description.slice(0, 30) + '...' : `Scene #${idx + 1}`}
+                    {scene.shot !== null && <Badge variant="outline">Shot {scene.shot}</Badge>}
                   </span>
                   {scene.location_name && (
                     <span className="text-[10px] px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground font-medium truncate max-w-[120px]">

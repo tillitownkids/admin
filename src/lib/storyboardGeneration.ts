@@ -4,8 +4,10 @@ export interface ScenePlan {
   location_name: string;
   character_names: string[];
   beat_numbers: number[];
-  estimated_duration_seconds: number;
 }
+
+/** A scene is one storyboard sheet: a 2x2 grid with one panel per beat. */
+export const MAX_BEATS_PER_SCENE = 4;
 
 export function parseStoryboardJson(text: string): unknown {
   let json = text.trim();
@@ -30,8 +32,7 @@ export function validateScenePlan(value: unknown): ScenePlan[] {
         typeof scene.title !== 'string' || !scene.title.trim() ||
         typeof scene.location_name !== 'string' || !scene.location_name.trim() ||
         !Array.isArray(scene.character_names) || scene.character_names.some(name => typeof name !== 'string' || !name.trim()) ||
-        !Number.isFinite(scene.estimated_duration_seconds) || scene.estimated_duration_seconds <= 0 ||
-        !Array.isArray(scene.beat_numbers) || !scene.beat_numbers.length || scene.beat_numbers.length > 6) {
+        !Array.isArray(scene.beat_numbers) || !scene.beat_numbers.length || scene.beat_numbers.length > MAX_BEATS_PER_SCENE) {
       throw new Error(`Invalid metadata or beat count for scene ${index + 1}.`);
     }
     for (const beat of scene.beat_numbers) {
@@ -39,9 +40,6 @@ export function validateScenePlan(value: unknown): ScenePlan[] {
         throw new Error(`Missing, duplicated, or out-of-order beat near beat ${nextBeat}.`);
       }
       nextBeat++;
-    }
-    if (scene.estimated_duration_seconds > 8 && scene.beat_numbers.length > 1) {
-      throw new Error(`Scene ${index + 1} exceeds the existing 8-second grouping limit.`);
     }
   });
   if (nextBeat - 1 !== plan.total_beats) throw new Error('Scene plan does not cover its declared total beat count.');

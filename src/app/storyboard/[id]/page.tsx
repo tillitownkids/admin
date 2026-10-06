@@ -106,14 +106,11 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
   const [isAiChatLoading, setIsAiChatLoading] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  function getGridBadge(beatCount: number) {
-    if (beatCount === 1) return "1 Panel";
-    if (beatCount === 2) return "1x2 Grid";
-    if (beatCount === 3) return "1x3 Grid";
-    if (beatCount === 4) return "2x2 Grid";
-    if (beatCount >= 5 && beatCount <= 6) return "2x3 Grid";
-    if (beatCount > 6) return `${beatCount} Panels (Multi-sheet)`;
-    return `${beatCount} Panels`;
+  // Reads the layout the prompt asks for, so storyboards made before the 2x2 rule keep their real label.
+  function getGridBadge(beatCount: number, storyboardPrompt: string) {
+    const stated = storyboardPrompt.match(/\b(\d)\s*x\s*(\d)\b/);
+    if (stated) return `${stated[1]}x${stated[2]} Grid`;
+    return beatCount === 1 ? "Single Frame" : "2x2 Grid";
   }
 
   useEffect(() => {
@@ -399,7 +396,7 @@ export default function StoryboardDetailPage({ params }: { params: Promise<{ id:
                               </span>
                               <span className="text-xs bg-primary/10 text-primary border border-primary/20 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
                                 <LayoutGrid className="w-3 h-3" />
-                                {getGridBadge(beatsArr.length)}
+                                {getGridBadge(beatsArr.length, scene.storyboard_prompt || "")}
                               </span>
                             </>
                           );

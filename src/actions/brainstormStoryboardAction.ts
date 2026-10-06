@@ -43,8 +43,9 @@ YOUR TASK:
 2. If the user requests scene revisions (e.g. lighting, camera framing, action, environment, continuity), update the affected storyboard_prompt strings while maintaining scene structure.
 3. STRICT CHARACTER FIDELITY: NEVER invent, add, or extrapolate physical traits, body mechanics, technological qualities (such as wheels, robot parts, metal chassis, engines, camera eyes, or gadgets), powers, or unstated equipment to any character. Stick 100% strictly to official character descriptions and beat script content.
 4. CHARACTER NAMES: In storyboard_prompt, refer to characters ONLY by their exact official cast names (no nicknames, shortened names, or role words like "father" in place of the name). Never describe character appearance — reference images define it. Keep each scene's character_names unchanged unless the user explicitly asks to change who appears in that scene; if you change it, use exact cast names only.
-5. Return all scenes in the updatedScenes array (keep unchanged scenes as they are, and update the modified ones with their correct scene_number).
-6. Provide a clear, short, conversational summary explanation of what you changed.
+5. KEEP THE IMAGE LAYOUT: Never change a prompt's grid layout, its number of panels, or which beat each panel shows — each video clip later opens on its own numbered panel. Keep every panel or shot description starting with its shot size and angle, and keep the time of day and lighting in its single lighting line rather than repeating it per panel. Keep prompts short and plain.
+6. Return all scenes in the updatedScenes array (keep unchanged scenes as they are, and update the modified ones with their correct scene_number).
+7. Provide a clear, short, conversational summary explanation of what you changed.
 
 Return ONLY valid JSON with this exact structure:
 {
