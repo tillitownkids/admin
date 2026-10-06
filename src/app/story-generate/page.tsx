@@ -1,6 +1,7 @@
 "use client";
 
 import { callAi } from "@/actions/actions";
+import { getStoryDurationBudget } from "@/lib/storyDurationBudget";
 import { getStoriesAction, saveGeneratedStoryAction } from "@/actions/saveStoryAction";
 import { getGlobalSettingsAction } from "@/actions/settingsAction";
 import { PageHeader } from "@/components/PageHeader";
@@ -414,11 +415,20 @@ ${contextToUse ? `- Previous Episode Summary / Context: ${contextToUse}` : ''}`
       ? locations.map((l) => `- Name: ${l.name}${l.description ? ` (${l.description})` : ''}`).join('\n')
       : 'None in database';
 
+    const storyDuration = duration.trim() || '2-3 minutes';
+    const durationBudget = getStoryDurationBudget(storyDuration);
+    if (!durationBudget) {
+      setError('Enter a duration such as 2-3 minutes, 5 min, or 30 seconds.');
+      setIsLoading(false);
+      return;
+    }
+
     const prompt = `
 You are a creative director and storyteller for the children's animated show "Tillitown"
 
 Generation Mode Details: ${continuationHeader}
-Target Story Duration: ${duration || '2-3 minutes'}
+Target Story Duration: ${storyDuration}
+Target Spoken Dialogue: ${durationBudget.minimumDialogueWords}–${durationBudget.maximumDialogueWords} words
 Target Audience: ${globalAudience}
 Story Tone & Atmosphere: ${globalTone}
 
@@ -447,8 +457,8 @@ Given Inputs:
 - Story Tone & Atmosphere: ${globalTone}
 
 STRICT FINISHED-EPISODE RUNTIME LIMIT:
-- The selected story duration is ${duration || '2-3 minutes'}. This is the runtime budget for the FINISHED ANIMATED EPISODE, not the time needed to read the narrative aloud.
-- Treat this duration as a hard upper limit. For a range, use its upper bound as the maximum (for example, "2-3 minutes" means at most 180 seconds). Do not substitute a fixed duration for the selected story duration.
+- The selected story duration is ${storyDuration}. This is the runtime budget for the FINISHED ANIMATED EPISODE, not the time needed to read the narrative aloud.
+- Aim for ${durationBudget.targetSeconds} seconds of episode content. The hard upper runtime limit is ${durationBudget.maximumSeconds} seconds. For a range, this target uses its midpoint and the ceiling uses its upper bound.
 - Budget the complete beginning, middle, and ending within this limit, including natural spoken dialogue, pauses, reactions, action, establishing moments, transitions, and a brief ending hold.
 - Estimate speech at a natural, unhurried pace appropriate to the audience and tone. Do not assume dialogue or physical actions take no time.
 - Allow compatible actions to happen during dialogue where natural, but do not assume unrelated or sequential events happen simultaneously to make the runtime fit.
@@ -457,6 +467,14 @@ STRICT FINISHED-EPISODE RUNTIME LIMIT:
 - Never fit the runtime by rushing speech or action, cutting words off, leaving the resolution incomplete, or assigning unrealistically short durations.
 - Before returning, internally estimate the full episode runtime and revise the story until it fits the selected limit. Keep this planning internal; retain the requested narrative and JSON output format.
 - The Episode Recap is metadata and is excluded from episode runtime.
+
+SPOKEN DIALOGUE BUDGET:
+- Target ${durationBudget.minimumDialogueWords}–${durationBudget.maximumDialogueWords} spoken dialogue words across the complete story.
+- Count only words actually spoken by characters. Exclude descriptive narrative, character labels, the title, and the Episode Recap.
+- This range is a planning target, not permission to exceed the finished-episode runtime limit. Leave time for pauses, speaker changes, visible action, transitions, and the ending.
+- Longer stories must contain meaningfully more developed events and conversations, not merely longer descriptions of the same events.
+- Keep dialogue natural, purposeful, and appropriate to the audience, with manageable sentences and clear speaker exchanges. Do not pad conversations or rush delivery to meet a word count.
+- Before returning, internally review the spoken-word count and likely screen runtime, and revise the story to satisfy both. Do not display word counts, timing sections, or planning notes. Keep the existing narrative and JSON format unchanged.
 
 STORY FORMATTING RULES (STRICT & MANDATORY):
 - Write a single, continuous, warm bedtime narrative story.
@@ -987,22 +1005,11 @@ Return ONLY valid JSON matching this exact structure:
             )}
             {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
             <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
-              {(pendingCharacters.some((item) => !item.added && !item.rejected) || pendingLocations.some((item) => !item.added && !item.rejected)) && (
-                <button
-                  type="button"
-                  onClick={handleAcceptAll}
-                  disabled={isLoading || isAcceptingAll}
-                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition disabled:opacity-50 cursor-pointer"
-                >
-                  {isAcceptingAll ? <><Loader2 className="w-4 h-4 animate-spin" />{savePhase === 'references' ? 'Generating References…' : 'Adding All…'}</> : <><Check className="w-4 h-4" />Add All and Save</>}
-                </button>
-              )}
-
               <button
                 type="button"
                 onClick={() => finalizeSaveStory(pendingStoryText)}
                 disabled={isLoading || isAcceptingAll}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition disabled:opacity-50 cursor-pointer"
               >
                 {isLoading ? (
                   <>
@@ -1016,6 +1023,16 @@ Return ONLY valid JSON matching this exact structure:
                   </>
                 )}
               </button>
+              {(pendingCharacters.some((item) => !item.added && !item.rejected) || pendingLocations.some((item) => !item.added && !item.rejected)) && (
+                <button
+                  type="button"
+                  onClick={handleAcceptAll}
+                  disabled={isLoading || isAcceptingAll}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isAcceptingAll ? <><Loader2 className="w-4 h-4 animate-spin" />{savePhase === 'references' ? 'Generating References…' : 'Adding All…'}</> : <><Check className="w-4 h-4" />Add All and Save</>}
+                </button>
+              )}
             </div>
           </div>
         </div>

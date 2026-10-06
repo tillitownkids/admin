@@ -7,6 +7,7 @@ import { Video, FileText, Loader2, Check, RefreshCw, ExternalLink, Code, Film, U
 
 import { labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
 import { callAi } from '@/actions/actions';
+import { assertVideoWebhookResponse, videoWebhookAccepted, unconfirmedVideoResponse } from '@/lib/videoWebhook';
 import type { EpisodeLocationRow, SceneRow } from './types';
 
 
@@ -17,7 +18,16 @@ interface VideoStageProps {
   onConfirmed: () => Promise<void> | void;
 }
 
-async function sendVideoWebhook(payload: any): Promise<Response | null> {
+async function saveSceneUpdate(url: string, options: RequestInit): Promise<Response> {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Could not save scene (HTTP ${response.status}): ${detail.slice(0, 500)}`);
+  }
+  return response;
+}
+
+async function sendVideoWebhook(payload: any): Promise<Response> {
   try {
     const res = await fetch('https://automation.tillitown.com/webhook/generate-video', {
       method: 'POST',
@@ -27,7 +37,7 @@ async function sendVideoWebhook(payload: any): Promise<Response | null> {
     return res;
   } catch (err) {
     console.warn('Video webhook fetch error:', err);
-    return null;
+    throw new Error(`Could not reach the video webhook. The browser reported a network/CORS failure: ${err instanceof Error ? err.message : String(err)}. Video submission could not be confirmed.`);
   }
 }
 
@@ -281,7 +291,7 @@ export function VideoStage({
       if (Object.keys(newPrompts).length > 0) {
         await Promise.all(
           Object.entries(newPrompts).map(([scId, pText]) =>
-            fetch(`/api/scenes/${scId}`, {
+            saveSceneUpdate(`/api/scenes/${scId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ video_prompt: pText }),
@@ -295,7 +305,8 @@ export function VideoStage({
         const res = await sendVideoWebhook(fullPayload);
 
         if (res) {
-          const data = await res.json().catch(() => null);
+          const responseBody = await res.text();
+          const data: any = assertVideoWebhookResponse(res.status, responseBody);
 
 
           const newVideoUrls: Record<string, { url: string; magnificId?: string | null }> = {};
@@ -340,7 +351,7 @@ export function VideoStage({
             setGeneratedVideoUrls((prev) => ({ ...prev, ...urlMap }));
             await Promise.all(
               Object.entries(newVideoUrls).map(([scId, info]) =>
-                fetch(`/api/scenes/${scId}`, {
+                saveSceneUpdate(`/api/scenes/${scId}`, {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -352,19 +363,25 @@ export function VideoStage({
               )
             );
             await onRefetchScenes();
-            setGlobalMessage({ type: 'success', text: 'Operation successful' });
+            const completedCount = Object.keys(newVideoUrls).length;
+            if (completedCount < targetScenes.length && !videoWebhookAccepted(res.status, data)) {
+              throw new Error(`${completedCount} of ${targetScenes.length} videos returned. The remaining video submissions are unconfirmed.`);
+            }
+            setGlobalMessage({ type: 'success', text: completedCount === targetScenes.length
+              ? `${completedCount} videos returned and saved.`
+              : `${completedCount} videos saved; webhook accepted the request, but remaining videos are not ready yet.` });
           } else {
             await onRefetchScenes();
-            setGlobalMessage({ type: 'success', text: 'Operation successful' });
+            if (!videoWebhookAccepted(res.status, data)) throw unconfirmedVideoResponse(res.status, responseBody);
+            setGlobalMessage({ type: 'success', text: 'Webhook accepted the video request. No completed videos returned yet.' });
           }
         } else {
           await onRefetchScenes();
-          setGlobalMessage({ type: 'success', text: 'Operation successful' });
+          throw new Error('No response from the video webhook. Generation is unconfirmed.');
         }
       } catch (webhookErr) {
         console.warn('Group webhook dispatch error:', webhookErr);
-        await onRefetchScenes();
-        setGlobalMessage({ type: 'success', text: 'Operation successful' });
+        throw webhookErr;
       }
 
 
@@ -387,7 +404,7 @@ export function VideoStage({
         const vPrompt = videoPrompts[scene.id] || scene.video_prompt;
         const vUrl = generatedVideoUrls[scene.id] || scene.video_url;
         if (vPrompt || vUrl) {
-          return fetch(`/api/scenes/${scene.id}`, {
+          return saveSceneUpdate(`/api/scenes/${scene.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -562,13 +579,13 @@ function VideoSceneCard({
       setIsPromptOpen(true);
 
       // Save prompt to DB immediately
-      await fetch(`/api/scenes/${scene.id}`, {
+      await saveSceneUpdate(`/api/scenes/${scene.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ video_prompt: generatedPrompt }),
       });
       await onRefetchScenes();
-      setStatusMessage('Operation successful');
+      setStatusMessage('Video prompt saved. No video generation was requested.');
     } catch (err: any) {
       console.error('Error generating video prompt:', err);
       setError(err.message || 'Operation failed');
@@ -595,7 +612,7 @@ function VideoSceneCard({
       }
 
       // Always save video_prompt to DB first
-      await fetch(`/api/scenes/${scene.id}`, {
+      await saveSceneUpdate(`/api/scenes/${scene.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ video_prompt: currentPrompt }),
@@ -607,7 +624,8 @@ function VideoSceneCard({
       const res = await sendVideoWebhook(payload);
 
       if (res) {
-        const data = await res.json().catch(() => null);
+        const responseBody = await res.text();
+        const data = assertVideoWebhookResponse(res.status, responseBody);
 
 
         const vUrl = extractVideoUrl(data);
@@ -615,7 +633,7 @@ function VideoSceneCard({
 
         if (vUrl) {
           setReturnedVideoUrl(vUrl);
-          await fetch(`/api/scenes/${scene.id}`, {
+          await saveSceneUpdate(`/api/scenes/${scene.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -625,14 +643,15 @@ function VideoSceneCard({
             }),
           });
           await onRefetchScenes();
-          setStatusMessage('Operation successful');
+          setStatusMessage('Video returned and saved.');
         } else {
           await onRefetchScenes();
-          setStatusMessage('Operation successful');
+          if (!videoWebhookAccepted(res.status, data)) throw unconfirmedVideoResponse(res.status, responseBody);
+          setStatusMessage('Webhook accepted the video request. No completed video returned yet.');
         }
       } else {
         await onRefetchScenes();
-        setStatusMessage('Operation successful');
+        throw new Error('No response from the video webhook. Generation is unconfirmed.');
       }
     } catch (err: any) {
       console.error('Error sending video request:', err);

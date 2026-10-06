@@ -25,7 +25,8 @@ import { labelClass, selectFieldClass, primaryButtonClass } from "@/lib/styles";
 import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction, getSavedStoryboardsAction } from "@/actions/saveStoryboardAction";
 import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
-import { parseAiJson } from "@/lib/parseAiJson";
+import { parseStoryboardJson, validateScenePlan } from "@/lib/storyboardGeneration";
+import { generateStoryboardBatchAction } from "@/actions/generateStoryboardBatchAction";
 import { matchCharactersByName } from "@/lib/characterNames";
 
 
@@ -255,8 +256,11 @@ ${locationPromptSection}
 
 ## OUTPUT FORMAT
 Return ONLY valid JSON with this structure:
+Return a compact plan only. Do NOT copy script text or generate storyboard image prompts in this pass.
+Count ALL beats in the source, including the final beat, and put that count in total_beats. Beat numbering must be consecutive starting at 1. Include every beat through the ending.
 
 {
+  "total_beats": 3,
   "scenes": [
     {
       "scene_number": 1,
@@ -264,8 +268,7 @@ Return ONLY valid JSON with this structure:
       "location_name": "Location Name",
       "character_names": ["Character Name 1", "Character Name 2"],
       "beat_numbers": [1, 2, 3],
-      "estimated_duration_seconds": 7.5,
-      "scene_script_beats": "Full exact text of all script beats grouped into this scene (including beat headers, [ACTION], [DIALOGUE], [CAMERA], [MOTION], and [SFX] lines)."
+      "estimated_duration_seconds": 7.5
     }
   ]
 }
@@ -279,27 +282,11 @@ ${prompt}`;
       // Execute Pass 1: Scene Detection
       const pass1Response = await callAi(pass1DetectPrompt, 64000);
       const pass1Text = typeof pass1Response === "string" ? pass1Response : pass1Response?.text || "";
-      const parsedPass1 = parseAiJson(pass1Text);
+      const detectedScenes = validateScenePlan(parseStoryboardJson(pass1Text));
 
-      let detectedScenes: StoryboardScene[] = [];
-      if (parsedPass1 && Array.isArray(parsedPass1.scenes)) {
-        detectedScenes = parsedPass1.scenes;
-      } else if (Array.isArray(parsedPass1)) {
-        detectedScenes = parsedPass1;
-      }
-
-      if (!detectedScenes || detectedScenes.length === 0) {
-        throw new Error("Could not detect scenes from the beat script.");
-      }
-
-      // PASS 2: Generate 3D CGI Storyboard Prompts for each scene (Zero response truncation)
-      const finalScenes: StoryboardScene[] = [];
-
-      for (let idx = 0; idx < detectedScenes.length; idx++) {
-        const scene = detectedScenes[idx];
-        const beatNums = Array.isArray(scene.beat_numbers)
-          ? scene.beat_numbers.join(", ")
-          : (scene.beat_numbers || "");
+      // PASS 2: Extract each scene's original beats and produce its image prompt.
+      const sceneRequests = detectedScenes.map((scene, idx) => {
+        const beatNums = scene.beat_numbers.join(", ");
 
         const { matched: sceneCast } = matchCharactersByName(storyCharacters, scene.character_names || []);
         const characterPromptSection = sceneCast.length > 0
@@ -368,10 +355,9 @@ Location Name: ${scene.location_name || ''}
 Beats Included: ${beatNums}
 Estimated Natural Runtime: ${scene.estimated_duration_seconds || '8 seconds or less'}
 
-Target Scene Script Beats:
-"""
-${scene.scene_script_beats || ''}
-"""
+Use the FULL SOURCE BEAT SCRIPT appended below to extract ONLY Beats ${beatNums}.
+Copy their complete original text verbatim into scene_script_beats, including headers, emotion, WPM, all dialogue and pause tags, ACTION, CAMERA, MOTION, SFX, and any existing fields. Do not summarize, rewrite, add, omit, or duplicate content.
+Generate the storyboard panels from ONLY those assigned beats, one panel per beat in the same order. The rest of the source script is context only and must not be included in this scene.
 
 ---
 
@@ -380,47 +366,25 @@ ${scene.scene_script_beats || ''}
 Return ONLY valid JSON with this structure:
 
 {
+  "beat_numbers": ${JSON.stringify(scene.beat_numbers)},
+  "scene_script_beats": "Complete verbatim source text of ONLY the assigned beats, in order. Escape newlines and quotes as valid JSON.",
   "storyboard_prompt": "Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.\n\nCreate a [GRID] 3D animation panel grid, [NUMBER] panels, for a full-color 3D animated children's film.\n\nScene: ${scene.title || 'Scene'}\n\nEnvironment: [location, time of day, lighting and important environmental details]\n\nCharacters: [exact names of the characters present, each as one single individual, matching their attached reference images — no appearance description]\n\nPanel 1: [visual description based on Beat 1]\n\nPanel 2: [visual description based on Beat 2]\n\n...\n\nMaintain 3D CGI visual continuity across all panels. Number each panel in the corner.\n\nStyle Directive: Clean 3D CGI digital animation render only. No 2D sketches, no pencil outlines, no hand-drawn artwork."
 }`;
-
-        try {
-          const pass2Response = await callAi(pass2Prompt, 64000);
-          const pass2Text = typeof pass2Response === "string" ? pass2Response : pass2Response?.text || "";
-          const parsedPass2 = parseAiJson(pass2Text);
-
-          let promptStr = "";
-          if (parsedPass2?.storyboard_prompt) {
-            promptStr = parsedPass2.storyboard_prompt;
-          } else if (typeof parsedPass2 === "string") {
-            promptStr = parsedPass2;
-          }
-
-          finalScenes.push({
-            ...scene,
-            scene_number: scene.scene_number || idx + 1,
-            storyboard_prompt: promptStr || `Full-color 3D CGI animation frame, Disney Pixar quality. Scene: ${scene.title}`,
-          });
-        } catch (scErr) {
-          console.warn(`Failed to generate prompt for scene ${idx + 1}, using fallback:`, scErr);
-          finalScenes.push({
-            ...scene,
-            scene_number: scene.scene_number || idx + 1,
-            storyboard_prompt: `Full-color 3D CGI animation frame, Disney Pixar quality. Scene: ${scene.title}`,
-          });
-        }
-      }
+        return { prompt: pass2Prompt, beatNumbers: scene.beat_numbers };
+      });
+      const generatedScenes = await generateStoryboardBatchAction(prompt, sceneRequests);
+      const finalScenes = detectedScenes.map((scene, index) => ({ ...scene, ...generatedScenes[index] }));
 
       if (finalScenes.length > 0) {
         const payload = finalScenes.map((scene, idx) => ({
           scriptId: selectedScript,
           sceneNumber: scene.scene_number || idx + 1,
           title: scene.title,
-          description: scene.description || scene.title,
+          description: scene.title,
           storyboardPrompt: scene.storyboard_prompt,
 
           locationName: scene.location_name,
           characterNames: scene.character_names,
-          episodeLocationId: scene.episodeLocationId,
           beatNumbers: scene.beat_numbers,
           sceneScriptBeats: scene.scene_script_beats,
         }));
