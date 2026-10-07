@@ -62,7 +62,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
         subtitle: `Episode ${script.episode_number || '1'}`,
         timeAgo: getTimeAgo(date),
         timestamp: date.toISOString(),
-        href: `/script-generate/${script.id}`,
+        href: `/episode-production/scripts/${script.id}`,
       });
     }
 

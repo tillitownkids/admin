@@ -1,5 +1,7 @@
 'use client';
 
+import { FormSelect } from "@/components/ui/form-select";
+
 import { useState } from 'react';
 import { MapPin, Sparkles, Loader2, Check } from 'lucide-react';
 import { fieldClass, labelClass, primaryButtonClass, selectFieldClass } from '@/lib/styles';
@@ -158,16 +160,16 @@ export function LocationsStage({ storyId, storyContent, episodeLocations, locati
                 </div>
                 <div className="space-y-2">
                   <label className={labelClass}>Link to existing location</label>
-                  <select
-                    value={d.linkedLocationId}
-                    onChange={(e) => updateDetected(i, { linkedLocationId: e.target.value })}
+                  <FormSelect
+                    ariaLabel="Link to existing location" value={d.linkedLocationId}
+                    onValueChange={(value) => updateDetected(i, { linkedLocationId: value })}
                     className={selectFieldClass}
                   >
                     <option value="">Create new &quot;{d.name}&quot;</option>
                     {locationLibrary.map((loc) => (
                       <option key={loc.id} value={loc.id}>{loc.name}</option>
                     ))}
-                  </select>
+                  </FormSelect>
                 </div>
               </div>
               <div className="space-y-2">

@@ -1,5 +1,7 @@
 "use client";
 
+import { FormSelect } from "@/components/ui/form-select";
+
 import { FormEvent, useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -194,20 +196,20 @@ export function YouTubePublishControls({
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <label className="block space-y-2">
                   <span className="text-sm font-semibold text-foreground">Visibility</span>
-                  <select value={privacyStatus} onChange={(event) => setPrivacyStatus(event.target.value as PrivacyStatus)} className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-foreground outline-none focus:ring-2 focus:ring-primary/40">
+                  <FormSelect ariaLabel="Visibility" value={privacyStatus} onValueChange={(value) => setPrivacyStatus(value as PrivacyStatus)} className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-foreground outline-none focus:ring-2 focus:ring-primary/40">
                     <option value="private">Private</option>
                     <option value="unlisted">Unlisted</option>
                     <option value="public">Public</option>
-                  </select>
+                  </FormSelect>
                 </label>
                 <label className="block space-y-2">
                   <span className="text-sm font-semibold text-foreground">Category</span>
-                  <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-foreground outline-none focus:ring-2 focus:ring-primary/40">
+                  <FormSelect ariaLabel="Category" value={categoryId} onValueChange={setCategoryId} className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-foreground outline-none focus:ring-2 focus:ring-primary/40">
                     <option value="1">Film & Animation</option>
                     <option value="22">People & Blogs</option>
                     <option value="24">Entertainment</option>
                     <option value="27">Education</option>
-                  </select>
+                  </FormSelect>
                 </label>
               </div>
 

@@ -136,13 +136,13 @@ export default function Home() {
             <h2 className="text-lg font-semibold tracking-tight">Quick Actions</h2>
           </div>
           <div className="p-5 flex flex-col gap-2">
-            <Link href="/story-generate" className="w-full block">
+            <Link href="/episode-production/stories" className="w-full block">
               <div className="group w-full flex flex-col items-center justify-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 p-5 rounded-lg font-medium transition-colors">
                 <FileText size={24} className="mb-1 opacity-90 group-hover:scale-110 transition-transform" />
                 <span>Generate New Story</span>
               </div>
             </Link>
-            <Link href="/script-generate" className="w-full block">
+            <Link href="/episode-production/scripts" className="w-full block">
               <div className="group w-full flex flex-col items-center justify-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 p-5 rounded-lg font-medium transition-colors">
                 <FileText size={24} className="mb-1 opacity-90 group-hover:scale-110 transition-transform" />
                 <span>Generate New Script</span>

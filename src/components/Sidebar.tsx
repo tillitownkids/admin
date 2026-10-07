@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon, LogOut, Film } from "lucide-react";
+import { LayoutDashboard, CheckSquare, Tv, Clapperboard, Users, MapPin, LogOut, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { signout } from "@/actions/auth";
@@ -11,11 +11,8 @@ import type { User } from "@supabase/supabase-js";
 
 export const navItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
-  { name: "Story Generate", path: "/story-generate", icon: FileText },
   { name: "Characters", path: "/characters", icon: Users },
   { name: "Locations", path: "/locations", icon: MapPin },
-  { name: "Script Generate", path: "/script-generate", icon: FileText },
-  { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
   { name: "Video Production", path: "/episode-production", icon: Clapperboard },
   { name: "Video Stitching", path: "/video-stitching", icon: Film },
   { name: "Video Publishing", path: "/video-approval", icon: CheckSquare },
@@ -65,6 +62,7 @@ export default function Sidebar() {
               <Link
                 key={item.path}
                 href={item.path}
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
                   isActive 

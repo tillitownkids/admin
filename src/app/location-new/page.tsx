@@ -1,5 +1,7 @@
 "use client";
 
+import { FormSelect } from "@/components/ui/form-select";
+
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { GlassPanel } from "@/components/GlassPanel";
@@ -160,9 +162,9 @@ export default function LocationNewPage() {
                 No stories found in database.
               </div>
             ) : (
-              <select
-                value={selectedStoryId}
-                onChange={(e) => handleStorySelect(e.target.value)}
+              <FormSelect
+                ariaLabel="Episode story" value={selectedStoryId}
+                onValueChange={handleStorySelect}
                 className={selectFieldClass}
               >
                 <option value="">Choose a fetched story from database</option>
@@ -171,7 +173,7 @@ export default function LocationNewPage() {
                     {story.topic || story.concept?.slice(0, 40) || "Untitled Story"}
                   </option>
                 ))}
-              </select>
+              </FormSelect>
             )}
           </div>
 

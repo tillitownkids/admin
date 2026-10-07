@@ -2,20 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Clapperboard, Loader2 } from 'lucide-react';
-import { PageHeader } from '@/components/PageHeader';
+import { ArrowRight, Clapperboard, Loader2 } from 'lucide-react';
 import { getSavedStoryboardsAction } from '@/actions/saveStoryboardAction';
 
-
-const STAGE_LABELS: Record<string, string> = {
-  story: 'Not Started',
-  locations: 'Locations',
-  stylesheets: 'Stylesheets',
-  scenes: 'Scenes',
-  storyboards: 'Storyboards',
-  beats: 'Beats',
-  complete: 'Complete',
-};
 
 interface SavedStoryboardRow {
   id: string;
@@ -47,13 +36,6 @@ export default function EpisodeProductionIndexPage() {
 
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
-      <PageHeader
-        icon={Clapperboard}
-        title="Episode"
-        highlight="Production"
-        description="Turn an episode story into locations, stylesheets, storyboards, and a scene-by-scene shot script."
-      />
-
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {isLoading && (
           <div className="col-span-full py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
@@ -63,9 +45,12 @@ export default function EpisodeProductionIndexPage() {
         )}
 
         {!isLoading && storyboards.length === 0 && (
-          <p className="text-sm text-muted-foreground col-span-full">
-            No episodes with saved storyboards found. Create a storyboard in Storyboard Generator first.
-          </p>
+          <div className="col-span-full rounded-2xl border border-dashed border-border bg-card px-6 py-10 text-center">
+            <Clapperboard className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+            <h3 className="font-semibold">Start your first episode</h3>
+            <p className="mt-2 text-sm text-muted-foreground">Generate a story, create its script, then save a storyboard to begin production.</p>
+            <Link href="/episode-production/stories" className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Generate a story <ArrowRight className="h-4 w-4" /></Link>
+          </div>
         )}
 
         {storyboards.map((sb) => (

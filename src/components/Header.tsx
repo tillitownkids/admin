@@ -21,7 +21,7 @@ export default function Header() {
   const pathname = usePathname();
 
   const isHome = pathname === "/";
-  const pageTitle = navItems.find((item) => item.path === pathname)?.name;
+  const pageTitle = navItems.find((item) => item.path === pathname || (item.path !== "/" && pathname.startsWith(`${item.path}/`)))?.name;
 
   return (
     <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-border bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/75 md:px-8">

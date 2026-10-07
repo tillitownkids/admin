@@ -1,5 +1,7 @@
 'use client';
 
+import { FormSelect } from "@/components/ui/form-select";
+
 import { Users, Type, Sparkles, Save, Check, Loader2, Cpu } from "lucide-react";
 import { useState, useEffect } from "react";
 import { labelClass, selectFieldClass, primaryButtonClass } from "@/lib/styles";
@@ -146,16 +148,16 @@ export function DashboardSettings() {
                 Target Audience
               </label>
               <div className="relative">
-                <select
-                  value={currentState.targetAudience}
-                  onChange={(e) => handleAudienceChange(e.target.value)}
+                <FormSelect
+                  ariaLabel="Target audience" value={currentState.targetAudience}
+                  onValueChange={handleAudienceChange}
                   className={selectFieldClass}
                 >
                   <option value="kids">Kids (4-8 years)</option>
                   <option value="preteens">Pre-teens (9-12 years)</option>
                   <option value="teens">Teens (13-17 years)</option>
                   <option value="general">General Audience</option>
-                </select>
+                </FormSelect>
               </div>
             </div>
 
@@ -166,16 +168,16 @@ export function DashboardSettings() {
                 Tone
               </label>
               <div className="relative">
-                <select
-                  value={currentState.tone}
-                  onChange={(e) => handleToneChange(e.target.value)}
+                <FormSelect
+                  ariaLabel="Tone" value={currentState.tone}
+                  onValueChange={handleToneChange}
                   className={selectFieldClass}
                 >
                   <option value="educational">Educational & Fun</option>
                   <option value="adventurous">Adventurous</option>
                   <option value="humorous">Humorous</option>
                   <option value="emotional">Emotional & Heartwarming</option>
-                </select>
+                </FormSelect>
               </div>
             </div>
 
@@ -186,14 +188,14 @@ export function DashboardSettings() {
                 AI Model
               </label>
               <div className="relative">
-                <select
-                  value={currentState.aiModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
+                <FormSelect
+                  ariaLabel="AI model" value={currentState.aiModel}
+                  onValueChange={handleModelChange}
                   className={selectFieldClass}
                 >
                   <option value="claude">Claude</option>
                   <option value="kimi2.5">Kimi 2.5</option>
-                </select>
+                </FormSelect>
               </div>
             </div>
           </div>

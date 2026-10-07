@@ -1,5 +1,7 @@
 'use client';
 
+import { FormSelect } from "@/components/ui/form-select";
+
 import { useState, useEffect } from "react";
 import {
   Film,
@@ -224,9 +226,9 @@ export default function VideoStitchingPage() {
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
             Episode:
           </label>
-          <select
-            value={selectedStoryId}
-            onChange={(e) => setSelectedStoryId(e.target.value)}
+          <FormSelect
+            ariaLabel="Episode story" value={selectedStoryId}
+            onValueChange={setSelectedStoryId}
             className="bg-card text-foreground border border-border rounded-lg px-3.5 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 min-w-[240px]"
           >
             {stories.map((story) => (
@@ -234,7 +236,7 @@ export default function VideoStitchingPage() {
                 {story.topic ? `Ep ${story.episode_number || '1'} - ${story.topic}` : `Story #${story.id.slice(0, 8)}`}
               </option>
             ))}
-          </select>
+          </FormSelect>
         </div>
       </div>
 

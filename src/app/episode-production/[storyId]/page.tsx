@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useState, use } from 'react';
-import { Clapperboard, CheckCircle2, Loader2 } from 'lucide-react';
-import { PageHeader } from '@/components/PageHeader';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 import { GlassPanel } from '@/components/GlassPanel';
 import { ProductionStepper, type ProductionStageKey } from '@/components/episode-production/ProductionStepper';
 import { LocationsStage } from '@/components/episode-production/LocationsStage';
@@ -150,12 +149,6 @@ export default function EpisodeProductionPage({ params }: { params: Promise<{ st
 
   return (
     <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
-      <PageHeader
-        icon={Clapperboard}
-        title={story.topic || 'Untitled Episode'}
-        highlight="Production"
-        description="Walk through locations, references, scenes, storyboards, and video generation for this episode."
-      />
 
       {isComplete && (
         <div className="p-4 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-2">
