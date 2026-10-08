@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Plus, Save, Upload, Loader2, X, Trash2, Sparkles, RefreshCw, Image as ImageIcon } from 'lucide-react';
+import { Plus, Save, Upload, Loader2, X, Trash2, Sparkles } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { GlassPanel } from '@/components/GlassPanel';
-import { GeneratedReferenceHistory } from '@/components/library/GeneratedReferenceHistory';
+import { TakeCountSelect } from '@/components/TakePicker';
+import { ReferenceTakes } from '@/components/library/ReferenceTakes';
+import { Button } from '@/components/ui/button';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
 
 export interface LibraryItem {
@@ -62,6 +64,9 @@ export function LibraryManager({
   const [hasGeneratedSheet, setHasGeneratedSheet] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generationNotice, setGenerationNotice] = useState<string | null>(null);
+  const [generationProgress, setGenerationProgress] = useState<string | null>(null);
+  const [takesPerRun, setTakesPerRun] = useState(1);
+  const [takesReloadKey, setTakesReloadKey] = useState(0);
 
   // Drag & drop reference image state
   const [isDragging, setIsDragging] = useState(false);
@@ -190,13 +195,112 @@ export function LibraryManager({
 
   const manualUploadImageUrl = pendingPreviewUrl || referenceImageUrl || current?.reference_image_url || null;
 
+  const generatedOwnerType = ownerType === 'character_reference'
+    ? 'character_generated' as const
+    : 'location_generated' as const;
+
+  // The form shows the reference sheet that is in use.
+  const applyTakeInUse = (itemId: string, asset: { public_url: string; provider_identifier: string | null }) => {
+    setGeneratedImageUrl(asset.public_url);
+    setMagnificIdentifier(asset.provider_identifier);
+    setHasGeneratedSheet(true);
+    const withSheet = <T extends LibraryItem>(item: T): T => item.id === itemId
+      ? { ...item, generated_image_url: asset.public_url, magnific_identifier: asset.provider_identifier }
+      : item;
+    setCurrent((existing) => existing ? withSheet(existing) : existing);
+    setItems((existing) => existing.map(withSheet));
+  };
+
+  // Creates the item from the form, uploading a dropped reference image along the way.
+  const createItem = async (): Promise<LibraryItem> => {
+    const res = await fetch(apiPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        description: itemDescription,
+        reference_image_url: pendingFile ? null : manualUploadImageUrl,
+        generated_image_url: generatedImageUrl,
+        magnific_identifier: magnificIdentifier
+      }),
+    });
+    if (!res.ok) throw new Error(`Failed to create ${resourceName.toLowerCase()}.`);
+    const data = await res.json();
+    const created: LibraryItem = data[itemKey];
+
+    if (pendingFile) {
+      try {
+        const formData = new FormData();
+        formData.append('file', pendingFile);
+        formData.append('ownerType', ownerType);
+        formData.append('ownerId', created.id);
+        const uploadRes = await fetch('/api/images/upload', { method: 'POST', body: formData });
+        if (!uploadRes.ok) throw new Error('Image upload failed.');
+        const uploadData = await uploadRes.json();
+        const updateRes = await fetch(`${apiPath}/${created.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reference_image_url: uploadData.publicUrl }),
+        });
+        if (!updateRes.ok) throw new Error('Image uploaded but could not be attached to the new item.');
+        created.reference_image_url = uploadData.publicUrl;
+        setReferenceImageUrl(uploadData.publicUrl);
+      } catch (uploadErr) {
+        console.error('Failed to upload image during creation', uploadErr);
+        showError(errorMessage(uploadErr, 'Image upload failed.'));
+      }
+    }
+
+    setCurrent(created);
+    setPendingFile(null);
+    setPendingPreviewUrl(null);
+    await fetchItems();
+    return created;
+  };
+
+  // Asks the image service for one reference sheet.
+  const requestReferenceSheet = async (payload: { name: string; prompt: string; reference_url: string }) => {
+    const webhookUrl = ownerType === 'character_reference'
+      ? 'https://automation.tillitown.com/webhook/generate-character-image'
+      : 'https://automation.tillitown.com/webhook/generate-image';
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || errData.message || `The image service answered with HTTP ${res.status}.`);
+    }
+
+    const resData = await res.json();
+    const first = Array.isArray(resData) ? resData[0] : resData;
+    let url: string | null = null;
+    let identifier: string | null = null;
+    if (typeof first === 'string' && first.startsWith('http')) {
+      url = first;
+    } else if (typeof first === 'object' && first !== null) {
+      url = first.url || first.generated_image_url || first.image_url || first.image || null;
+      identifier = first.identifier || first.magnific_identifier || first.magnific_id || first.id || null;
+    }
+
+    if (!url) throw new Error('The image service returned no image.');
+    if (ownerType === 'character_reference' && !identifier) {
+      throw new Error('The image service returned an image without its identifier, so it cannot be used in storyboards.');
+    }
+    return { url, identifier };
+  };
+
+  // Generates `takesPerRun` reference sheets and saves each as a take. A new item is created first,
+  // because a take has to belong to something.
   const handleGenerateReferenceSheet = async () => {
-    if (!itemDescription.trim()) {
-      showError(`Please enter a prompt description for this ${resourceName.toLowerCase()} first.`);
+    if (!name.trim()) {
+      showError(`Please enter a name for this ${resourceName.toLowerCase()} first.`);
       return;
     }
-    if (ownerType === 'character_reference' && pendingFile) {
-      showError('Save the character first to upload its reference image, then generate the sheet.');
+    if (!itemDescription.trim()) {
+      showError(`Please enter a prompt description for this ${resourceName.toLowerCase()} first.`);
       return;
     }
 
@@ -204,63 +308,60 @@ export function LibraryManager({
     setError(null);
     setGenerationNotice(null);
 
+    let saved = 0;
     try {
-      const payload = {
-        name: name.trim(),
-        prompt: itemDescription.trim(),
-        reference_url: ownerType === 'character_reference' ? (referenceImageUrl || '') : (manualUploadImageUrl || ''),
-      };
-
-      const webhookUrl = ownerType === 'character_reference'
-        ? 'https://automation.tillitown.com/webhook/generate-character-image'
-        : 'https://automation.tillitown.com/webhook/generate-image';
-      const res = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || errData.message || `Webhook error (${res.status})`);
+      let item = current;
+      if (!item) {
+        item = await createItem();
+        setViewMode('edit');
       }
 
-      const resData = await res.json();
+      let putInUse = false;
+      for (let take = 1; take <= takesPerRun; take += 1) {
+        if (takesPerRun > 1) setGenerationProgress(`Generating take ${take} of ${takesPerRun}…`);
+        const generated = await requestReferenceSheet({
+          name: name.trim(),
+          prompt: itemDescription.trim(),
+          reference_url: item.reference_image_url || referenceImageUrl || '',
+        });
 
-      let returnedUrl: string | null = null;
-      let returnedIdentifier: string | null = null;
-
-      if (Array.isArray(resData) && resData.length > 0) {
-        const first = resData[0];
-        returnedUrl = first.url || first.generated_image_url || first.image_url || first.image || null;
-        returnedIdentifier = first.identifier || first.magnific_identifier || first.magnific_id || first.id || null;
-      } else if (typeof resData === 'object' && resData !== null) {
-        returnedUrl = resData.url || resData.generated_image_url || resData.image_url || resData.image || null;
-        returnedIdentifier = resData.identifier || resData.magnific_identifier || resData.magnific_id || resData.id || null;
-      } else if (typeof resData === 'string' && resData.startsWith('http')) {
-        returnedUrl = resData;
+        const res = await fetch('/api/generated-image-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ownerType: generatedOwnerType,
+            ownerId: item.id,
+            imageUrl: generated.url,
+            providerIdentifier: generated.identifier || undefined,
+            promptUsed: itemDescription.trim(),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'The reference sheet was generated but could not be saved.');
+        if (data.asset?.is_selected) {
+          applyTakeInUse(item.id, data.asset);
+          putInUse = true;
+        }
+        if (data.warning) showError(data.warning);
+        saved += 1;
+        setTakesReloadKey((key) => key + 1);
       }
 
-      if (returnedUrl) {
-        setGeneratedImageUrl(returnedUrl);
-      }
-
-      if (returnedIdentifier) {
-        setMagnificIdentifier(returnedIdentifier);
-      }
-
-      if (ownerType === 'character_reference' && (!returnedUrl || !returnedIdentifier)) {
-        throw new Error('The character webhook did not return both an image URL and identifier.');
-      }
-      setHasGeneratedSheet(Boolean(returnedUrl || returnedIdentifier));
-      if (ownerType === 'character_reference') {
-        setGenerationNotice('Character reference sheet generated. Save this character to keep the image and identifier.');
-      }
+      const made = `${saved} reference sheet${saved === 1 ? '' : 's'} generated and saved.`;
+      setGenerationNotice(
+        !putInUse
+          ? `${made} A new take is not used until you choose it.`
+          : saved > 1
+          ? `${made} The first take is in use until you choose another.`
+          : made
+      );
     } catch (err: unknown) {
       console.error(`Error generating ${resourceName.toLowerCase()} reference sheet:`, err);
-      showError(errorMessage(err, 'Failed to generate reference sheet.'));
+      const reason = errorMessage(err, 'Failed to generate reference sheet.');
+      showError(saved > 0 ? `${reason} ${saved} take${saved === 1 ? ' was' : 's were'} already saved.` : reason);
     } finally {
       setIsGeneratingSheet(false);
+      setGenerationProgress(null);
     }
   };
 
@@ -272,50 +373,8 @@ export function LibraryManager({
     setIsSaving(true);
     setError(null);
     try {
-      const res = await fetch(apiPath, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          description: itemDescription,
-          reference_image_url: pendingFile ? null : manualUploadImageUrl,
-          generated_image_url: generatedImageUrl,
-          magnific_identifier: magnificIdentifier
-        }),
-      });
-      if (!res.ok) throw new Error(`Failed to create ${resourceName.toLowerCase()}.`);
-      const data = await res.json();
-      const created: LibraryItem = data[itemKey];
-
-      let uploadWarning: string | null = null;
-      if (pendingFile) {
-        try {
-          const formData = new FormData();
-          formData.append('file', pendingFile);
-          formData.append('ownerType', ownerType);
-          formData.append('ownerId', created.id);
-          const uploadRes = await fetch('/api/images/upload', { method: 'POST', body: formData });
-          if (!uploadRes.ok) throw new Error('Image upload failed.');
-          const uploadData = await uploadRes.json();
-          const updateRes = await fetch(`${apiPath}/${created.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reference_image_url: uploadData.publicUrl }),
-          });
-          if (!updateRes.ok) throw new Error('Image uploaded but could not be attached to the new item.');
-          created.reference_image_url = uploadData.publicUrl;
-        } catch (uploadErr) {
-          console.error('Failed to upload image during creation', uploadErr);
-          uploadWarning = errorMessage(uploadErr, 'Image upload failed.');
-        }
-      }
-
-      setCurrent(created);
-      setPendingFile(null);
-      setPendingPreviewUrl(null);
-      await fetchItems();
+      await createItem();
       setViewMode('list');
-      if (uploadWarning) showError(uploadWarning);
     } catch (err: unknown) {
       showError(errorMessage(err, 'Something went wrong.'));
     } finally {
@@ -375,30 +434,6 @@ export function LibraryManager({
     } finally {
       setIsUploadingImage(false);
     }
-  };
-
-  const generatedOwnerType = ownerType === 'character_reference'
-    ? 'character_generated' as const
-    : 'location_generated' as const;
-
-  const handleHistoryRestored = async (asset: {
-    public_url: string;
-    provider_identifier: string | null;
-  }) => {
-    setGeneratedImageUrl(asset.public_url);
-    setMagnificIdentifier(asset.provider_identifier);
-    setHasGeneratedSheet(true);
-    setCurrent((existing) => existing ? {
-      ...existing,
-      generated_image_url: asset.public_url,
-      magnific_identifier: asset.provider_identifier,
-    } : existing);
-    setItems((existing) => existing.map((item) => item.id === current?.id ? {
-      ...item,
-      generated_image_url: asset.public_url,
-      magnific_identifier: asset.provider_identifier,
-    } : item));
-    setGenerationNotice(`${resourceName} reference sheet restored.`);
   };
 
   return (
@@ -488,16 +523,6 @@ export function LibraryManager({
                 )}
 
                 <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleGenerateReferenceSheet}
-                    disabled={isGeneratingSheet || isSaving || isDeleting || !itemDescription.trim() || (ownerType === 'character_reference' && !name.trim())}
-                    className={primaryButtonClass}
-                  >
-                    {isGeneratingSheet ? <Loader2 className="w-4 h-4 animate-spin" /> : hasGeneratedSheet ? <RefreshCw className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
-                    {isGeneratingSheet ? 'Generating...' : hasGeneratedSheet ? `Regenerate ${resourceName} Reference Sheet` : `Generate ${resourceName} Reference Sheet`}
-                  </button>
-
                   <button
                     type="button"
                     onClick={() => setViewMode('list')}
@@ -606,55 +631,54 @@ export function LibraryManager({
               </div>
             </div>
 
-            {/* SECTION 2: Generated reference sheet (generated_image_url & magnific_identifier) */}
-            {(generatedImageUrl || hasGeneratedSheet || isGeneratingSheet) && (
-              <div className="space-y-3 pt-4 border-t border-border/50">
-                <label className={labelClass}>Generated {resourceName} Reference Sheet</label>
-
-                <div className={`grid grid-cols-1 gap-5 ${viewMode === 'edit' ? 'lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.85fr)]' : ''}`}>
-                  <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-border shadow-sm bg-muted/30 flex items-center justify-center">
-                    {isGeneratingSheet ? (
-                      <div className="flex flex-col items-center justify-center space-y-2 text-primary p-6 text-center">
-                        <Loader2 className="w-8 h-8 animate-spin" />
-                        <p className="text-xs font-semibold">Generating reference sheet with AI...</p>
-                      </div>
-                    ) : generatedImageUrl ? (
-                      <a
-                        href={generatedImageUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="group/img relative w-full h-full block cursor-pointer"
-                        title="Click to open in new tab"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={generatedImageUrl}
-                          alt={`Generated ${resourceName} Reference Sheet`}
-                          className="w-full h-full object-cover transition-transform duration-300 group-hover/img:scale-105"
-                        />
-                      </a>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center p-6 text-muted-foreground text-center space-y-1">
-                        <ImageIcon className="w-8 h-8 text-muted-foreground/50" />
-                        <p className="text-xs">No reference sheet generated yet.</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {viewMode === 'edit' && current && (
-                    <div className="rounded-xl border border-border bg-muted/10 p-4">
-                      <GeneratedReferenceHistory
-                        ownerType={generatedOwnerType}
-                        ownerId={current.id}
-                        resourceName={resourceName}
-                        disabled={isSaving || isDeleting || isGeneratingSheet}
-                        onRestored={handleHistoryRestored}
-                      />
-                    </div>
-                  )}
+            {/* SECTION 2: Generated reference sheets. Every one is kept as a take; one is in use. */}
+            <div className="space-y-4 pt-4 border-t border-border/50">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="space-y-1">
+                  <p className={labelClass}>{resourceName} reference sheet</p>
+                  <p className="max-w-[65ch] text-sm text-muted-foreground">
+                    Generated from the prompt{viewMode === 'create' ? `. The ${resourceName.toLowerCase()} is created first, so each sheet can be kept` : ''}. Generate as many takes as you need, then choose the one storyboards and clips are built from.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <TakeCountSelect value={takesPerRun} onChange={setTakesPerRun} disabled={isGeneratingSheet} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleGenerateReferenceSheet}
+                    disabled={isGeneratingSheet || isSaving || isDeleting || !itemDescription.trim() || !name.trim()}
+                  >
+                    {isGeneratingSheet ? <Loader2 className="animate-spin" /> : hasGeneratedSheet ? <Plus /> : <Sparkles />}
+                    {viewMode === 'create'
+                      ? 'Create and generate'
+                      : hasGeneratedSheet
+                      ? (takesPerRun === 1 ? 'New take' : `${takesPerRun} new takes`)
+                      : (takesPerRun === 1 ? 'Generate reference sheet' : `Generate ${takesPerRun} takes`)}
+                  </Button>
                 </div>
               </div>
-            )}
+
+              {isGeneratingSheet && (
+                <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  {generationProgress || 'Generating the reference sheet…'}
+                </p>
+              )}
+
+              {viewMode === 'edit' && current && (
+                <ReferenceTakes
+                  ownerType={generatedOwnerType}
+                  ownerId={current.id}
+                  resourceName={resourceName}
+                  reloadKey={takesReloadKey}
+                  disabled={isSaving || isDeleting || isGeneratingSheet}
+                  onChosen={(asset) => {
+                    applyTakeInUse(current.id, asset);
+                    setGenerationNotice(`This ${resourceName.toLowerCase()} now uses the chosen reference sheet.`);
+                  }}
+                />
+              )}
+            </div>
           </GlassPanel>
         </div>
       )}

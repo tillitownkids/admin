@@ -1,10 +1,11 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { AlertTriangle, BookOpen, Check, ChevronDown, Film, ListVideo, Loader2, MapPin, RefreshCw, Square, User, Video } from 'lucide-react';
+import { AlertTriangle, BookOpen, Check, ChevronDown, Film, ListVideo, Loader2, MapPin, Plus, Square, User, Video } from 'lucide-react';
 
 import { planSceneShotsAction } from '@/actions/planSceneShotsAction';
 import { ConfirmButton } from '@/components/ConfirmButton';
+import { TakeCountSelect, TakePicker } from '@/components/TakePicker';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import {
   parseShotPlan,
   sceneBeats,
   serializeShotPlan,
+  shotTakes,
   type SceneShot,
   type SceneShotPlan,
   type ShotSceneContext,
@@ -210,6 +212,8 @@ export function VideoStage({
   const [sceneErrors, setSceneErrors] = useState<Record<string, string>>({});
   const [isRunningAll, setIsRunningAll] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [takesPerRun, setTakesPerRun] = useState(1);
+  const [takeBusy, setTakeBusy] = useState<string | null>(null);
   const stopRequested = useRef(false);
 
   const storyboardScenes = scenes
@@ -319,7 +323,9 @@ export function VideoStage({
     }
   };
 
-  // Plans the scene if needed, then generates every shot that has no clip yet. Returns clips generated.
+  const takeProgress = (take: number) => (takesPerRun > 1 ? `, take ${take} of ${takesPerRun}` : '');
+
+  // Plans the scene if needed, then generates `takesPerRun` takes for every shot that has no clip yet. Returns clips generated.
   const generateRemaining = async (scene: SceneRow): Promise<number> => {
     const plan = currentPlan(scene) ?? (await planScenes([scene]))[scene.id];
     if (!plan) return 0;
@@ -328,11 +334,13 @@ export function VideoStage({
     const total = plan.shots.length;
     await runForScene(scene, async () => {
       for (const { shot } of plan.shots) {
-        if (stopRequested.current) return;
         if (currentPlan(scene)?.shots.find((item) => item.shot === shot)?.videoUrl) continue;
-        setSceneActivity(scene.id, `Generating shot ${shot} of ${total}…`);
-        await generateShot(scene, shot);
-        generated += 1;
+        for (let take = 1; take <= takesPerRun; take += 1) {
+          if (stopRequested.current) return;
+          setSceneActivity(scene.id, `Generating shot ${shot} of ${total}${takeProgress(take)}…`);
+          await generateShot(scene, shot);
+          generated += 1;
+        }
       }
     });
     return generated;
@@ -345,9 +353,27 @@ export function VideoStage({
 
   const handleGenerateShot = async (scene: SceneRow, shotNumber: number) => {
     await runForScene(scene, async () => {
-      setSceneActivity(scene.id, `Generating shot ${shotNumber}…`);
-      await generateShot(scene, shotNumber);
+      for (let take = 1; take <= takesPerRun; take += 1) {
+        setSceneActivity(scene.id, `Generating shot ${shotNumber}${takeProgress(take)}…`);
+        await generateShot(scene, shotNumber);
+      }
     });
+    await onRefetchScenes();
+  };
+
+  // Puts one of a shot's takes in use, or deletes one that is not in use.
+  const handleTake = async (scene: SceneRow, shotNumber: number, url: string, action: 'use' | 'delete') => {
+    setTakeBusy(url);
+    await runForScene(scene, async () => {
+      const saved = await saveSceneUpdate(`/api/scenes/${scene.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shot_take: { shot: shotNumber, url, action } }),
+      });
+      const updatedPlan = parseShotPlan((await saved.json())?.scene?.video_prompt);
+      if (updatedPlan) rememberPlan(scene.id, updatedPlan);
+    });
+    setTakeBusy(null);
     await onRefetchScenes();
   };
 
@@ -398,7 +424,8 @@ export function VideoStage({
     const remaining = plan ? plan.shots.filter((shot) => !shot.videoUrl).length : beats.length;
     return { scene, plan, beats, remaining };
   });
-  const remainingClips = sceneViews.reduce((total, view) => total + view.remaining, 0);
+  const remainingShots = sceneViews.reduce((total, view) => total + view.remaining, 0);
+  const remainingClips = remainingShots * takesPerRun;
 
   return (
     <div className="space-y-6">
@@ -406,10 +433,11 @@ export function VideoStage({
         <div>
           <h2 className="text-lg font-semibold text-foreground">Shot clips</h2>
           <p className="text-sm text-muted-foreground">
-            Each beat is one shot and one short clip. Plan a scene&apos;s shots, then generate or redo clips one at a time.
+            Each beat is one shot and one short clip. Generate as many takes of a shot as you need, then choose the one to use.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+          <TakeCountSelect value={takesPerRun} onChange={setTakesPerRun} disabled={isRunningAll || Object.keys(activity).length > 0} />
           {isRunningAll && (
             <Button variant="outline" onClick={() => { stopRequested.current = true; }}>
               <Square />
@@ -419,7 +447,7 @@ export function VideoStage({
           <ConfirmButton
             disabled={isRunningAll || remainingClips === 0}
             title={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}?`}
-            description="One clip for every shot that has none yet, generated one after another across all scenes. Each clip spends video credits and takes a few minutes. You can stop after the current clip."
+            description={`${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each of the ${remainingShots} shot${remainingShots === 1 ? '' : 's'} that ${remainingShots === 1 ? 'has' : 'have'} none yet, generated one after another across all scenes. Each clip spends video credits and takes a few minutes. You can stop after the current clip.`}
             confirmLabel={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}`}
             onConfirm={handleGenerateAll}
           >
@@ -454,6 +482,9 @@ export function VideoStage({
               activity={activity[scene.id]}
               error={sceneErrors[scene.id]}
               disabled={isRunningAll || Boolean(activity[scene.id])}
+              takesPerRun={takesPerRun}
+              takeBusy={takeBusy}
+              onTake={(shotNumber, url, action) => handleTake(scene, shotNumber, url, action)}
               onPlan={() => handlePlan(scene)}
               onGenerateRemaining={() => handleGenerateRemaining(scene)}
               onGenerateShot={(shotNumber) => handleGenerateShot(scene, shotNumber)}
@@ -475,6 +506,9 @@ function SceneShotsCard({
   activity,
   error,
   disabled,
+  takesPerRun,
+  takeBusy,
+  onTake,
   onPlan,
   onGenerateRemaining,
   onGenerateShot,
@@ -487,6 +521,9 @@ function SceneShotsCard({
   activity?: string;
   error?: string;
   disabled: boolean;
+  takesPerRun: number;
+  takeBusy: string | null;
+  onTake: (shotNumber: number, url: string, action: 'use' | 'delete') => void;
   onPlan: () => void;
   onGenerateRemaining: () => void;
   onGenerateShot: (shotNumber: number) => void;
@@ -503,6 +540,7 @@ function SceneShotsCard({
   const clipCount = plan ? plan.shots.filter((shot) => shot.videoUrl).length : 0;
   const shotCount = plan ? plan.shots.length : parsedBeatNumbers.length;
   const isGrid = shotCount > 1;
+  const clipsToGenerate = (shotCount - clipCount) * takesPerRun;
 
   return (
     <Card>
@@ -531,10 +569,8 @@ function SceneShotsCard({
             size="sm"
             variant="outline"
             disabled={disabled || (Boolean(plan) && clipCount === shotCount)}
-            title={`Generate ${shotCount - clipCount} clip${shotCount - clipCount === 1 ? '' : 's'} for scene ${sceneNumber}?`}
-            description={plan
-              ? 'One clip for each shot that has none yet. Each clip spends video credits and takes a few minutes.'
-              : 'The shots are planned first, then one clip is generated for each. Each clip spends video credits and takes a few minutes.'}
+            title={`Generate ${clipsToGenerate} clip${clipsToGenerate === 1 ? '' : 's'} for scene ${sceneNumber}?`}
+            description={`${plan ? '' : 'The shots are planned first. '}${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each shot that has none yet. Each clip spends video credits and takes a few minutes.`}
             confirmLabel="Generate clips"
             onConfirm={onGenerateRemaining}
           >
@@ -611,6 +647,9 @@ function SceneShotsCard({
                 shot={shot}
                 isGrid={isGrid}
                 disabled={disabled}
+                takesPerRun={takesPerRun}
+                takeBusy={takeBusy}
+                onTake={(url, action) => onTake(shot.shot, url, action)}
                 onGenerate={() => onGenerateShot(shot.shot)}
                 onSavePrompt={(prompt) => onSavePrompt(shot.shot, prompt)}
               />
@@ -651,12 +690,18 @@ function ShotRow({
   shot,
   isGrid,
   disabled,
+  takesPerRun,
+  takeBusy,
+  onTake,
   onGenerate,
   onSavePrompt,
 }: {
   shot: SceneShot;
   isGrid: boolean;
   disabled: boolean;
+  takesPerRun: number;
+  takeBusy: string | null;
+  onTake: (url: string, action: 'use' | 'delete') => void;
   onGenerate: () => void;
   onSavePrompt: (prompt: string) => void;
 }) {
@@ -666,6 +711,7 @@ function ShotRow({
 
   const longestClip = SHOT_DURATIONS[SHOT_DURATIONS.length - 1];
   const overCap = shot.seconds > SHOT_CAP_SECONDS;
+  const takes = shotTakes(shot);
 
   return (
     <div className="space-y-2.5 border-t border-border pt-4 first:border-t-0 first:pt-0">
@@ -683,28 +729,16 @@ function ShotRow({
               shot.beat !== null ? `Beat ${shot.beat}` : null,
               `${shot.seconds} s clip`,
               shot.dialogueWords > 0 ? `${shot.dialogueWords} spoken words` : 'no dialogue',
+              takes.length > 1 ? `${takes.length} takes` : null,
             ].filter(Boolean).join(' · ')}
           </p>
         </div>
-        {shot.videoUrl ? (
-          <ConfirmButton
-            size="sm"
-            variant="outline"
-            disabled={disabled}
-            title={`Regenerate the clip for shot ${shot.shot}?`}
-            description="The saved clip is replaced by a new one. This spends video credits."
-            confirmLabel="Regenerate clip"
-            onConfirm={onGenerate}
-          >
-            <RefreshCw />
-            Regenerate clip
-          </ConfirmButton>
-        ) : (
-          <Button size="sm" variant="outline" onClick={onGenerate} disabled={disabled}>
-            <Video />
-            Generate clip
-          </Button>
-        )}
+        <Button size="sm" variant="outline" onClick={onGenerate} disabled={disabled}>
+          {shot.videoUrl ? <Plus /> : <Video />}
+          {shot.videoUrl
+            ? (takesPerRun === 1 ? 'New take' : `${takesPerRun} new takes`)
+            : (takesPerRun === 1 ? 'Generate clip' : `Generate ${takesPerRun} takes`)}
+        </Button>
       </div>
 
       {overCap && (
@@ -715,7 +749,18 @@ function ShotRow({
         </p>
       )}
 
-      {shot.videoUrl && (
+      {takes.length > 1 ? (
+        <TakePicker
+          kind="video"
+          subject={`clip for shot ${shot.shot}`}
+          takes={takes.map((take) => ({ key: take.url, url: take.url, createdAt: take.createdAt, inUse: take.url === shot.videoUrl }))}
+          busyKey={takeBusy}
+          disabled={disabled}
+          onUse={(take) => onTake(take.url, 'use')}
+          onDelete={(take) => onTake(take.url, 'delete')}
+          className="xl:grid-cols-2"
+        />
+      ) : shot.videoUrl && (
         <video controls preload="metadata" src={shot.videoUrl} className="aspect-video w-full max-w-md rounded-lg border bg-black object-contain" />
       )}
 

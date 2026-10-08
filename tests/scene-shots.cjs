@@ -10,6 +10,7 @@ const {
   parseScriptBeats, dialogueWordCount, dialoguePauseSeconds, dialogueForVideo, planShotTiming,
   buildShotDirectionPrompt, validateShotDirection, buildShotPrompt, buildShotPlan,
   parseShotPlan, serializeShotPlan, sceneClips, SHOT_DURATIONS,
+  shotTakes, addShotTake, selectShotTake, removeShotTake,
 } = exported;
 
 // The three tag styles found in saved scripts, plus a timing block whose
@@ -186,6 +187,41 @@ assert.deepEqual(replanned.shots.map(s => s.videoUrl), ['https://x/1.mp4', null,
 const shifted = buildShotPlan({ ...scene, scriptBeats: script.split('---')[1] }, { lighting: 'Night', shots: direction.shots.slice(1) }, withClips);
 assert.deepEqual(shifted.shots.map(s => s.videoUrl), [null, null]);
 
+// Takes: every generated clip is kept, and the shot's videoUrl names the one in use.
+const emptyShot = plan.shots[1];
+assert.deepEqual(shotTakes(emptyShot), []);
+const firstTake = addShotTake(emptyShot, { url: 'https://x/a.mp4', magnificId: 'ma', createdAt: 't1' });
+assert.equal(firstTake.videoUrl, 'https://x/a.mp4', 'the first take is put in use');
+assert.equal(firstTake.magnificId, 'ma');
+const secondTake = addShotTake(firstTake, { url: 'https://x/b.mp4', magnificId: 'mb', createdAt: 't2' });
+assert.equal(secondTake.videoUrl, 'https://x/a.mp4', 'a later take never replaces the clip in use');
+assert.deepEqual(shotTakes(secondTake).map(t => t.url), ['https://x/a.mp4', 'https://x/b.mp4']);
+assert.equal(addShotTake(secondTake, { url: 'https://x/b.mp4' }).takes.length, 2, 'the same clip is not listed twice');
+
+const chosen = selectShotTake(secondTake, 'https://x/b.mp4');
+assert.equal(chosen.videoUrl, 'https://x/b.mp4');
+assert.equal(chosen.magnificId, 'mb');
+assert.equal(selectShotTake(secondTake, 'https://x/unknown.mp4'), null);
+
+assert.equal(removeShotTake(chosen, 'https://x/b.mp4'), null, 'the clip in use cannot be removed');
+assert.equal(removeShotTake(chosen, 'https://x/unknown.mp4'), null);
+assert.deepEqual(removeShotTake(chosen, 'https://x/a.mp4').takes.map(t => t.url), ['https://x/b.mp4']);
+
+// A clip saved before takes were kept is the shot's only take, and survives the next generation.
+const olderShot = withClips.shots[0];
+assert.deepEqual(shotTakes(olderShot), [{ url: 'https://x/1.mp4', magnificId: 'm1', createdAt: null }]);
+const olderPlusNew = addShotTake(olderShot, { url: 'https://x/1b.mp4', magnificId: 'm1b', createdAt: 't3' });
+assert.equal(olderPlusNew.videoUrl, 'https://x/1.mp4');
+assert.deepEqual(shotTakes(olderPlusNew).map(t => t.url), ['https://x/1.mp4', 'https://x/1b.mp4']);
+
+// Re-planning keeps a beat's takes along with its clip in use; stitching reads only the clip in use.
+const withTakes = { ...withClips, shots: withClips.shots.map((s, i) => (i === 0 ? selectShotTake(olderPlusNew, 'https://x/1b.mp4') : s)) };
+const replannedTakes = buildShotPlan(scene, direction, withTakes);
+assert.equal(replannedTakes.shots[0].videoUrl, 'https://x/1b.mp4');
+assert.equal(replannedTakes.shots[0].takes.length, 2);
+assert.equal('takes' in replannedTakes.shots[1], false);
+assert.deepEqual(sceneClips({ video_prompt: serializeShotPlan(withTakes) }).clips[0], { url: 'https://x/1b.mp4', shot: 1 });
+
 // Shot clips play in shot order; a scene with no shot clips falls back to its older single clip.
 const legacy = { clips: [{ url: 'https://x/legacy.mp4', shot: null }], missingShots: 0 };
 assert.deepEqual(sceneClips({ video_prompt: serializeShotPlan(withClips), video_url: 'https://x/legacy.mp4' }),
@@ -194,4 +230,4 @@ assert.deepEqual(sceneClips({ video_prompt: serializeShotPlan(plan), video_url: 
 assert.deepEqual(sceneClips({ video_prompt: '## SCRIPT', video_url: 'https://x/legacy.mp4' }), legacy);
 assert.deepEqual(sceneClips({ video_prompt: null, video_url: null }), { clips: [], missingShots: 0 });
 
-console.log('Scene shots: beat parsing, dialogue timing, shot prompts, plan storage and clip ordering passed.');
+console.log('Scene shots: beat parsing, dialogue timing, shot prompts, plan storage, takes and clip ordering passed.');

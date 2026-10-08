@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
 
-import { processAndUploadStoryboardImage, processAndUploadSceneVideo } from '@/lib/storage';
-import { parseShotPlan, serializeShotPlan } from '@/lib/sceneShots';
+import { processAndUploadStoryboardImage, processAndUploadSceneVideo, deleteSceneVideoFromStorage } from '@/lib/storage';
+import { addShotTake, parseShotPlan, removeShotTake, selectShotTake, serializeShotPlan } from '@/lib/sceneShots';
 
 // The generator's own link is temporary. A clip left on it disappears later and breaks stitching.
 const TEMPORARY_CLIP_WARNING = 'The clip was saved, but copying it to permanent storage failed, so it is on a temporary link that will stop working. Regenerate this clip to store it properly.';
@@ -32,10 +32,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       script_beats,
       beat_numbers,
       shot_clip,
+      shot_take,
     } = body;
 
     const updatePayload: Record<string, any> = { updated_at: new Date() };
     let warning: string | undefined;
+    let clipToRemove: string | null = null;
     if (storyboard_prompt !== undefined) updatePayload.storyboard_prompt = storyboard_prompt;
     if (script_beats !== undefined) updatePayload.script_beats = script_beats;
     if (beat_numbers !== undefined) updatePayload.beat_numbers = beat_numbers;
@@ -74,8 +76,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // In a shot clip update the identifier belongs to the shot, not to the scene's unique column.
     if (video_magnific_identifier !== undefined && shot_clip === undefined) updatePayload.video_magnific_identifier = video_magnific_identifier;
 
-    // One generated shot clip. It is merged into the scene's shot plan here, on the
-    // server, so each save starts from the stored plan rather than a client copy.
+    // One generated shot clip. It is added to the shot's takes here, on the server, so each
+    // save starts from the stored plan rather than a client copy.
     if (shot_clip !== undefined) {
       const clipUrl = shot_clip?.video_url;
       if (typeof clipUrl !== 'string' || !clipUrl.startsWith('http')) {
@@ -96,11 +98,37 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         console.warn('Failed to upload shot clip to permanent storage, using original URL:', err);
         warning = TEMPORARY_CLIP_WARNING;
       }
-      shot.videoUrl = permanentClipUrl;
-      shot.magnificId = clipIdentifier;
+      const take = { url: permanentClipUrl, magnificId: clipIdentifier, createdAt: new Date().toISOString() };
+      plan.shots = plan.shots.map((item) => (item === shot ? addShotTake(item, take) : item));
       updatePayload.video_prompt = serializeShotPlan(plan);
       // video_url keeps meaning "this scene has video" for readers that predate shots.
       updatePayload.video_url = plan.shots.find((item) => item.videoUrl)?.videoUrl ?? null;
+    }
+
+    // Choosing which of a shot's takes is in use, or deleting one that is not.
+    if (shot_take !== undefined) {
+      const takeUrl = shot_take?.url;
+      const action = shot_take?.action;
+      if (typeof takeUrl !== 'string' || (action !== 'use' && action !== 'delete')) {
+        return NextResponse.json({ error: 'shot_take needs a url and an action of "use" or "delete".' }, { status: 400 });
+      }
+      const plan = parseShotPlan(await loadVideoPrompt(id));
+      const shot = plan?.shots.find((item) => item.shot === Number(shot_take.shot));
+      if (!plan || !shot) {
+        return NextResponse.json({ error: `Scene has no planned shot ${shot_take?.shot}.` }, { status: 400 });
+      }
+      const updated = action === 'use' ? selectShotTake(shot, takeUrl) : removeShotTake(shot, takeUrl);
+      if (!updated) {
+        return NextResponse.json({
+          error: action === 'use'
+            ? 'That take no longer exists. Reload the page to see the current takes.'
+            : 'The take in use cannot be deleted. Choose another take first.',
+        }, { status: 409 });
+      }
+      plan.shots = plan.shots.map((item) => (item === shot ? updated : item));
+      updatePayload.video_prompt = serializeShotPlan(plan);
+      updatePayload.video_url = plan.shots.find((item) => item.videoUrl)?.videoUrl ?? null;
+      if (action === 'delete') clipToRemove = takeUrl;
     }
 
 
@@ -140,6 +168,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!scene) {
       throw new Error(`Failed to update scene ${id}`);
     }
+
+    // The file goes only after the plan that pointed at it has been saved without it.
+    if (clipToRemove) await deleteSceneVideoFromStorage(clipToRemove);
 
     return NextResponse.json({ scene, warning });
   } catch (error: any) {
