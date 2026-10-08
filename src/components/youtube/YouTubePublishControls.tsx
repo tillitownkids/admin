@@ -35,7 +35,7 @@ interface YouTubePublishControlsProps {
 }
 
 function statusClass(status: string) {
-  if (status === "published") return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+  if (status === "published") return "bg-success/10 text-success";
   if (status === "failed") return "bg-destructive/10 text-destructive";
   return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
 }

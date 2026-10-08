@@ -43,7 +43,7 @@ export default function LoginPage() {
         <ThemeToggle />
       </div>
 
-      <div className="w-full max-w-md z-10 page-enter">
+      <div className="w-full max-w-md z-10">
         <div className="bg-card text-card-foreground border border-border shadow-2xl rounded-2xl p-8 space-y-6">
           
           <div className="flex flex-col items-center text-center space-y-3">

@@ -127,7 +127,7 @@ function StylesheetItem({
         <h4 className="text-lg font-bold text-foreground">{episodeLocation.Location.name}</h4>
         <span
           className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-            episodeLocation.status === 'approved' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-secondary text-secondary-foreground'
+            episodeLocation.status === 'approved' ? 'bg-success/10 text-success' : 'bg-secondary text-secondary-foreground'
           }`}
         >
           {episodeLocation.status}

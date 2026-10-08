@@ -28,6 +28,8 @@
   --muted-foreground: oklch(0.556 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* Readable green for success text and status marks; --primary is the fill colour. */
+  --success: oklch(0.5 0.13 163);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --chart-1: oklch(0.845 0.143 164.978);
@@ -48,23 +50,6 @@
   --foreground: oklch(0.145 0 0);
 }
 
-/* Page transitions */
-.page-enter {
-  animation: fadeIn 0.4s ease-out forwards;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -81,6 +66,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --success: oklch(0.76 0.15 163);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -119,6 +105,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -153,6 +140,16 @@
 
   html {
     @apply font-sans;
+    scrollbar-color: var(--muted) transparent;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  }
+
+  input,
+  textarea {
+    caret-color: var(--success);
   }
 }
 

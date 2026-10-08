@@ -1,9 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { AlertTriangle, BookOpen, Check, ChevronDown, Film, FileText, ListVideo, Loader2, MapPin, RefreshCw, Square, User, Video } from 'lucide-react';
+import { AlertTriangle, BookOpen, Check, ChevronDown, Film, ListVideo, Loader2, MapPin, RefreshCw, Square, User, Video } from 'lucide-react';
 
 import { planSceneShotsAction } from '@/actions/planSceneShotsAction';
+import { ConfirmButton } from '@/components/ConfirmButton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,7 +28,6 @@ interface VideoStageProps {
   scenes: SceneRow[];
   episodeLocations: EpisodeLocationRow[];
   onRefetchScenes: () => Promise<void>;
-  onConfirmed: () => Promise<void> | void;
 }
 
 async function saveSceneUpdate(url: string, options: RequestInit): Promise<Response> {
@@ -155,7 +155,7 @@ function shotContext(scene: SceneRow): ShotSceneContext {
 // One request per shot. `shot` and `duration` are additions to the scene payload the webhook already accepts.
 function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: EpisodeLocationRow[]) {
   if (!scene.magnific_identifier) {
-    throw new Error(`Scene #${scene.scene_number} storyboard is missing its Magnific identifier.`);
+    throw new Error(`Scene ${scene.scene_number}'s storyboard image was saved without its generator reference. Regenerate that image in the Storyboard step, then try again.`);
   }
 
   // SceneCharacter is the authoritative character list for this scene.
@@ -166,17 +166,17 @@ function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: Ep
     else missingCharacters.push(character.name);
   }
   if (missingCharacters.length > 0) {
-    throw new Error(`Scene #${scene.scene_number} is missing Magnific identifiers for: ${missingCharacters.join(', ')}.`);
+    throw new Error(`Scene ${scene.scene_number}: ${missingCharacters.join(', ')} ${missingCharacters.length === 1 ? 'has' : 'have'} no reference sheet yet. Generate ${missingCharacters.length === 1 ? 'it' : 'them'} in Characters, then try again.`);
   }
 
   const matchedEpLoc = episodeLocations.find(
     (el) => el.id === scene.episode_location_id || el.Location.name.toLowerCase() === scene.locationName.toLowerCase()
   );
   if (!matchedEpLoc) {
-    throw new Error(`Scene #${scene.scene_number} location "${scene.locationName || 'Unknown'}" is not linked to an episode location reference.`);
+    throw new Error(`Scene ${scene.scene_number}: the location "${scene.locationName || 'unknown'}" is not linked to this episode.`);
   }
   if (!matchedEpLoc.Location.magnific_identifier) {
-    throw new Error(`Scene #${scene.scene_number} location "${matchedEpLoc.Location.name}" is missing a Magnific identifier.`);
+    throw new Error(`Scene ${scene.scene_number}: the location "${matchedEpLoc.Location.name}" has no reference sheet yet. Generate it in Locations, then try again.`);
   }
 
   return {
@@ -202,7 +202,6 @@ export function VideoStage({
   scenes,
   episodeLocations,
   onRefetchScenes,
-  onConfirmed,
 }: VideoStageProps) {
   // Plans saved in this session. The ref is what long-running generation reads; the state is what renders.
   const plansRef = useRef<Record<string, SceneShotPlan>>({});
@@ -210,7 +209,6 @@ export function VideoStage({
   const [activity, setActivity] = useState<Record<string, string>>({});
   const [sceneErrors, setSceneErrors] = useState<Record<string, string>>({});
   const [isRunningAll, setIsRunningAll] = useState(false);
-  const [isConfirming, setIsConfirming] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const stopRequested = useRef(false);
 
@@ -278,7 +276,7 @@ export function VideoStage({
 
   const generateShot = async (scene: SceneRow, shotNumber: number) => {
     const shot = currentPlan(scene)?.shots.find((item) => item.shot === shotNumber);
-    if (!shot) throw new Error(`Scene #${scene.scene_number} has no planned shot ${shotNumber}.`);
+    if (!shot) throw new Error(`Scene ${scene.scene_number} has no planned shot ${shotNumber}. Plan its shots first.`);
 
     const res = await sendVideoWebhook(buildShotPayload(scene, shot, episodeLocations));
     const responseBody = await res.text();
@@ -394,18 +392,6 @@ export function VideoStage({
     }
   };
 
-  const handleConfirmClick = async () => {
-    setIsConfirming(true);
-    try {
-      await onRefetchScenes();
-      await onConfirmed();
-    } catch (error) {
-      setNotice({ type: 'error', text: errorText(error) });
-    } finally {
-      setIsConfirming(false);
-    }
-  };
-
   const sceneViews = storyboardScenes.map((scene) => {
     const plan = savedPlans[scene.id] ?? parseShotPlan(scene.video_prompt);
     const beats = sceneBeats(shotContext(scene));
@@ -418,10 +404,7 @@ export function VideoStage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h3 className="flex items-center gap-2 text-lg font-bold text-foreground">
-            <Video className="size-5 text-primary" />
-            Video Production
-          </h3>
+          <h2 className="text-lg font-semibold text-foreground">Shot clips</h2>
           <p className="text-sm text-muted-foreground">
             Each beat is one shot and one short clip. Plan a scene&apos;s shots, then generate or redo clips one at a time.
           </p>
@@ -433,10 +416,16 @@ export function VideoStage({
               Stop after current clip
             </Button>
           )}
-          <Button onClick={handleGenerateAll} disabled={isRunningAll || remainingClips === 0}>
+          <ConfirmButton
+            disabled={isRunningAll || remainingClips === 0}
+            title={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}?`}
+            description="One clip for every shot that has none yet, generated one after another across all scenes. Each clip spends video credits and takes a few minutes. You can stop after the current clip."
+            confirmLabel={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}`}
+            onConfirm={handleGenerateAll}
+          >
             {isRunningAll ? <Loader2 className="animate-spin" /> : <Video />}
             Generate remaining clips ({remainingClips})
-          </Button>
+          </ConfirmButton>
         </div>
       </div>
 
@@ -450,8 +439,8 @@ export function VideoStage({
       {sceneViews.length === 0 ? (
         <Alert>
           <Film />
-          <AlertTitle>No storyboards generated yet</AlertTitle>
-          <AlertDescription>Generate storyboards in the Storyboards stage first to enable video generation.</AlertDescription>
+          <AlertTitle>No storyboard images yet</AlertTitle>
+          <AlertDescription>A scene needs its storyboard image before its clips can be generated. Generate images in the Storyboard step.</AlertDescription>
         </Alert>
       ) : (
         <div className="space-y-4">
@@ -474,12 +463,6 @@ export function VideoStage({
         </div>
       )}
 
-      <div className="flex justify-end border-t border-border/60 pt-4">
-        <Button onClick={handleConfirmClick} disabled={isConfirming || isRunningAll}>
-          {isConfirming ? <Loader2 className="animate-spin" /> : <Check />}
-          Confirm Video Stage
-        </Button>
-      </div>
     </div>
   );
 }
@@ -524,9 +507,8 @@ function SceneShotsCard({
   return (
     <Card>
       <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <Badge variant="secondary">#{sceneNumber}</Badge>
-          <span className="line-clamp-1">{scene.description || `Scene #${sceneNumber}`}</span>
+        <CardTitle className="line-clamp-1">
+          Scene {sceneNumber}: {scene.description || 'Untitled'}
         </CardTitle>
         <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {scene.locationName && (
@@ -545,10 +527,20 @@ function SceneShotsCard({
             <ListVideo />
             {plan ? 'Re-plan shots' : 'Plan shots'}
           </Button>
-          <Button size="sm" onClick={onGenerateRemaining} disabled={disabled || (Boolean(plan) && clipCount === shotCount)}>
+          <ConfirmButton
+            size="sm"
+            variant="outline"
+            disabled={disabled || (Boolean(plan) && clipCount === shotCount)}
+            title={`Generate ${shotCount - clipCount} clip${shotCount - clipCount === 1 ? '' : 's'} for scene ${sceneNumber}?`}
+            description={plan
+              ? 'One clip for each shot that has none yet. Each clip spends video credits and takes a few minutes.'
+              : 'The shots are planned first, then one clip is generated for each. Each clip spends video credits and takes a few minutes.'}
+            confirmLabel="Generate clips"
+            onConfirm={onGenerateRemaining}
+          >
             <Video />
             Generate remaining clips
-          </Button>
+          </ConfirmButton>
         </CardAction>
       </CardHeader>
 
@@ -607,7 +599,7 @@ function SceneShotsCard({
             )}
           </div>
 
-          <div className="space-y-3 md:col-span-2">
+          <div className="space-y-4 md:col-span-2">
             {!plan && (
               <p className="text-sm text-muted-foreground">
                 No shots planned yet. Planning writes one short prompt per beat ({shotCount} shot{shotCount === 1 ? '' : 's'}); no video is generated until you ask for it.
@@ -626,7 +618,7 @@ function SceneShotsCard({
             {clipCount === 0 && scene.video_url && (
               <div className="space-y-1.5">
                 <p className="text-xs text-muted-foreground">Earlier full-scene clip. It is replaced once this scene has shot clips.</p>
-                <video controls src={scene.video_url} className="max-h-[220px] w-full rounded-lg border bg-black object-contain" />
+                <video controls preload="metadata" src={scene.video_url} className="aspect-video w-full max-w-md rounded-lg border bg-black object-contain" />
               </div>
             )}
           </div>
@@ -676,22 +668,43 @@ function ShotRow({
   const overCap = shot.seconds > SHOT_CAP_SECONDS;
 
   return (
-    <div className="space-y-3 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-sm font-medium">
-            Shot {shot.shot}{shot.title ? ` — ${shot.title}` : ''}
-          </span>
-          {isGrid && <Badge variant="outline">Panel {shot.shot}</Badge>}
-          {shot.beat !== null && <Badge variant="outline">Beat {shot.beat}</Badge>}
-          <Badge variant="secondary">{shot.seconds} s</Badge>
-          {shot.dialogueWords > 0 && <Badge variant="outline">{shot.dialogueWords} words</Badge>}
-          {overCap && <Badge variant="destructive">Over {SHOT_CAP_SECONDS} s cap</Badge>}
+    <div className="space-y-2.5 border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-foreground">
+              Shot {shot.shot}{shot.title ? `: ${shot.title}` : ''}
+            </span>
+            {overCap && <Badge variant="destructive">Over {SHOT_CAP_SECONDS} s cap</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {[
+              isGrid ? `Panel ${shot.shot}` : null,
+              shot.beat !== null ? `Beat ${shot.beat}` : null,
+              `${shot.seconds} s clip`,
+              shot.dialogueWords > 0 ? `${shot.dialogueWords} spoken words` : 'no dialogue',
+            ].filter(Boolean).join(' · ')}
+          </p>
         </div>
-        <Button size="sm" variant={shot.videoUrl ? 'outline' : 'default'} onClick={onGenerate} disabled={disabled}>
-          {shot.videoUrl ? <RefreshCw /> : <Video />}
-          {shot.videoUrl ? 'Regenerate clip' : 'Generate clip'}
-        </Button>
+        {shot.videoUrl ? (
+          <ConfirmButton
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            title={`Regenerate the clip for shot ${shot.shot}?`}
+            description="The saved clip is replaced by a new one. This spends video credits."
+            confirmLabel="Regenerate clip"
+            onConfirm={onGenerate}
+          >
+            <RefreshCw />
+            Regenerate clip
+          </ConfirmButton>
+        ) : (
+          <Button size="sm" variant="outline" onClick={onGenerate} disabled={disabled}>
+            <Video />
+            Generate clip
+          </Button>
+        )}
       </div>
 
       {overCap && (
@@ -703,14 +716,13 @@ function ShotRow({
       )}
 
       {shot.videoUrl && (
-        <video controls src={shot.videoUrl} className="max-h-[260px] w-full rounded-lg border bg-black object-contain" />
+        <video controls preload="metadata" src={shot.videoUrl} className="aspect-video w-full max-w-md rounded-lg border bg-black object-contain" />
       )}
 
       <Collapsible>
         <CollapsibleTrigger
           render={
-            <Button variant="ghost" size="sm" className="group/trigger">
-              <FileText />
+            <Button variant="ghost" size="sm" className="group/trigger -ml-2 text-muted-foreground">
               Shot prompt
               <ChevronDown className="transition-transform group-data-[panel-open]/trigger:rotate-180" />
             </Button>
