@@ -42,7 +42,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
         subtitle: `Stage: ${story.production_stage || 'story'}`,
         timeAgo: getTimeAgo(date),
         timestamp: date.toISOString(),
-        href: `/episode-production/${story.id}`,
+        href: `/episodes/${story.id}/story`,
       });
     }
 
@@ -82,7 +82,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
         subtitle: vid.Story?.topic ? `Episode: ${vid.Story.topic.slice(0, 25)}...` : 'Full MP4 render ready',
         timeAgo: getTimeAgo(date),
         timestamp: date.toISOString(),
-        href: '/video-stitching',
+        href: '/episodes',
       });
     }
 
@@ -111,7 +111,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
           subtitle: sc.Story?.topic ? `Episode: ${sc.Story.topic.slice(0, 25)}...` : 'Scene video ready',
           timeAgo: getTimeAgo(date),
           timestamp: date.toISOString(),
-          href: sc.story_id ? `/episode-production/${sc.story_id}` : '/episode-production',
+          href: sc.story_id ? `/episodes/${sc.story_id}/video` : '/episodes',
         });
       } else if (sc.storyboard_image_url) {
         activities.push({
@@ -121,7 +121,7 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
           subtitle: sc.Story?.topic ? `Episode: ${sc.Story.topic.slice(0, 25)}...` : 'Storyboard frame ready',
           timeAgo: getTimeAgo(date),
           timestamp: date.toISOString(),
-          href: sc.story_id ? `/episode-production/${sc.story_id}` : '/episode-production',
+          href: sc.story_id ? `/episodes/${sc.story_id}/storyboard` : '/episodes',
         });
       }
     }

@@ -76,11 +76,9 @@ export function CreditsSection() {
             <Coins size={20} strokeWidth={2} />
           </div>
           <div>
-            <h2 className="text-lg font-semibold tracking-tight text-foreground flex items-center gap-2">
-              Credits & Plan Usage
-            </h2>
+            <h2 className="text-base font-semibold text-foreground">Generation credits</h2>
             <p className="text-xs text-muted-foreground">
-              Monitor your AI credits allocation, balance, and plan tier
+              Spent by storyboard images, reference sheets and video clips
             </p>
           </div>
         </div>
@@ -133,7 +131,7 @@ export function CreditsSection() {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-medium">
                 <span className="text-muted-foreground flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="w-2 h-2 rounded-full bg-success" />
                   Available: <strong className="text-foreground">{availablePercent}%</strong>
                 </span>
                 <span className="text-muted-foreground flex items-center gap-1.5">
@@ -144,7 +142,7 @@ export function CreditsSection() {
               <div className="h-3 w-full bg-muted/60 rounded-full overflow-hidden flex p-0.5 border border-border/40">
                 <div
                   style={{ width: `${availablePercent}%` }}
-                  className="h-full bg-emerald-500 rounded-full transition-all duration-500 shadow-sm"
+                  className="h-full bg-success rounded-full transition-all duration-500 shadow-sm"
                 />
                 <div
                   style={{ width: `${spentPercent}%` }}
@@ -160,7 +158,7 @@ export function CreditsSection() {
                 <div className="text-xs font-medium text-muted-foreground mb-2">
                   Available Balance
                 </div>
-                <div className="text-2xl font-bold tracking-tight text-emerald-500">
+                <div className="text-2xl font-bold tracking-tight text-success">
                   {available.toLocaleString()}
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-1">

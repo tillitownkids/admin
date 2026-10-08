@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Link2, Loader2, LogOut, Tv } from "lucide-react";
 import { disconnectYouTubeAction } from "@/actions/youtubePublishingAction";
+import { ConfirmButton } from "@/components/ConfirmButton";
 
 interface YouTubeConnectionPanelProps {
   connection: {
@@ -19,7 +20,6 @@ export function YouTubeConnectionPanel({ connection, callbackStatus }: YouTubeCo
   const [error, setError] = useState<string | null>(null);
 
   function disconnect() {
-    if (!window.confirm("Disconnect this YouTube channel from TilliTown?")) return;
     setError(null);
     startTransition(async () => {
       const result = await disconnectYouTubeAction();
@@ -40,13 +40,13 @@ export function YouTubeConnectionPanel({ connection, callbackStatus }: YouTubeCo
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-bold text-foreground">YouTube Channel</h2>
-              {connection && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+              <h2 className="text-base font-semibold text-foreground">YouTube channel</h2>
+              {connection && <CheckCircle2 className="h-4 w-4 text-success" />}
             </div>
             <p className="mt-0.5 text-sm text-muted-foreground">
               {connection
                 ? connection.channelTitle || "Connected channel"
-                : "Connect the channel that should receive approved videos."}
+                : "Connect the channel that episodes are published to."}
             </p>
           </div>
         </div>
@@ -60,15 +60,18 @@ export function YouTubeConnectionPanel({ connection, callbackStatus }: YouTubeCo
               <Link2 className="h-4 w-4" />
               Reconnect
             </a>
-            <button
-              type="button"
-              onClick={disconnect}
+            <ConfirmButton
+              variant="destructive"
               disabled={isPending}
-              className="inline-flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-sm font-semibold text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-50"
+              title="Disconnect this YouTube channel?"
+              description="Episodes can no longer be uploaded until a channel is connected again. Videos already on YouTube are not affected."
+              confirmLabel="Disconnect channel"
+              destructive
+              onConfirm={disconnect}
             >
-              {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+              {isPending ? <Loader2 className="animate-spin" /> : <LogOut />}
               Disconnect
-            </button>
+            </ConfirmButton>
           </div>
         ) : (
           <a

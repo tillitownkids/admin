@@ -1,61 +1,51 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { Menu } from "lucide-react";
 
+import { CreditsChip } from "@/components/CreditsChip";
+import { isNavItemActive, navItems } from "@/components/Sidebar";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { navItems } from "@/components/Sidebar";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export default function Header() {
-  const router = useRouter();
   const pathname = usePathname();
-
-  const isHome = pathname === "/";
-  const pageTitle = navItems.find((item) => item.path === pathname)?.name;
+  const section = navItems.find((item) => isNavItemActive(item, pathname));
 
   return (
-    <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-border bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/75 md:px-8">
-      <Button
-        variant="outline"
-        size="icon"
-        aria-label="Go back"
-        disabled={isHome}
-        onClick={() => router.back()}
-      >
-        <ArrowLeft />
-      </Button>
+    <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-8">
+      {/* The sidebar is hidden below md; this menu carries the same destinations. */}
+      <div className="md:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="outline" size="icon-sm" aria-label="Open navigation">
+                <Menu />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start">
+            {navItems.map((item) => (
+              <DropdownMenuItem key={item.path} render={<Link href={item.path} />}>
+                <item.icon />
+                {item.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            {isHome ? (
-              <BreadcrumbPage>Dashboard</BreadcrumbPage>
-            ) : (
-              <BreadcrumbLink render={<Link href="/" />}>Dashboard</BreadcrumbLink>
-            )}
-          </BreadcrumbItem>
-          {!isHome && (
-            <>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>{pageTitle ?? "Page"}</BreadcrumbPage>
-              </BreadcrumbItem>
-            </>
-          )}
-        </BreadcrumbList>
-      </Breadcrumb>
+      <span className="text-sm font-medium text-foreground">{section?.name ?? "TilliTown"}</span>
 
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        <CreditsChip />
         <ThemeToggle />
       </div>
     </header>

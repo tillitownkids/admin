@@ -3,26 +3,86 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, CheckSquare, Tv, Clapperboard, Users, MapPin, ImageIcon, LogOut, Film } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
+import { Clapperboard, LayoutDashboard, LogOut, MapPin, Settings, Tv, Users } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+
 import { signout } from "@/actions/auth";
+import { Button } from "@/components/ui/button";
+import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import type { User } from "@supabase/supabase-js";
 
-export const navItems = [
-  { name: "Dashboard", path: "/", icon: LayoutDashboard },
-  { name: "Story Generate", path: "/story-generate", icon: FileText },
-  { name: "Characters", path: "/characters", icon: Users },
-  { name: "Locations", path: "/locations", icon: MapPin },
-  { name: "Script Generate", path: "/script-generate", icon: FileText },
-  { name: "Storyboard", path: "/storyboard", icon: ImageIcon },
-  { name: "Video Production", path: "/episode-production", icon: Clapperboard },
-  { name: "Video Stitching", path: "/video-stitching", icon: Film },
-  { name: "Video Publishing", path: "/video-approval", icon: CheckSquare },
+interface NavItem {
+  name: string;
+  path: string;
+  icon: LucideIcon;
+}
+
+// Episodes hold the whole pipeline; the library is what episodes draw on.
+export const navGroups: { label: string | null; items: NavItem[] }[] = [
+  {
+    label: null,
+    items: [
+      { name: "Dashboard", path: "/", icon: LayoutDashboard },
+      { name: "Episodes", path: "/episodes", icon: Clapperboard },
+    ],
+  },
+  {
+    label: "Library",
+    items: [
+      { name: "Characters", path: "/characters", icon: Users },
+      { name: "Locations", path: "/locations", icon: MapPin },
+    ],
+  },
+  {
+    label: null,
+    items: [{ name: "Settings", path: "/settings", icon: Settings }],
+  },
 ];
 
-export default function Sidebar() {
+export const navItems: NavItem[] = navGroups.flatMap((group) => group.items);
+
+export function isNavItemActive(item: NavItem, pathname: string): boolean {
+  return pathname === item.path || (item.path !== "/" && pathname.startsWith(`${item.path}/`));
+}
+
+export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+
+  return (
+    <nav className="flex flex-col gap-5" aria-label="Main">
+      {navGroups.map((group, index) => (
+        <div key={group.label ?? index} className="flex flex-col gap-1">
+          {group.label && (
+            <div className="px-3 pb-1 text-xs font-medium text-muted-foreground">{group.label}</div>
+          )}
+          {group.items.map((item) => {
+            const active = isNavItemActive(item, pathname);
+            return (
+              <Link
+                key={item.path}
+                href={item.path}
+                onClick={onNavigate}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                <item.icon className="size-4" />
+                {item.name}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+export default function Sidebar() {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
@@ -40,75 +100,28 @@ export default function Sidebar() {
     };
   }, []);
 
-  const userInitial = user?.email ? user.email.charAt(0).toUpperCase() : "A";
-  const userEmail = user?.email ?? "Admin User";
+  const userEmail = user?.email ?? "Signed in";
 
   return (
-    <aside className="w-[260px] h-screen bg-card border-r border-border flex flex-col sticky top-0 shrink-0 z-10">
-      <div className="flex items-center gap-3 px-6 py-6 border-b border-border/50">
-        <div className="flex items-center justify-center w-8 h-8 bg-primary rounded-lg text-primary-foreground">
-          <Tv size={18} strokeWidth={2.5} />
+    <aside className="sticky top-0 z-10 hidden h-screen w-[232px] shrink-0 flex-col border-r border-border bg-card md:flex">
+      <div className="flex items-center gap-2.5 px-5 py-5">
+        <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
+          <Tv size={16} strokeWidth={2.5} />
         </div>
-        <span className="text-xl font-bold tracking-tight text-foreground">
-          TilliTown
+        <span className="text-base font-semibold tracking-tight text-foreground">TilliTown</span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-2">
+        <NavLinks />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+        <span className="min-w-0 truncate text-xs text-muted-foreground" title={userEmail}>
+          {userEmail}
         </span>
-      </div>
-
-      <div className="px-4 py-4 overflow-y-auto flex-1">
-        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-2">Main Menu</div>
-        <nav className="flex flex-col gap-1">
-          {navItems.map((item) => {
-            const isActive = pathname === item.path || (item.path !== "/" && pathname.startsWith(`${item.path}/`));
-            const Icon = item.icon;
-
-            return (
-              <Link
-                key={item.path}
-                href={item.path}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
-                  isActive 
-                    ? "bg-primary text-primary-foreground " 
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-              >
-                <Icon 
-                  className={cn(
-                    "w-4 h-4", 
-                    isActive ? "text-primary-foreground" : "text-muted-foreground"
-                  )} 
-                />
-                <span>{item.name}</span>
-              </Link>
-            );
-          })}
-        </nav>
-      </div>
-
-      <div className="mt-auto border-t border-border/50 p-4">
-        <div className="flex items-center justify-between gap-3 px-2 py-2 rounded-lg bg-muted/30">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex items-center justify-center w-9 h-9 bg-primary/15 text-primary border border-primary/20 rounded-full font-semibold text-sm shrink-0">
-              {userInitial}
-            </div>
-            <div className="flex flex-col min-w-0">
-              <span className="font-medium text-xs text-foreground truncate" title={userEmail}>
-                {userEmail}
-              </span>
-              <span className="text-[10px] text-muted-foreground truncate uppercase font-semibold">
-                Administrator
-              </span>
-            </div>
-          </div>
-          <button
-            onClick={() => signout()}
-            className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors shrink-0"
-            title="Sign Out"
-            aria-label="Sign Out"
-          >
-            <LogOut size={16} />
-          </button>
-        </div>
+        <Button variant="ghost" size="icon-sm" onClick={() => signout()} aria-label="Sign out" title="Sign out">
+          <LogOut />
+        </Button>
       </div>
     </aside>
   );

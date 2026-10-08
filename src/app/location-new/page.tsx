@@ -132,11 +132,9 @@ export default function LocationNewPage() {
   };
 
   return (
-    <div className="max-w-[1100px] w-full text-left space-y-6 page-enter pb-12">
+    <div className="max-w-[1100px] w-full text-left space-y-6 pb-12">
       <PageHeader
-        icon={MapPin}
-        title="Location"
-        highlight="Generator"
+        title="Location generator"
         description="Select a bedtime story to detect, preview, and generate its 3D location settings."
       />
 
@@ -146,18 +144,17 @@ export default function LocationNewPage() {
           {/* Dropdown Section */}
           <div className="space-y-2 text-left">
             <label className={labelClass}>
-              <BookOpen className="w-4 h-4 text-primary" />
               Select Story from Database
             </label>
             
             {isLoadingStories ? (
               <div className="flex items-center justify-start gap-2 py-3 px-4 rounded-xl border border-border bg-muted/40 text-sm text-muted-foreground text-left">
                 <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                <span>Fetching stories from database...</span>
+                <span>Loading stories…</span>
               </div>
             ) : stories.length === 0 ? (
               <div className="p-4 rounded-xl border border-dashed border-border text-sm text-muted-foreground text-left">
-                No stories found in database.
+                No stories yet.
               </div>
             ) : (
               <select
@@ -165,7 +162,7 @@ export default function LocationNewPage() {
                 onChange={(e) => handleStorySelect(e.target.value)}
                 className={selectFieldClass}
               >
-                <option value="">Choose a fetched story from database</option>
+                <option value="">Choose a story</option>
                 {stories.map((story) => (
                   <option key={story.id} value={story.id}>
                     {story.topic || story.concept?.slice(0, 40) || "Untitled Story"}
@@ -177,7 +174,7 @@ export default function LocationNewPage() {
 
           {/* Selected Story Context Box */}
           {selectedStory && (
-            <div className="p-5 rounded-2xl border border-primary/20 bg-primary/5 space-y-4 text-left animate-in fade-in duration-300">
+            <div className="p-5 rounded-2xl border border-primary/20 bg-primary/5 space-y-4 text-left">
               <div className="flex items-center justify-between gap-3 flex-wrap text-left">
                 <h3 className="font-bold text-foreground text-base flex items-center gap-2 text-left">
                   <Sparkles className="w-4.5 h-4.5 text-primary" />
@@ -251,7 +248,7 @@ export default function LocationNewPage() {
                       </div>
                       
                       {isSaved && (
-                        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shrink-0">
+                        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-success/10 text-success border border-success/20 shrink-0">
                           <Check className="w-3.5 h-3.5" /> Saved
                         </span>
                       )}
@@ -290,7 +287,7 @@ export default function LocationNewPage() {
                         </>
                       ) : isSaved ? (
                         <>
-                          <Check className="w-3.5 h-3.5 text-emerald-500" />
+                          <Check className="w-3.5 h-3.5 text-success" />
                           Saved to Library
                         </>
                       ) : (

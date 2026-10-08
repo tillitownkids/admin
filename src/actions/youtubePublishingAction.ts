@@ -155,7 +155,8 @@ export async function publishVideoToYouTubeAction(rawInput: PublishVideoInput) {
       },
     });
 
-    revalidatePath("/video-approval");
+    revalidatePath("/episodes", "layout");
+    revalidatePath("/settings");
     return { success: true, youtubeUrl: youtubeVideo.url };
   } catch (error) {
     const message = errorMessage(error, "YouTube upload failed.");
@@ -172,7 +173,8 @@ export async function publishVideoToYouTubeAction(rawInput: PublishVideoInput) {
       }).catch((updateError) => console.error("Failed to save YouTube upload error:", updateError));
     }
 
-    revalidatePath("/video-approval");
+    revalidatePath("/episodes", "layout");
+    revalidatePath("/settings");
     return { success: false, error: message };
   }
 }
@@ -209,7 +211,8 @@ export async function refreshYouTubeUploadStatusAction(uploadId: string) {
           updated_at: new Date(),
         },
       });
-      revalidatePath("/video-approval");
+      revalidatePath("/episodes", "layout");
+    revalidatePath("/settings");
       return { success: true, status: "failed" };
     }
     const failed = status.processingStatus === "failed" || status.processingStatus === "terminated" || status.uploadStatus === "failed" || status.uploadStatus === "rejected";
@@ -224,7 +227,8 @@ export async function refreshYouTubeUploadStatusAction(uploadId: string) {
       },
     });
 
-    revalidatePath("/video-approval");
+    revalidatePath("/episodes", "layout");
+    revalidatePath("/settings");
     return { success: true, status: failed ? "failed" : published ? "published" : "processing" };
   } catch (error) {
     return { success: false, error: errorMessage(error, "Could not refresh YouTube status.") };
@@ -243,7 +247,8 @@ export async function disconnectYouTubeAction() {
       console.warn("Google token revocation failed; removing the local connection:", error);
     });
     await prisma.youTubeConnection.delete({ where: { id: "primary" } });
-    revalidatePath("/video-approval");
+    revalidatePath("/episodes", "layout");
+    revalidatePath("/settings");
     return { success: true };
   } catch (error) {
     return { success: false, error: errorMessage(error, "Could not disconnect YouTube.") };

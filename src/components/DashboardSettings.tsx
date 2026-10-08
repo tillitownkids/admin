@@ -100,8 +100,7 @@ export function DashboardSettings() {
       {/* Header */}
       <div className="p-5 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold tracking-tight">Global Story Settings</h2>
+          <h2 className="text-base font-semibold">Story defaults</h2>
         </div>
 
         {/* Save Changes button appears ONLY when inputs are modified */}
@@ -119,7 +118,7 @@ export function DashboardSettings() {
             ) : saveSuccess ? (
               <>
                 <Check size={14} />
-                Saved to DB!
+                Saved
               </>
             ) : (
               <>
@@ -135,15 +134,14 @@ export function DashboardSettings() {
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
             <Loader2 size={14} className="animate-spin text-primary" />
-            Loading global settings from database...
+            Loading settings…
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Target Audience */}
             <div className="space-y-2">
               <label className={labelClass}>
-                <Users className="w-4 h-4 text-primary" />
-                Target Audience
+                Target audience
               </label>
               <div className="relative">
                 <select
@@ -162,7 +160,6 @@ export function DashboardSettings() {
             {/* Tone */}
             <div className="space-y-2">
               <label className={labelClass}>
-                <Type className="w-4 h-4 text-primary" />
                 Tone
               </label>
               <div className="relative">
@@ -182,8 +179,7 @@ export function DashboardSettings() {
             {/* AI Model */}
             <div className="space-y-2">
               <label className={labelClass}>
-                <Cpu className="w-4 h-4 text-primary" />
-                AI Model
+                AI model for writing
               </label>
               <div className="relative">
                 <select

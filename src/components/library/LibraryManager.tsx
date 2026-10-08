@@ -402,16 +402,11 @@ export function LibraryManager({
   };
 
   return (
-    <div className="max-w-[1200px] w-full mx-auto space-y-6 page-enter pb-10">
-      <PageHeader
-        icon={Icon}
-        title={resourceNamePlural}
-        highlight="Library"
-        description={description}
-      />
+    <div className="max-w-[1200px] w-full mx-auto space-y-6 pb-10">
+      <PageHeader title={resourceNamePlural} description={description} />
 
       {error && (
-        <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg flex items-center justify-between animate-in fade-in duration-300">
+        <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg flex items-center justify-between">
           <span className="text-sm font-medium">{error}</span>
           <button onClick={() => setError(null)} className="text-destructive/80 hover:text-destructive">
             <X className="w-4 h-4" />
@@ -431,7 +426,7 @@ export function LibraryManager({
             onClick={startCreate}
             className="cursor-pointer group flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 transition-colors duration-300 min-h-[220px]"
           >
-            <div className="w-12 h-12 rounded-full bg-primary/20 text-primary flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+            <div className="w-12 h-12 rounded-full bg-primary/20 text-primary flex items-center justify-center mb-3">
               <Plus className="w-6 h-6" />
             </div>
             <h3 className="font-bold text-lg text-primary">Add {resourceName}</h3>
@@ -441,7 +436,7 @@ export function LibraryManager({
           {isFetchingItems ? (
             <div className="col-span-full py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
-              <p className="text-sm">Fetching {resourceNamePlural.toLowerCase()} from database...</p>
+              <p className="text-sm">Loading {resourceNamePlural.toLowerCase()}…</p>
             </div>
           ) : items.map((item) => {
             const cardImageUrl = item.generated_image_url || item.reference_image_url;
@@ -595,7 +590,7 @@ export function LibraryManager({
                   </div>
                 ) : (
                   <div className="flex flex-col items-center space-y-3">
-                    <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center">
                       <Upload className="w-7 h-7" />
                     </div>
                     <div>

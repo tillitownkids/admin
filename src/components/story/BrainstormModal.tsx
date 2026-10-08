@@ -74,7 +74,7 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 sm:p-6">
       <div className="w-full max-w-[1200px] bg-card border border-border/60 rounded-3xl flex flex-col relative overflow-hidden text-card-foreground shadow-2xl">
         
         {/* Header */}
@@ -168,7 +168,7 @@ export function BrainstormModal({ isOpen, onClose, onApply, initialContent }: Br
         <div className="px-6 py-5 flex justify-end bg-background/40 backdrop-blur-md border-t border-border/50 rounded-b-3xl">
           <button 
             onClick={handleApply}
-            className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all duration-300 active:scale-[0.98]"
+            className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-all duration-300"
           >
             Save Changes
           </button>

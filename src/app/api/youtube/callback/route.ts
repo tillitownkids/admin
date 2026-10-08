@@ -5,7 +5,7 @@ import { exchangeYouTubeAuthorizationCode, getYouTubeChannel } from "@/lib/youtu
 
 function publishingUrl(status: string) {
   const redirectUri = process.env.YOUTUBE_REDIRECT_URI || "http://localhost:3000/api/youtube/callback";
-  return new URL(`/video-approval?youtube=${status}`, new URL(redirectUri).origin);
+  return new URL(`/settings?youtube=${status}`, new URL(redirectUri).origin);
 }
 
 export async function GET(request: NextRequest) {
