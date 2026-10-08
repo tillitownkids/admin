@@ -272,6 +272,13 @@ export function buildShotPrompt(input: {
 
 export const SHOT_PLAN_FORMAT = 'tillitown-shots-v1';
 
+/** One generated clip for a shot. A shot can hold several; the shot's `videoUrl` names the one in use. */
+export interface ShotTake {
+  url: string;
+  magnificId?: string | null;
+  createdAt?: string | null;
+}
+
 export interface SceneShot {
   /** 1-based position in the scene; also the storyboard panel number. */
   shot: number;
@@ -281,8 +288,11 @@ export interface SceneShot {
   neededSeconds: number;
   dialogueWords: number;
   prompt: string;
+  /** The clip in use: the one that is stitched into the episode. */
   videoUrl?: string | null;
   magnificId?: string | null;
+  /** Every clip generated for this shot, oldest first. */
+  takes?: ShotTake[];
 }
 
 export interface SceneShotPlan {
@@ -306,11 +316,42 @@ export function serializeShotPlan(plan: SceneShotPlan): string {
   return JSON.stringify(plan);
 }
 
+/** Every clip generated for a shot, oldest first. A clip saved before takes were kept counts as its only take. */
+export function shotTakes(shot: Pick<SceneShot, 'takes' | 'videoUrl' | 'magnificId'>): ShotTake[] {
+  const takes = Array.isArray(shot.takes) ? shot.takes.filter((take) => Boolean(take?.url)) : [];
+  if (shot.videoUrl && !takes.some((take) => take.url === shot.videoUrl)) {
+    return [{ url: shot.videoUrl, magnificId: shot.magnificId ?? null, createdAt: null }, ...takes];
+  }
+  return takes;
+}
+
+/** Adds a clip to a shot. It becomes the clip in use only when the shot has none, so an earlier choice is never replaced. */
+export function addShotTake(shot: SceneShot, take: ShotTake): SceneShot {
+  const takes = [...shotTakes(shot).filter((item) => item.url !== take.url), take];
+  if (shot.videoUrl) return { ...shot, takes };
+  return { ...shot, takes, videoUrl: take.url, magnificId: take.magnificId ?? null };
+}
+
+/** Puts one of the shot's takes in use. Null when the URL is not one of its takes. */
+export function selectShotTake(shot: SceneShot, url: string): SceneShot | null {
+  const takes = shotTakes(shot);
+  const take = takes.find((item) => item.url === url);
+  if (!take) return null;
+  return { ...shot, takes, videoUrl: take.url, magnificId: take.magnificId ?? null };
+}
+
+/** Removes a take that is not in use. Null when the URL is the clip in use or not one of the shot's takes. */
+export function removeShotTake(shot: SceneShot, url: string): SceneShot | null {
+  const takes = shotTakes(shot);
+  if (url === shot.videoUrl || !takes.some((item) => item.url === url)) return null;
+  return { ...shot, takes: takes.filter((item) => item.url !== url) };
+}
+
 export function buildShotPlan(scene: ShotSceneContext, direction: ShotDirection, previous?: SceneShotPlan | null): SceneShotPlan {
   const beats = sceneBeats(scene);
   const shots = beats.map((beat, index): SceneShot => {
     const timing = planShotTiming(beat);
-    // A clip already generated for the same beat stays until it is regenerated.
+    // Clips already generated for the same beat stay with it.
     const existing = previous?.shots.find((shot) => shot.shot === index + 1 && shot.beat === beat.number);
     return {
       shot: index + 1,
@@ -333,6 +374,7 @@ export function buildShotPlan(scene: ShotSceneContext, direction: ShotDirection,
       }),
       videoUrl: existing?.videoUrl ?? null,
       magnificId: existing?.magnificId ?? null,
+      ...(existing?.takes?.length ? { takes: existing.takes } : {}),
     };
   });
   return { format: SHOT_PLAN_FORMAT, shots };

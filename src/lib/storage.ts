@@ -74,6 +74,16 @@ export interface StoredImageAsset {
   storagePath: string;
 }
 
+/** The bucket and path of a file in this project's public storage, or null for any other URL. */
+export function storageLocationFromUrl(url: string): { bucket: string; path: string } | null {
+  const marker = '/storage/v1/object/public/';
+  const index = url.indexOf(marker);
+  if (index < 0) return null;
+  const [bucket, ...rest] = url.slice(index + marker.length).split('?')[0].split('/');
+  const path = decodeURIComponent(rest.join('/'));
+  return bucket && path ? { bucket, path } : null;
+}
+
 function existingStoredAsset(imageUrl: string, bucket: string): StoredImageAsset | null {
   const marker = `/storage/v1/object/public/${bucket}/`;
   if (!imageUrl.includes(marker)) return null;
@@ -165,13 +175,16 @@ export async function processAndUploadCharacterSheet(
 const STORYBOARDS_BUCKET = 'storyboards';
 const SCENE_VIDEOS_BUCKET = 'scene_videos';
 
-export async function processAndUploadStoryboardImage(
+export async function processAndUploadStoryboardImageAsset(
   imageUrl: string,
   identifier?: string | null,
   sceneId?: string
-): Promise<string> {
-  if (!imageUrl || !imageUrl.startsWith('http')) return imageUrl;
-  if (imageUrl.includes(`/storage/v1/object/public/${STORYBOARDS_BUCKET}/`)) return imageUrl;
+): Promise<StoredImageAsset> {
+  if (!imageUrl || !imageUrl.startsWith('http')) {
+    return { publicUrl: imageUrl, storageBucket: null, storagePath: imageUrl };
+  }
+  const existing = existingStoredAsset(imageUrl, STORYBOARDS_BUCKET);
+  if (existing) return existing;
 
   const res = await fetch(imageUrl);
   if (!res.ok) {
@@ -183,7 +196,8 @@ export async function processAndUploadStoryboardImage(
   const arrayBuffer = await res.arrayBuffer();
   const fileBuffer = Buffer.from(arrayBuffer);
 
-  const cleanIdentifier = identifier ? identifier.replace(/[^a-zA-Z0-9_-]/g, '_') : 'sb_image';
+  // Every generation gets its own file, so an earlier take is never overwritten by a later one.
+  const cleanIdentifier = identifier ? identifier.replace(/[^a-zA-Z0-9_-]/g, '_') : `sb_image_${Date.now()}`;
   const prefix = sceneId ? `${sceneId.replace(/[^a-zA-Z0-9_-]/g, '_')}_` : '';
   const fileName = `${prefix}${cleanIdentifier}.${ext}`;
 
@@ -200,7 +214,15 @@ export async function processAndUploadStoryboardImage(
   }
 
   const { data } = supabase.storage.from(STORYBOARDS_BUCKET).getPublicUrl(fileName);
-  return data.publicUrl;
+  return { publicUrl: data.publicUrl, storageBucket: STORYBOARDS_BUCKET, storagePath: fileName };
+}
+
+export async function processAndUploadStoryboardImage(
+  imageUrl: string,
+  identifier?: string | null,
+  sceneId?: string
+): Promise<string> {
+  return (await processAndUploadStoryboardImageAsset(imageUrl, identifier, sceneId)).publicUrl;
 }
 
 export async function processAndUploadSceneVideo(
@@ -234,6 +256,18 @@ export async function processAndUploadSceneVideo(
 
   const { data } = supabase.storage.from(SCENE_VIDEOS_BUCKET).getPublicUrl(fileName);
   return data.publicUrl;
+}
+
+/** Removes a clip from the scene-clips bucket. Clips stored anywhere else are left alone. */
+export async function deleteSceneVideoFromStorage(videoUrl: string): Promise<boolean> {
+  const location = storageLocationFromUrl(videoUrl);
+  if (!location || location.bucket !== SCENE_VIDEOS_BUCKET) return false;
+  const { error } = await supabase.storage.from(SCENE_VIDEOS_BUCKET).remove([location.path]);
+  if (error) {
+    console.error('Failed to remove scene clip from storage:', error);
+    return false;
+  }
+  return true;
 }
 
 const FULL_EPISODES_BUCKET = 'full_episodes';
