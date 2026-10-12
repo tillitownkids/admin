@@ -8,7 +8,7 @@ export class BrainstormTask extends BaseAITask {
 
   async execute(input: string): Promise<string[]> {
     const prompt = this.buildPrompt(input);
-    const responseText = await this.bedrockService.invokeModel(prompt);
+    const responseText = await this.bedrockService.invokeModel(prompt, { webSearch: true });
     
     // Clean response and split into array of ideas
     // Usually Claude responds with bullet points (- or *)
