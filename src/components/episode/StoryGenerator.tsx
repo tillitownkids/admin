@@ -6,6 +6,7 @@ import { episodeTitle } from "@/lib/episodeSteps";
 import { getStoriesAction, saveGeneratedStoryAction } from "@/actions/saveStoryAction";
 import { getGlobalSettingsAction } from "@/actions/settingsAction";
 import { detectEpisodeObjectsAction } from "@/actions/propsAction";
+import { findExistingByName } from "@/lib/characterNames";
 import { GlassPanel } from "@/components/GlassPanel";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass, selectFieldClass } from "@/lib/styles";
 import { useState, useEffect } from "react";
@@ -442,7 +443,7 @@ CHARACTERS RULE & STRICT CHARACTER FIDELITY:
 - If the concept, overview, or plot needs a character the database cannot supply, create only the minimum new characters needed.
 - Preserve every existing character's profile exactly. Do not invent physical traits, body mechanics, technological qualities, powers, or equipment for existing characters.
 - Give each new character a short, concrete description consistent with the story. Do not add unrelated traits or abilities.
-- List every character actually present in the narrative in charactersUsed. Use the exact database name for existing characters. Do not list characters absent from the story.
+- List every character actually present in the narrative in charactersUsed. For an existing character, copy its full database name exactly as listed, even when the story calls the character something shorter: if the list has "Jaksh's Father - Kartik", write exactly that in charactersUsed, never "Kartik" or "Father". Do not list characters absent from the story.
 - Available Database Characters:
 ${charactersListStr}
 
@@ -555,10 +556,12 @@ Return ONLY valid JSON matching this exact structure:
         storyText = rawText;
       }
 
-      const existingCharMap = new Map(characters.filter((c) => c.name && c.id).map((c) => [normalizedName(c.name), c.id]));
+      // The model often shortens names ("Kartik" for "Jaksh's Father - Kartik"), so names are matched
+      // to the library by their words, not only exactly; a shortened name is never offered as new.
+      const knownCharacters = characters.filter((c) => c.name && c.id);
       const charIds = Array.from(new Set(charactersUsed
         .filter((char) => typeof char?.name === 'string')
-        .map((char) => existingCharMap.get(normalizedName(char.name)))
+        .map((char) => findExistingByName(char.name, knownCharacters)?.id)
         .filter((id): id is string => Boolean(id))));
       setActiveCharacterIds(charIds);
 
@@ -566,34 +569,26 @@ Return ONLY valid JSON matching this exact structure:
       const detectedNewChars = charactersUsed.filter((char) => {
         if (typeof char?.name !== 'string' || !char.name.trim()) return false;
         const name = normalizedName(char.name);
-        if (existingCharMap.has(name) || seenNewCharacters.has(name)) return false;
+        if (findExistingByName(char.name, knownCharacters) || seenNewCharacters.has(name)) return false;
         seenNewCharacters.add(name);
         return true;
       });
 
-      // Collect matched existing location IDs from DB
-      const existingLocMap = new Map<string, string>();
-      locations.forEach((l) => {
-        if (l.name && l.id) {
-          existingLocMap.set(l.name.toLowerCase().trim(), l.id);
-        }
-      });
-
-      const initialLocIds: string[] = [];
-      locationsUsed.forEach((loc) => {
-        if (loc.name) {
-          const matchedId = existingLocMap.get(loc.name.toLowerCase().trim());
-          if (matchedId) initialLocIds.push(matchedId);
-        }
-      });
-
-      const uniqueInitialLocIds = Array.from(new Set(initialLocIds));
+      const knownLocations = locations.filter((l) => l.name && l.id);
+      const uniqueInitialLocIds = Array.from(new Set(locationsUsed
+        .filter((loc) => typeof loc?.name === 'string')
+        .map((loc) => findExistingByName(loc.name, knownLocations)?.id)
+        .filter((id): id is string => Boolean(id))));
       setActiveLocationIds(uniqueInitialLocIds);
 
-      const existingLocNames = new Set(locations.map((l) => normalizedName(l.name)));
-      const detectedNewLocs = locationsUsed.filter(
-        (loc) => loc.name && !existingLocNames.has(loc.name.toLowerCase().trim())
-      );
+      const seenNewLocations = new Set<string>();
+      const detectedNewLocs = locationsUsed.filter((loc) => {
+        if (typeof loc?.name !== 'string' || !loc.name.trim()) return false;
+        const name = normalizedName(loc.name);
+        if (findExistingByName(loc.name, knownLocations) || seenNewLocations.has(name)) return false;
+        seenNewLocations.add(name);
+        return true;
+      });
 
       if (detectedNewLocs.length > 0 || detectedNewChars.length > 0) {
         setAcceptedCharacterIds([]);
