@@ -1,0 +1,295 @@
+"use server";
+
+import { prisma } from '@/lib/prisma';
+import { supabase } from '@/lib/supabase';
+import { aiService } from '@/services/aiService';
+import { normalizeCharacterName } from '@/lib/characterNames';
+import { mapWithConcurrency, parseStoryboardJson } from '@/lib/storyboardGeneration';
+import {
+  buildShotDirectionPrompt,
+  buildShotPlan,
+  parseShotPlan,
+  sceneBeats,
+  serializeShotPlan,
+  validateShotDirection,
+  type ShotSceneContext,
+} from '@/lib/sceneShots';
+import {
+  CHARACTER_FIX_ROUNDS,
+  agreedBeatCast,
+  buildCastCheckPrompt,
+  buildStoryboardRevisionPrompt,
+  castCheckChunks,
+  checkedBeatNumbers,
+  describeIssues,
+  describeWarnings,
+  findCharacterIssues,
+  fixableIssueCount,
+  parseBeatCast,
+  parseRevisedStoryboardPrompt,
+  storyboardNeedsFix,
+  videoNeedsFix,
+  withCharactersLine,
+  withExactNames,
+  type BeatCast,
+  type CastMember,
+  type SceneCharacterIssues,
+} from '@/lib/characterContinuity';
+
+export interface SceneCharacterReport {
+  sceneId: string;
+  sceneNumber: number;
+  /** False when the scene could not be checked at all. */
+  ok: boolean;
+  error?: string;
+  /** Who the agent found on screen in each beat. */
+  beats: BeatCast[];
+  /** Problems found on the first pass. */
+  found: string[];
+  /** What the check changed. */
+  fixed: string[];
+  /** Problems still there after the last round. */
+  remaining: string[];
+  /** Things a person has to decide or redo: extra links, characters outside the cast, outdated images or clips. */
+  warnings: string[];
+}
+
+/** The episode's scenes in order, for the client to check one at a time. */
+export async function listCharacterCheckScenesAction(storyId: string): Promise<{ id: string; sceneNumber: number }[]> {
+  const scenes = await prisma.scene.findMany({
+    where: { story_id: storyId },
+    select: { id: true, scene_number: true },
+    orderBy: { scene_number: 'asc' },
+  });
+  return scenes.map((scene) => ({ id: scene.id, sceneNumber: scene.scene_number }));
+}
+
+/** One read of who is on screen in each beat; asked once more, naming the mistake, if it answers with names outside the cast. */
+async function readBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers: number[], earlierBeats = ''): Promise<BeatCast[]> {
+  const prompt = buildCastCheckPrompt({ cast, scriptBeats, beatNumbers, earlierBeats });
+  let correction = '';
+  let failure: unknown;
+  let best: BeatCast[] | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await aiService.call(prompt + correction, 8000, { temperature: 0 });
+      const { beats, unknown } = parseBeatCast(parseStoryboardJson(response.text || ''), cast, beatNumbers);
+      if (!unknown.length) return beats;
+      best = beats;
+      correction = `\n\nCORRECTION: a previous answer listed ${unknown.map((name) => `"${name}"`).join(', ')} in "on_screen", which matches no cast name. Use the exact cast name of the character meant, or put a character who is not in the cast in "not_in_cast".`;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  if (best) return best;
+  throw failure instanceof Error ? failure : new Error('The character check did not answer.');
+}
+
+/** Who is on screen in each beat by the agreement of two independent reads; one read alone if the other fails. */
+async function detectBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers: number[], earlierBeats = ''): Promise<BeatCast[]> {
+  const [first, second] = await Promise.allSettled([
+    readBeatCast(cast, scriptBeats, beatNumbers, earlierBeats),
+    readBeatCast(cast, scriptBeats, beatNumbers, earlierBeats),
+  ]);
+  if (first.status === 'fulfilled' && second.status === 'fulfilled') return agreedBeatCast(first.value, second.value);
+  if (first.status === 'fulfilled') return first.value;
+  if (second.status === 'fulfilled') return second.value;
+  throw first.reason;
+}
+
+async function loadStoryCast(storyId: string | null) {
+  if (!storyId) return [];
+  return (await prisma.storyCharacter.findMany({ where: { story_id: storyId }, include: { Character: true } }))
+    .map((link) => link.Character);
+}
+
+export type EpisodeCastResult = {
+  /** Who each scene's beats show, by scene id. */
+  byScene: Record<string, BeatCast[]>;
+  /** Scenes the agent could not read, by scene id. */
+  errors: Record<string, string>;
+};
+
+/**
+ * Reads the whole episode in order, a handful of beats per call with the beats before them as context,
+ * so the agent can follow who is present from scene to scene instead of judging each beat alone.
+ */
+export async function detectEpisodeCastAction(storyId: string): Promise<EpisodeCastResult> {
+  const result: EpisodeCastResult = { byScene: {}, errors: {} };
+  const cast = await loadStoryCast(storyId);
+  const scenes = (await prisma.scene.findMany({
+    where: { story_id: storyId },
+    select: { id: true, scene_number: true, script_beats: true, beat_numbers: true, description: true },
+    orderBy: { scene_number: 'asc' },
+  })).map((scene) => ({
+    id: scene.id,
+    scriptBeats: scene.script_beats || '',
+    beatNumbers: checkedBeatNumbers({ scriptBeats: scene.script_beats || '', beatNumbers: scene.beat_numbers, description: scene.description }),
+  }));
+  const readable = scenes.filter((scene) => scene.scriptBeats.trim());
+  for (const scene of scenes) if (!scene.scriptBeats.trim()) result.errors[scene.id] = 'The scene has no beat script to check against.';
+  if (!cast.length) {
+    for (const scene of readable) result.errors[scene.id] = 'The episode has no characters to check for.';
+    return result;
+  }
+
+  const text = (group: typeof readable) => group.map((scene) => scene.scriptBeats.trim()).join('\n\n---\n\n');
+  await mapWithConcurrency(castCheckChunks(readable), 4, async (chunk) => {
+    try {
+      const beats = await detectBeatCast(cast, text(chunk.scenes), chunk.scenes.flatMap((scene) => scene.beatNumbers), text(chunk.earlier));
+      let next = 0;
+      for (const scene of chunk.scenes) {
+        result.byScene[scene.id] = beats.slice(next, next + scene.beatNumbers.length);
+        next += scene.beatNumbers.length;
+      }
+    } catch (error) {
+      for (const scene of chunk.scenes) result.errors[scene.id] = error instanceof Error ? error.message : 'The character check did not answer.';
+    }
+  });
+  return result;
+}
+
+async function loadObjectNames(sceneId: string): Promise<string[]> {
+  const { data, error } = await supabase.from('SceneProp').select('Prop(name)').eq('scene_id', sceneId);
+  if (error) return [];
+  return ((data || []) as unknown as { Prop: { name: string } | null }[]).flatMap((link) => (link.Prop ? [link.Prop.name] : []));
+}
+
+/**
+ * Checks one scene against its script and, when `fix` is set, repairs what it can in rounds until
+ * nothing fixable is left: attaches missing characters, names them in the storyboard prompt and
+ * re-plans the video shots so each shot names who its beat shows. Images and clips are never
+ * regenerated here; the report says which ones were made before the fix.
+ */
+export async function checkSceneCharactersAction(
+  sceneId: string,
+  options: { fix: boolean; /** Who each beat shows, from `detectEpisodeCastAction`. Read from this scene alone when absent. */ beats?: BeatCast[] },
+): Promise<SceneCharacterReport> {
+  const scene = await prisma.scene.findUnique({
+    where: { id: sceneId },
+    include: {
+      SceneCharacter: { include: { Character: true } },
+      EpisodeLocation: { include: { Location: true } },
+    },
+  });
+  if (!scene) {
+    return { sceneId, sceneNumber: 0, ok: false, error: 'The scene no longer exists.', beats: [], found: [], fixed: [], remaining: [], warnings: [] };
+  }
+  const report: SceneCharacterReport = {
+    sceneId, sceneNumber: scene.scene_number, ok: true, beats: [], found: [], fixed: [], remaining: [], warnings: [],
+  };
+
+  try {
+    const scriptBeats = scene.script_beats || '';
+    if (!scriptBeats.trim()) throw new Error('The scene has no beat script to check against.');
+    const storyCast = await loadStoryCast(scene.story_id);
+    if (!storyCast.length) throw new Error('The episode has no characters to check for.');
+
+    const context = { scriptBeats, beatNumbers: scene.beat_numbers, description: scene.description };
+    const beats = options.beats?.length ? options.beats : await detectBeatCast(storyCast, scriptBeats, checkedBeatNumbers(context));
+    report.beats = beats;
+
+    let linked = scene.SceneCharacter.map((link) => link.Character.name);
+    let storyboardPrompt = scene.storyboard_prompt || '';
+    let videoPrompt = scene.video_prompt;
+    const check = () => findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt });
+
+    let issues: SceneCharacterIssues = check();
+    report.found = describeIssues(issues);
+    let linksAdded = false;
+    let storyboardChanged = false;
+    let videoChanged = false;
+
+    for (let round = 0; options.fix && round < CHARACTER_FIX_ROUNDS && fixableIssueCount(issues) > 0; round++) {
+      // 1. Attach every character the script shows, so their sheets go with the image and clip requests.
+      if (issues.missingLinks.length) {
+        const missing = new Set(issues.missingLinks.map(normalizeCharacterName));
+        const characters = storyCast.filter((character) => missing.has(normalizeCharacterName(character.name)));
+        await prisma.sceneCharacter.createMany({
+          data: characters.map((character) => ({ scene_id: scene.id, character_id: character.id })),
+          skipDuplicates: true,
+        });
+        linked = [...linked, ...characters.map((character) => character.name)];
+        linksAdded = characters.length > 0;
+        report.fixed.push(`Attached ${characters.map((character) => character.name).join(', ')}.`);
+        issues = check();
+      }
+
+      // 2. The Characters line is rewritten directly; a panel that leaves someone out is revised by the agent.
+      if (storyboardNeedsFix(issues)) {
+        const before = fixableIssueCount(issues);
+        // Short names are swapped for exact names in code; only what is still missing goes to the agent.
+        let candidate = withExactNames(withCharactersLine(storyboardPrompt, linked), beats, storyCast);
+        let candidateIssues = findCharacterIssues({ beats, linked, storyboardPrompt: candidate, videoPrompt });
+        if (candidateIssues.storyboardPanels.length) {
+          try {
+            const response = await aiService.call(buildStoryboardRevisionPrompt({
+              storyboardPrompt: candidate,
+              scriptBeats,
+              panels: candidateIssues.storyboardPanels,
+            }), 4000, { temperature: 0 });
+            const revised = withExactNames(withCharactersLine(parseRevisedStoryboardPrompt(parseStoryboardJson(response.text || ''), candidate), linked), beats, storyCast);
+            const revisedIssues = findCharacterIssues({ beats, linked, storyboardPrompt: revised, videoPrompt });
+            if (fixableIssueCount(revisedIssues) < fixableIssueCount(candidateIssues)) {
+              candidate = revised;
+              candidateIssues = revisedIssues;
+            }
+          } catch {
+            // The Characters line fix still stands; the next round asks again.
+          }
+        }
+        if (fixableIssueCount(candidateIssues) < before) {
+          await prisma.scene.update({ where: { id: scene.id }, data: { storyboard_prompt: candidate, updated_at: new Date() } });
+          storyboardPrompt = candidate;
+          storyboardChanged = true;
+          issues = candidateIssues;
+        }
+      }
+
+      // 3. A shot plan that leaves someone out is planned again with each beat's cast. Clips stay with their shots.
+      const plan = parseShotPlan(videoPrompt);
+      if (plan && videoNeedsFix(issues)) {
+        const shotContext: ShotSceneContext = {
+          locationName: scene.EpisodeLocation?.Location?.name || '',
+          characterNames: linked,
+          objectNames: await loadObjectNames(scene.id),
+          scriptBeats,
+          beatNumbers: scene.beat_numbers,
+          description: scene.description,
+          storyboardPrompt,
+          beatCast: Object.fromEntries(beats.map((beat) => [beat.beat, beat.onScreen])),
+        };
+        try {
+          const response = await aiService.call(buildShotDirectionPrompt(shotContext), 4000, { temperature: 0 });
+          const direction = validateShotDirection(parseStoryboardJson(response.text || ''), sceneBeats(shotContext));
+          const replanned = serializeShotPlan(buildShotPlan(shotContext, direction, plan));
+          const replannedIssues = findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt: replanned });
+          if (fixableIssueCount(replannedIssues) < fixableIssueCount(issues)) {
+            await prisma.scene.update({ where: { id: scene.id }, data: { video_prompt: replanned, updated_at: new Date() } });
+            videoPrompt = replanned;
+            videoChanged = true;
+            issues = replannedIssues;
+          }
+        } catch {
+          // Left for the next round.
+        }
+      }
+    }
+
+    if (storyboardChanged) report.fixed.push('Named and placed every on-screen character in the storyboard prompt.');
+    if (videoChanged) report.fixed.push('Planned the video shots again so each names and places the characters its beat shows.');
+    report.remaining = describeIssues(issues);
+    report.warnings = describeWarnings(issues);
+    if ((linksAdded || storyboardChanged) && scene.storyboard_image_url) {
+      report.warnings.push('The storyboard image was made before this fix. Generate a new take in the Storyboard step.');
+    }
+    const clips = parseShotPlan(videoPrompt)?.shots.filter((shot) => shot.videoUrl).length || 0;
+    if (videoChanged && clips > 0) {
+      report.warnings.push(`${clips} clip${clips === 1 ? ' was' : 's were'} made before the shot prompts were fixed. Generate new takes in the Video step.`);
+    }
+  } catch (error) {
+    report.ok = false;
+    report.error = error instanceof Error ? error.message : 'The scene could not be checked.';
+  }
+  return report;
+}

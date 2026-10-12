@@ -165,6 +165,29 @@ export async function processAndUploadCharacterSheetAsset(
   return { publicUrl, storageBucket: BUCKET, storagePath: path };
 }
 
+/** Copies a generated object sheet into permanent storage, next to the character sheets. */
+export async function processAndUploadPropSheetAsset(
+  imageUrl: string,
+  identifier?: string | null
+): Promise<StoredImageAsset> {
+  if (!imageUrl || !imageUrl.startsWith('http')) {
+    return { publicUrl: imageUrl, storageBucket: null, storagePath: imageUrl };
+  }
+
+  const existing = existingStoredAsset(imageUrl, BUCKET);
+  if (existing) return existing;
+
+  const res = await fetch(imageUrl);
+  if (!res.ok) throw new Error(`Failed to download object sheet (${res.status}): ${res.statusText}`);
+  const contentType = res.headers.get('content-type') || 'image/png';
+  if (!contentType.startsWith('image/')) throw new Error('Object sheet URL did not return an image.');
+
+  const base64 = Buffer.from(await res.arrayBuffer()).toString('base64');
+  const cleanIdentifier = identifier?.replace(/[^a-zA-Z0-9_-]/g, '_') || `object_${Date.now()}`;
+  const { path, publicUrl } = await uploadImageBuffer(base64, contentType, `object_sheets/${cleanIdentifier}`);
+  return { publicUrl, storageBucket: BUCKET, storagePath: path };
+}
+
 export async function processAndUploadCharacterSheet(
   imageUrl: string,
   identifier?: string | null

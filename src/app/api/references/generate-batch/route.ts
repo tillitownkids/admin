@@ -44,9 +44,11 @@ export async function POST(request: Request) {
     const body = await request.json();
     const characterIds = uniqueIds(body.characterIds);
     const locationIds = uniqueIds(body.locationIds);
+    const propIds = uniqueIds(body.propIds);
     const items: BatchItem[] = [
       ...characterIds.map((id) => ({ id, type: 'character' as const })),
       ...locationIds.map((id) => ({ id, type: 'location' as const })),
+      ...propIds.map((id) => ({ id, type: 'prop' as const })),
     ];
 
     if (items.length > 50) {

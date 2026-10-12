@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Plus, Save, Upload, Loader2, X, Trash2, Sparkles } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
@@ -22,17 +22,33 @@ export interface LibraryItem {
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
+/** Fields one library adds to the shared form, such as an object's kind and episode. */
+export interface LibraryExtraFields {
+  /** Starting values for a new item (null) or an existing one. */
+  initial: (item: LibraryItem | null) => Record<string, unknown>;
+  render: (values: Record<string, unknown>, setValues: (values: Record<string, unknown>) => void) => ReactNode;
+  /** A message when the values cannot be saved yet. */
+  validate?: (values: Record<string, unknown>) => string | null;
+  /** A short line on the item's card. */
+  cardLabel?: (item: LibraryItem) => string | null;
+}
+
 interface LibraryManagerProps {
   resourceName: string;
   resourceNamePlural: string;
   apiPath: string;
   listKey: string;
   itemKey: string;
-  ownerType: 'character_reference' | 'location_reference';
+  ownerType: 'character_reference' | 'location_reference' | 'prop_reference';
   icon: LucideIcon;
   description: string;
   namePlaceholder: string;
   descriptionPlaceholder: string;
+  /** Turns the description into the prompt sent for a reference sheet. Defaults to the description itself. */
+  sheetPrompt?: (description: string) => string;
+  extraFields?: LibraryExtraFields;
+  /** Receives the whole list response, for data the extra fields need. */
+  onListLoaded?: (data: Record<string, unknown>) => void;
 }
 
 export function LibraryManager({
@@ -46,6 +62,9 @@ export function LibraryManager({
   description,
   namePlaceholder,
   descriptionPlaceholder,
+  sheetPrompt,
+  extraFields,
+  onListLoaded,
 }: LibraryManagerProps) {
   const [viewMode, setViewMode] = useState<'list' | 'create' | 'edit'>('list');
   const [items, setItems] = useState<LibraryItem[]>([]);
@@ -56,6 +75,7 @@ export function LibraryManager({
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [magnificIdentifier, setMagnificIdentifier] = useState<string | null>(null);
+  const [extraValues, setExtraValues] = useState<Record<string, unknown>>({});
 
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -81,6 +101,7 @@ export function LibraryManager({
       if (res.ok) {
         const data = await res.json();
         setItems(data[listKey] || []);
+        onListLoaded?.(data);
       }
     } catch (e) {
       console.error(`Failed to load ${resourceNamePlural}`, e);
@@ -91,10 +112,16 @@ export function LibraryManager({
     let cancelled = false;
     fetch(apiPath)
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Failed to load ${resourceNamePlural}`)))
-      .then((data) => { if (!cancelled) setItems(data[listKey] || []); })
+      .then((data) => {
+        if (cancelled) return;
+        setItems(data[listKey] || []);
+        onListLoaded?.(data);
+      })
       .catch((err) => console.error(`Failed to load ${resourceNamePlural}`, err))
       .finally(() => { if (!cancelled) setIsFetchingItems(false); });
     return () => { cancelled = true; };
+    // onListLoaded is read once per load; a new function each render must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiPath, listKey, resourceNamePlural]);
 
   const startCreate = () => {
@@ -108,6 +135,7 @@ export function LibraryManager({
     setPendingFile(null);
     setPendingPreviewUrl(null);
     setCurrent(null);
+    setExtraValues(extraFields?.initial(null) ?? {});
     setViewMode('create');
   };
 
@@ -122,6 +150,7 @@ export function LibraryManager({
     setHasGeneratedSheet(Boolean(item.generated_image_url || item.magnific_identifier));
     setPendingFile(null);
     setPendingPreviewUrl(null);
+    setExtraValues(extraFields?.initial(item) ?? {});
     setViewMode('edit');
   };
 
@@ -197,7 +226,15 @@ export function LibraryManager({
 
   const generatedOwnerType = ownerType === 'character_reference'
     ? 'character_generated' as const
+    : ownerType === 'prop_reference'
+    ? 'prop_generated' as const
     : 'location_generated' as const;
+
+  // Throws the extra fields' message when they are not ready to save.
+  const checkExtraFields = () => {
+    const problem = extraFields?.validate?.(extraValues);
+    if (problem) throw new Error(problem);
+  };
 
   // The form shows the reference sheet that is in use.
   const applyTakeInUse = (itemId: string, asset: { public_url: string; provider_identifier: string | null }) => {
@@ -221,10 +258,14 @@ export function LibraryManager({
         description: itemDescription,
         reference_image_url: pendingFile ? null : manualUploadImageUrl,
         generated_image_url: generatedImageUrl,
-        magnific_identifier: magnificIdentifier
+        magnific_identifier: magnificIdentifier,
+        ...extraValues,
       }),
     });
-    if (!res.ok) throw new Error(`Failed to create ${resourceName.toLowerCase()}.`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Failed to create ${resourceName.toLowerCase()}.`);
+    }
     const data = await res.json();
     const created: LibraryItem = data[itemKey];
 
@@ -286,7 +327,8 @@ export function LibraryManager({
     }
 
     if (!url) throw new Error('The image service returned no image.');
-    if (ownerType === 'character_reference' && !identifier) {
+    // Storyboards and clips reference characters and objects by this identifier.
+    if (ownerType !== 'location_reference' && !identifier) {
       throw new Error('The image service returned an image without its identifier, so it cannot be used in storyboards.');
     }
     return { url, identifier };
@@ -310,6 +352,7 @@ export function LibraryManager({
 
     let saved = 0;
     try {
+      checkExtraFields();
       let item = current;
       if (!item) {
         item = await createItem();
@@ -321,7 +364,7 @@ export function LibraryManager({
         if (takesPerRun > 1) setGenerationProgress(`Generating take ${take} of ${takesPerRun}…`);
         const generated = await requestReferenceSheet({
           name: name.trim(),
-          prompt: itemDescription.trim(),
+          prompt: sheetPrompt ? sheetPrompt(itemDescription.trim()) : itemDescription.trim(),
           reference_url: item.reference_image_url || referenceImageUrl || '',
         });
 
@@ -373,6 +416,7 @@ export function LibraryManager({
     setIsSaving(true);
     setError(null);
     try {
+      checkExtraFields();
       await createItem();
       setViewMode('list');
     } catch (err: unknown) {
@@ -387,6 +431,7 @@ export function LibraryManager({
     setIsSaving(true);
     setError(null);
     try {
+      checkExtraFields();
       const res = await fetch(`${apiPath}/${current.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -395,10 +440,14 @@ export function LibraryManager({
           description: itemDescription,
           reference_image_url: manualUploadImageUrl,
           generated_image_url: generatedImageUrl,
-          magnific_identifier: magnificIdentifier
+          magnific_identifier: magnificIdentifier,
+          ...extraValues,
         }),
       });
-      if (!res.ok) throw new Error('Failed to save changes.');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to save changes.');
+      }
       const data = await res.json();
       const updated: LibraryItem = data[itemKey];
       setCurrent(updated);
@@ -491,6 +540,9 @@ export function LibraryManager({
                 </div>
                 <div className="p-4 flex-1 flex flex-col">
                   <h3 className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">{item.name}</h3>
+                  {extraFields?.cardLabel?.(item) && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">{extraFields.cardLabel(item)}</p>
+                  )}
                   <p className="text-sm text-muted-foreground mt-1 line-clamp-2 flex-1">{item.description || 'No description yet.'}</p>
                 </div>
               </div>
@@ -564,6 +616,8 @@ export function LibraryManager({
                 className={fieldClass}
               />
             </div>
+
+            {extraFields?.render(extraValues, setExtraValues)}
 
             {/* SECTION 1: Upload Reference Image (User Manual Upload / reference_image_url) */}
             <div className="space-y-3 pt-4 border-t border-border/50">

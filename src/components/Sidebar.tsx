@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Clapperboard, LayoutDashboard, LogOut, MapPin, Settings, Tv, Users } from "lucide-react";
+import { Clapperboard, LayoutDashboard, LogOut, MapPin, Package, Settings, Tv, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { signout } from "@/actions/auth";
@@ -32,6 +32,7 @@ export const navGroups: { label: string | null; items: NavItem[] }[] = [
     items: [
       { name: "Characters", path: "/characters", icon: Users },
       { name: "Locations", path: "/locations", icon: MapPin },
+      { name: "Objects", path: "/objects", icon: Package },
     ],
   },
   {

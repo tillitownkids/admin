@@ -49,6 +49,11 @@ export interface SceneRow {
     character_id: string;
     Character: CharacterRow;
   }>;
+  /** The scene's objects (props), each with its reference sheet identifier. */
+  SceneProp?: Array<{
+    prop_id: string;
+    Prop: { id: string; name: string; magnific_identifier: string | null } | null;
+  }>;
 }
 
 

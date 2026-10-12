@@ -3,10 +3,19 @@ import { supabase } from '@/lib/supabase';
 import {
   processAndUploadCharacterSheetAsset,
   processAndUploadLocationSheetAsset,
+  processAndUploadPropSheetAsset,
 } from '@/lib/storage';
 import { recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
+import { propSheetPrompt } from '@/lib/propSheet';
 
-export type ReferenceType = 'character' | 'location';
+/** 'prop' is an object (vehicle, bag, tent...): the Objects library. */
+export type ReferenceType = 'character' | 'location' | 'prop';
+
+const REFERENCE = {
+  character: { table: 'Character', label: 'Character', ownerType: 'character_generated', webhook: 'https://automation.tillitown.com/webhook/generate-character-image', store: processAndUploadCharacterSheetAsset },
+  location: { table: 'Location', label: 'Location', ownerType: 'location_generated', webhook: 'https://automation.tillitown.com/webhook/generate-image', store: processAndUploadLocationSheetAsset },
+  prop: { table: 'Prop', label: 'Object', ownerType: 'prop_generated', webhook: 'https://automation.tillitown.com/webhook/generate-image', store: processAndUploadPropSheetAsset },
+} as const;
 
 interface ReferenceRecord {
   id: string;
@@ -80,7 +89,7 @@ function extractGeneratedReference(data: unknown): GeneratedReference {
 }
 
 async function loadReference(type: ReferenceType, id: string): Promise<ReferenceRecord | null> {
-  const table = type === 'character' ? 'Character' : 'Location';
+  const { table } = REFERENCE[type];
   try {
     // Batch generation can keep several requests open while external image
     // services respond. Prefer Supabase's HTTP API here so those reads do not
@@ -95,7 +104,9 @@ async function loadReference(type: ReferenceType, id: string): Promise<Reference
   try {
     const record = type === 'character'
       ? await prisma.character.findUnique({ where: { id } })
-      : await prisma.location.findUnique({ where: { id } });
+      : type === 'location'
+      ? await prisma.location.findUnique({ where: { id } })
+      : await prisma.prop.findUnique({ where: { id } });
     if (record) return record as ReferenceRecord;
   } catch (error) {
     console.warn(`Prisma ${type} lookup failed:`, error);
@@ -105,7 +116,7 @@ async function loadReference(type: ReferenceType, id: string): Promise<Reference
 
 export async function generateReference(type: ReferenceType, id: string) {
   const record = await loadReference(type, id);
-  if (!record) throw new Error(`${type === 'character' ? 'Character' : 'Location'} not found.`);
+  if (!record) throw new Error(`${REFERENCE[type].label} not found.`);
 
   try {
     if (record.generated_image_url && record.magnific_identifier) {
@@ -115,15 +126,13 @@ export async function generateReference(type: ReferenceType, id: string) {
       throw new Error('A description is required before its reference can be generated.');
     }
 
-    const webhookUrl = type === 'character'
-      ? 'https://automation.tillitown.com/webhook/generate-character-image'
-      : 'https://automation.tillitown.com/webhook/generate-image';
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(REFERENCE[type].webhook, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: record.name,
-        prompt: record.description,
+        // An object's description is wrapped into a multi-view sheet prompt.
+        prompt: type === 'prop' ? propSheetPrompt(record.description) : record.description,
         reference_url: record.reference_image_url || '',
       }),
       cache: 'no-store',
@@ -136,12 +145,10 @@ export async function generateReference(type: ReferenceType, id: string) {
     }
 
     const generated = extractGeneratedReference(await response.json());
-    const stored = type === 'character'
-      ? await processAndUploadCharacterSheetAsset(generated.imageUrl, generated.magnificIdentifier)
-      : await processAndUploadLocationSheetAsset(generated.imageUrl, generated.magnificIdentifier);
+    const stored = await REFERENCE[type].store(generated.imageUrl, generated.magnificIdentifier);
 
     await recordGeneratedImageVersion({
-      ownerType: type === 'character' ? 'character_generated' : 'location_generated',
+      ownerType: REFERENCE[type].ownerType,
       ownerId: id,
       publicUrl: stored.publicUrl,
       storagePath: stored.storagePath,

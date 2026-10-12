@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, ChevronDown, ImageIcon, Loader2, MapPin, Plus, Upload, User } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronDown, ImageIcon, Loader2, MapPin, Package, Plus, Upload, User } from "lucide-react";
 
 import { ButtonLink } from "@/components/ButtonLink";
 import { ConfirmButton } from "@/components/ConfirmButton";
@@ -69,6 +69,10 @@ function extractMagnificIdentifier(data: any): string | null {
 
 function sceneCharacters(scene: SceneRow) {
   return (scene.SceneCharacter || []).flatMap((link) => (link.Character ? [link.Character] : []));
+}
+
+function sceneObjects(scene: SceneRow) {
+  return (scene.SceneProp || []).flatMap((link) => (link.Prop ? [link.Prop] : []));
 }
 
 function plural(count: number, word: string) {
@@ -188,12 +192,21 @@ export function StoryboardImages({
       throw new Error(`The location "${location.Location.name}" has no reference sheet yet. Generate it in Locations, then try again.`);
     }
 
+    const objects: Record<string, string> = {};
+    const objectsWithoutSheet = sceneObjects(scene).filter((object) => !object.magnific_identifier).map((object) => object.name);
+    if (objectsWithoutSheet.length > 0) {
+      throw new Error(`${objectsWithoutSheet.join(", ")} ${objectsWithoutSheet.length === 1 ? "has" : "have"} no object sheet yet. Generate ${objectsWithoutSheet.length === 1 ? "it" : "them"} in Objects, then try again.`);
+    }
+    for (const object of sceneObjects(scene)) objects[object.name] = object.magnific_identifier!;
+
     return {
       id: scene.id,
       imagePrompt: prompt || scene.description || "",
       references: {
         characters,
         locations: location ? { [location.Location.name]: location.Location.magnific_identifier! } : {},
+        // Object sheets: the image workflow passes them to the generator with the other references.
+        objects,
       },
     };
   };
@@ -521,12 +534,18 @@ export function StoryboardImages({
                   </div>
                 </div>
 
-                {characters.length > 0 && (
+                {(characters.length > 0 || sceneObjects(scene).length > 0) && (
                   <div className="flex flex-wrap gap-1.5">
                     {characters.map((character) => (
                       <Badge key={character.id} variant={character.magnific_identifier ? "outline" : "destructive"}>
                         <User />
                         {character.name}
+                      </Badge>
+                    ))}
+                    {sceneObjects(scene).map((object) => (
+                      <Badge key={object.id} variant={object.magnific_identifier ? "outline" : "destructive"} title={object.magnific_identifier ? "Object" : "Object without a sheet yet"}>
+                        <Package />
+                        {object.name}
                       </Badge>
                     ))}
                   </div>

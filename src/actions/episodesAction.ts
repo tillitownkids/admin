@@ -113,6 +113,8 @@ export async function getEpisodesAction(): Promise<{ success: true; episodes: Ep
 export interface EpisodeDetail extends EpisodeSummary {
   characters: { id: string; name: string; hasReference: boolean }[];
   locations: { id: string; name: string; hasReference: boolean }[];
+  /** Objects (props) seen in the episode. `suggestPermanent` marks an episode object the detection agent expects to return. */
+  objects: { id: string; name: string; hasReference: boolean; kind: string; suggestPermanent: boolean }[];
 }
 
 /** One episode, plus the cast and locations its steps draw on. */
@@ -121,13 +123,20 @@ export async function getEpisodeAction(storyId: string): Promise<{ success: true
     const episode = (await loadEpisodes(storyId)).find((item) => item.id === storyId);
     if (!episode) return { success: false, error: "This episode no longer exists." };
 
-    const [cast, places] = await Promise.all([
+    const [cast, places, objects] = await Promise.all([
       rows<{ Character: { id: string; name: string; magnific_identifier: string | null } | null }>(
         supabase.from("StoryCharacter").select("Character(id,name,magnific_identifier)").eq("story_id", storyId)
       ),
       rows<{ Location: { id: string; name: string; magnific_identifier: string | null } | null }>(
         supabase.from("EpisodeLocation").select("Location(id,name,magnific_identifier)").eq("story_id", storyId).order("order_index", { ascending: true })
       ),
+      // Objects are optional: before their tables exist the episode still loads, without them.
+      rows<{ Prop: { id: string; name: string; magnific_identifier: string | null; kind: string; suggest_permanent: boolean } | null }>(
+        supabase.from("StoryProp").select("Prop(id,name,magnific_identifier,kind,suggest_permanent)").eq("story_id", storyId)
+      ).catch((error) => {
+        console.warn("Episode objects could not be loaded:", error);
+        return [];
+      }),
     ]);
 
     return {
@@ -136,6 +145,15 @@ export async function getEpisodeAction(storyId: string): Promise<{ success: true
         ...episode,
         characters: cast.flatMap((row) => (row.Character ? [{ id: row.Character.id, name: row.Character.name, hasReference: Boolean(row.Character.magnific_identifier) }] : [])),
         locations: places.flatMap((row) => (row.Location ? [{ id: row.Location.id, name: row.Location.name, hasReference: Boolean(row.Location.magnific_identifier) }] : [])),
+        objects: objects
+          .flatMap((row) => (row.Prop ? [{
+            id: row.Prop.id,
+            name: row.Prop.name,
+            hasReference: Boolean(row.Prop.magnific_identifier),
+            kind: row.Prop.kind,
+            suggestPermanent: row.Prop.kind === "episode" && Boolean(row.Prop.suggest_permanent),
+          }] : []))
+          .sort((a, b) => a.name.localeCompare(b.name)),
       },
     };
   } catch (error) {

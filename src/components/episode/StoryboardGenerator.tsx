@@ -9,10 +9,14 @@ import { Button } from "@/components/ui/button";
 import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction, getSavedStoryboardsAction } from "@/actions/saveStoryboardAction";
 import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
-import { MAX_BEATS_PER_SCENE, parseStoryboardJson, validateScenePlan, type ScenePlan } from "@/lib/storyboardGeneration";
+import { MAX_BEATS_PER_SCENE, STORYBOARD_PANELS, parseStoryboardJson, validateScenePlan, type ScenePlan } from "@/lib/storyboardGeneration";
 import { generateStoryboardBatchAction } from "@/actions/generateStoryboardBatchAction";
 import { estimateBeatTimingAction } from "@/actions/estimateBeatTimingAction";
 import { resetStoryboardAction } from "@/actions/resetStoryboardAction";
+import type { SceneCharacterReport } from "@/actions/characterCheckAction";
+import { runCharacterCheck } from "@/components/episode/CharacterCheck";
+import { getEpisodeObjectsAction, type EpisodeObject } from "@/actions/propsAction";
+import { MAX_SCENE_OBJECTS } from "@/lib/propSheet";
 import {
   SCENE_MAX_SECONDS,
   SCENE_MIN_SECONDS,
@@ -109,7 +113,8 @@ export function StoryboardGenerator({
 }: {
   storyId: string;
   scriptId: string;
-  onPlanned?: () => void;
+  /** Called with the character check's report on the new scenes, or null if the check could not run. */
+  onPlanned?: (characterReports: SceneCharacterReport[] | null) => void;
 }) {
   const router = useRouter();
 
@@ -125,6 +130,8 @@ export function StoryboardGenerator({
   const [isFetchingScripts, setIsFetchingScripts] = useState(true);
   const [storyLocations, setStoryLocations] = useState<any[]>([]);
   const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
+  // Objects (props) linked to the episode; each scene lists the ones it shows.
+  const [storyObjects, setStoryObjects] = useState<EpisodeObject[]>([]);
 
   function getScriptLabel(script: DatabaseScript) {
     if (script.title) return script.title;
@@ -184,12 +191,13 @@ export function StoryboardGenerator({
           setStoryLocations(res.locations || []);
           setStoryCharacters(res.characters || []);
         }
+        setStoryObjects(await getEpisodeObjectsAction(storyId));
       } catch (err) {
         console.error("Error fetching story characters/locations:", err);
       }
     }
     loadEpisodeContext();
-  }, [selectedScript, scripts]);
+  }, [selectedScript, scripts, storyId]);
 
   async function handleGenerateStoryboard() {
     if (!selectedScript || !prompt.trim()) return;
@@ -234,7 +242,7 @@ Assign the exact matching location name in the "location_name" field for each sc
       ? `OFFICIAL EPISODE CAST (exact names):
 ${storyCharacters.map(c => `- "${c.name}"`).join("\n")}
 
-For each scene, list in "character_names" ONLY the characters who physically appear on screen in that scene's beats, copying their names EXACTLY as written above (character-for-character, no nicknames, no shortening). Do not list characters who are only mentioned, heard off-screen, or not in the cast list.`
+For each scene, list in "character_names" ONLY the characters who physically appear on screen in that scene's beats (follow who is present: a character who is there stays in the shots of a group moment or a conversation even when a beat does not name them again; a close-up shows only the character it isolates), copying their names EXACTLY as written above (character-for-character, no nicknames, no shortening). Do not list characters who are only mentioned, heard off-screen, or not in the cast list.`
       : "";
 
     // PASS 1: Detect all scenes across the ENTIRE script at once (100% natural scene boundaries)
@@ -281,6 +289,11 @@ After grouping, verify every scene: no more than ${MAX_BEATS_PER_SCENE} beats, $
 
 ${castPromptSection}
 
+${storyObjects.length > 0 ? `OFFICIAL EPISODE OBJECTS (exact names; each has a reference sheet):
+${storyObjects.map((object) => `- "${object.name}"`).join("\n")}
+
+For each scene, list in "object_names" ONLY the objects above that are clearly visible in that scene's beats, copying their names EXACTLY. At most ${MAX_SCENE_OBJECTS} per scene, the most visible first. Use [] when none is visible.` : ""}
+
 ${locationPromptSection}
 
 ---
@@ -298,6 +311,7 @@ Count ALL beats in the source, including the final beat, and put that count in t
       "title": "Short descriptive scene title",
       "location_name": "Location Name",
       "character_names": ["Character Name 1", "Character Name 2"],
+      "object_names": [],
       "beat_numbers": [1, 2, 3]
     }
   ]
@@ -349,6 +363,15 @@ ${prompt}`;
       }
       // Whatever is still too long is split here, and a lone short beat is lengthened to the minimum.
       detectedScenes = splitLongScenes(detectedScenes, timings);
+      // Only episode objects, by their exact names, and no more than the reference budget allows.
+      const objectsByName = new Map(storyObjects.map((object) => [normalizeCharacterName(object.name), object.name]));
+      detectedScenes = detectedScenes.map((scene) => ({
+        ...scene,
+        object_names: Array.from(new Set((Array.isArray(scene.object_names) ? scene.object_names : [])
+          .map((name) => (typeof name === "string" ? objectsByName.get(normalizeCharacterName(name)) : undefined))
+          .filter((name): name is string => Boolean(name))))
+          .slice(0, MAX_SCENE_OBJECTS),
+      }));
       timings = lengthenShortScenes(detectedScenes, timings);
       setStage(`Writing image prompts for ${detectedScenes.length} scenes…`);
 
@@ -376,26 +399,37 @@ Refer to every character ONLY by the exact name in quotes above, every time (no 
           : locationPromptSection;
 
         // Panel N = the Nth beat. The video stage relies on this mapping to open each clip on its own panel.
+        // Every scene is a 4-panel sheet, a single-beat scene included: its spare panels give the
+        // beat alternate framings to choose from.
         const beatCount = scene.beat_numbers.length;
-        const isGrid = beatCount > 1;
         const panelMap = scene.beat_numbers.map((beat, i) => `Panel ${i + 1} = Beat ${beat}`).join(", ");
-        const sparePanels = Array.from({ length: 4 - beatCount }, (_, i) => beatCount + i + 1);
-        const layoutSection = isGrid
-          ? `This scene has ${beatCount} beats, so the image is a 2x2 grid of exactly 4 panels. Never use any other layout (no 1x2, 1x3, 2x3 or 3x3).
+        const sparePanels = Array.from({ length: STORYBOARD_PANELS - beatCount }, (_, i) => beatCount + i + 1);
+        const spareList = sparePanels.length > 1
+          ? `${sparePanels.slice(0, -1).join(", ")} and ${sparePanels[sparePanels.length - 1]}`
+          : String(sparePanels[0]);
+        const layoutSection = `This scene has ${beatCount} beat${beatCount === 1 ? "" : "s"}, and the image is always a 2x2 grid of exactly 4 panels. Never use any other layout (no single frame, no 1x2, 1x3, 2x3 or 3x3).
 - ${panelMap}. Each video clip later opens on its own panel, so never reorder, merge, or skip story panels.
 ${sparePanels.length > 0
-  ? `- Panel${sparePanels.length > 1 ? "s" : ""} ${sparePanels.join(" and ")} ${sparePanels.length > 1 ? "are" : "is"} spare. Give each a real job from the same beats, location and lighting: an alternate take of a key shot, or a detail insert. Start a spare panel's description with "(spare)".`
-  : "- All 4 panels are story panels."}`
-          : `This scene has 1 beat, so the image is a single full-frame shot of Beat ${scene.beat_numbers[0]}. Do not create a grid, panels, or panel numbers.`;
+  ? `- Panel${sparePanels.length > 1 ? "s" : ""} ${spareList} ${sparePanels.length > 1 ? "are" : "is"} spare. Give each a real job from the same beat${beatCount === 1 ? "" : "s"}, location and lighting: an alternate take of a key shot at a different shot size or angle, or a detail insert. Start a spare panel's description with "(spare)".`
+  : "- All 4 panels are story panels."}`;
 
+        // Objects are named, never described: their attached sheets define how they look.
+        const sceneObjects = scene.object_names || [];
+        const objectsLine = sceneObjects.length > 0
+          ? `\\n\\nObjects: ${sceneObjects.join(", ")}. Each matches its attached object sheet exactly.`
+          : "";
+        const objectPromptSection = sceneObjects.length > 0
+          ? `OBJECTS IN THIS SCENE (a reference sheet of each is attached to the image request):
+${sceneObjects.map((name) => `- "${name}"`).join("\n")}
+
+Refer to each object ONLY by the exact name above. Do NOT describe its shape, colors or materials — the attached sheet defines them. Describe only where it is and how it is used.`
+          : "";
         // Written here, not by the AI, so the image prompt never describes a character's looks in text.
         const charactersLine = sceneCast.length > 0
           ? `${sceneCast.map(c => c.name).join(", ")}. Each appears as exactly one individual, matching the attached reference images.`
           : "None.";
         const referenceLine = "Keep the characters and the location visually identical";
-        const promptTemplate = isGrid
-          ? `Create a single 4-panel 3D animation panel grid for a full-color 3D animated children's film, arranged in a 2x2 grid, landscape 16:9 per panel, one panel per camera shot.\\n\\nCharacters: ${charactersLine}\\n\\nSetting: [location name, then one line on the place, matching the attached location reference]\\n\\nAll panels: [time of day and one specific lighting phrase]\\n\\nPanel 1: [Shot size, angle] — [who is where, facing which way, doing what]\\n\\nPanel 2: ...\\n\\nPanel 3: ...\\n\\nPanel 4: ...\\n\\n${referenceLine} across all panels and matching the attached reference images — same faces, same proportions. Clean 3D CGI render in every panel. Label each panel with a small number in its corner.`
-          : `Create a single full-frame 3D animation frame for a full-color 3D animated children's film, landscape 16:9.\\n\\nCharacters: ${charactersLine}\\n\\nSetting: [location name, then one line on the place, matching the attached location reference]\\n\\nLighting: [time of day and one specific lighting phrase]\\n\\nShot: [Shot size, angle] — [who is where, facing which way, doing what]\\n\\n${referenceLine} to the attached reference images — same faces, same proportions. Clean 3D CGI render. No text, labels, or panel borders.`;
+        const promptTemplate = `Create a single 4-panel 3D animation panel grid for a full-color 3D animated children's film, arranged in a 2x2 grid, landscape 16:9 per panel, one panel per camera shot.\\n\\nCharacters: ${charactersLine}${objectsLine}\\n\\nSetting: [location name, then one line on the place, matching the attached location reference]\\n\\nAll panels: [time of day and one specific lighting phrase]\\n\\nPanel 1: [Shot size, angle] — [each character by exact name with their place in brackets (side of frame, depth, pose, facing), then what they are doing]\\n\\nPanel 2: ...\\n\\nPanel 3: ...\\n\\nPanel 4: ...\\n\\n${referenceLine} across all panels and matching the attached reference images — same faces, same proportions. Clean 3D CGI render in every panel. Label each panel with a small number in its corner.`;
 
         const pass2Prompt = `You are a professional storyboard artist for a 3D animated children's series.
 
@@ -415,6 +449,8 @@ Your task is to generate a production-ready storyboard image-generation prompt f
 5. Character looks come from the attached reference images, not from text. Only describe expressions, posture, and physical actions relevant to each beat.
 
 ${characterPromptSection}
+
+${objectPromptSection}
 
 ---
 
@@ -445,13 +481,14 @@ ${layoutSection}
 ## SHOT DESCRIPTION RULES
 
 - Start every panel or shot description with the shot size and angle of that beat's opening framing, taken from its CAMERA line, using only these terms. Shot size: wide shot, medium wide shot, medium shot, medium close-up, close-up, extreme close-up. Angle: eye level, low angle, high angle, over-the-shoulder, POV, child-eye height.
-- Follow it with an em dash, then who is in frame, where they are, which way they face, and the one thing they are doing.
+- Follow it with an em dash, then every character in frame by exact name, each followed by their place in brackets: side of frame (left, center or right), depth (foreground, midground or background), pose and facing, for example "Jaksh (left, foreground, kneeling, facing right)". Then the one thing they are doing.
+- Place characters apart so they never overlap, and keep each character on the same side of frame from panel to panel unless the action moves them. Stated positions stop the image and video models from merging bodies or putting characters in odd places.
 - Each description is a still frame: no camera movement, no "then", no second moment.
-- One sentence each, at most 30 words. No decorative adjectives.
+- One sentence each, at most 40 words. No decorative adjectives.
 - Copy the template's Characters line exactly as written. Never add to it or describe a character's looks anywhere in the prompt.
 - The Setting line is the location name plus at most 20 words. Do not copy the whole official description.
 - State the time of day and lighting ONCE, in the single lighting line of at most 15 words. Never repeat lighting or describe the environment again inside a panel or shot description.
-- Keep the whole storyboard_prompt under 260 words. A short, plain prompt produces a better image than a long one.
+- Keep the whole storyboard_prompt under 300 words. A short, plain prompt produces a better image than a long one.
 
 ---
 
@@ -491,6 +528,7 @@ Return ONLY valid JSON with this structure:
 
           locationName: scene.location_name,
           characterNames: scene.character_names,
+          objectNames: scene.object_names || [],
           beatNumbers: scene.beat_numbers,
           // Each beat carries its planned clip length, so the video stage uses the same timing.
           sceneScriptBeats: withBeatDurations(scene.scene_script_beats, scene.beat_numbers, timings),
@@ -507,7 +545,18 @@ Return ONLY valid JSON with this structure:
 
         const saveRes = await saveStoryboardScenesAction(payload);
         if (saveRes.success) {
-          onPlanned?.();
+          // The character agent reads every new scene's beats and attaches and names anyone the plan missed.
+          let characterReports: SceneCharacterReport[] | null = null;
+          try {
+            characterReports = await runCharacterCheck(storyId, {
+              fix: true,
+              onReading: () => setStage("Reading the episode to see who is present in each scene…"),
+              onProgress: (done, total) => setStage(`Checking each scene's characters against the script (${done} of ${total})…`),
+            });
+          } catch (err) {
+            console.error("The character check did not run after planning:", err);
+          }
+          onPlanned?.(characterReports);
           router.refresh();
         } else {
           setError(saveRes.error || "Failed to save initial storyboard scenes.");

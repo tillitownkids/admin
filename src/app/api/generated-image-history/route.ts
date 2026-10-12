@@ -9,6 +9,7 @@ import {
 import {
   processAndUploadCharacterSheetAsset,
   processAndUploadLocationSheetAsset,
+  processAndUploadPropSheetAsset,
   processAndUploadStoryboardImageAsset,
   type StoredImageAsset,
 } from '@/lib/storage';
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
 function storeTake(ownerType: GeneratedImageOwnerType, ownerId: string, imageUrl: string, identifier: string | null): Promise<StoredImageAsset> {
   if (ownerType === 'character_generated') return processAndUploadCharacterSheetAsset(imageUrl, identifier);
   if (ownerType === 'location_generated') return processAndUploadLocationSheetAsset(imageUrl, identifier);
+  if (ownerType === 'prop_generated') return processAndUploadPropSheetAsset(imageUrl, identifier);
   return processAndUploadStoryboardImageAsset(imageUrl, identifier, ownerId);
 }
 

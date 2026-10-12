@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
 
+/**
+ * Adds each scene's objects (props). Objects are optional: if their tables cannot be read, scenes
+ * load without them rather than failing the storyboard and video steps.
+ */
+async function withSceneObjects<T extends { id: string }>(scenes: T[]) {
+  const sceneIds = scenes.map((scene) => scene.id);
+  if (!sceneIds.length) return scenes;
+  const { data, error } = await supabase.from('SceneProp').select('scene_id, prop_id, Prop(id, name, magnific_identifier)').in('scene_id', sceneIds);
+  if (error) console.warn('Scene objects could not be loaded:', error.message);
+  return scenes.map((scene) => ({ ...scene, SceneProp: (data || []).filter((link) => link.scene_id === scene.id) }));
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -55,7 +67,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ scenes: scenes || [] });
+    return NextResponse.json({ scenes: await withSceneObjects(scenes || []) });
   } catch (error: any) {
     console.error("Error fetching scenes:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
