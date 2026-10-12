@@ -14,6 +14,8 @@ import {
 
 export interface AiCallOptions {
   webSearch?: boolean;
+  /** Sampling temperature; 0 for checks that must give the same answer every run. The model's default when absent. */
+  temperature?: number;
 }
 
 const TOOL_NAME = 'web_search';

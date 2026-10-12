@@ -9,6 +9,7 @@ export const GENERATED_IMAGE_OWNER_TYPES = [
   'character_generated',
   'location_generated',
   'scene_storyboard',
+  'prop_generated',
 ] as const;
 
 export type GeneratedImageOwnerType = typeof GENERATED_IMAGE_OWNER_TYPES[number];
@@ -17,6 +18,7 @@ const OWNERS: Record<GeneratedImageOwnerType, { table: string; urlColumn: string
   character_generated: { table: 'Character', urlColumn: 'generated_image_url' },
   location_generated: { table: 'Location', urlColumn: 'generated_image_url' },
   scene_storyboard: { table: 'Scene', urlColumn: 'storyboard_image_url', extra: { storyboard_status: 'generated' } },
+  prop_generated: { table: 'Prop', urlColumn: 'generated_image_url' },
 };
 
 export interface GeneratedImageVersionInput {

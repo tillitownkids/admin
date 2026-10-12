@@ -3,11 +3,15 @@ export interface ScenePlan {
   title: string;
   location_name: string;
   character_names: string[];
+  /** Objects (props) seen in the scene, by exact name. Optional: older plans have none. */
+  object_names?: string[];
   beat_numbers: number[];
 }
 
 /** A scene is one storyboard sheet: a 2x2 grid with one panel per beat. */
 export const MAX_BEATS_PER_SCENE = 4;
+/** Every sheet has 4 panels; panels after the scene's beats are spare framings. */
+export const STORYBOARD_PANELS = 4;
 
 export function parseStoryboardJson(text: string): unknown {
   let json = text.trim();

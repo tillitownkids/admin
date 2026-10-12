@@ -25,6 +25,8 @@ model Story {
   other_Story       Story[]           @relation("StoryToStory")
   StoryCharacter    StoryCharacter[]
   Video             Video[]
+  Prop              Prop[]
+  StoryProp         StoryProp[]
 }
 
 model Script {
@@ -121,6 +123,7 @@ model Scene {
   EpisodeLocation           EpisodeLocation  @relation(fields: [episode_location_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   Story                     Story?           @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   SceneCharacter            SceneCharacter[]
+  SceneProp                 SceneProp[]
 
   @@unique([episode_location_id, scene_number])
 }
@@ -199,4 +202,45 @@ model YouTubeUpload {
   @@unique([video_id, channel_id])
   @@index([created_at(sort: Desc)])
   @@index([status])
+}
+
+/// An object (vehicle, bag, tent...) with a reference sheet. Called "Objects" in the app.
+/// A permanent object is reused across episodes; an episode object belongs to one story.
+model Prop {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String
+  description         String      @default("")
+  kind                String      @default("permanent")
+  story_id            String?     @db.Uuid
+  suggest_permanent   Boolean     @default(false)
+  reference_image_url String?
+  generated_image_url String?
+  magnific_identifier String?     @unique
+  created_at          DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime    @default(now()) @db.Timestamptz(6)
+  Story               Story?      @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  StoryProp           StoryProp[]
+  SceneProp           SceneProp[]
+
+  @@index([story_id], map: "idx_prop_story")
+}
+
+model StoryProp {
+  story_id String @db.Uuid
+  prop_id  String @db.Uuid
+  Story    Story  @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Prop     Prop   @relation(fields: [prop_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([story_id, prop_id])
+  @@index([prop_id], map: "idx_story_prop_prop")
+}
+
+model SceneProp {
+  scene_id String @db.Uuid
+  prop_id  String @db.Uuid
+  Scene    Scene  @relation(fields: [scene_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Prop     Prop   @relation(fields: [prop_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([scene_id, prop_id])
+  @@index([prop_id], map: "idx_scene_prop_prop")
 }

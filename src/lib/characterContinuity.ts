@@ -1,0 +1,478 @@
+// The character check: an agent reads the episode's beats in order, tracks who is present in each
+// place, and decides who each shot actually shows. Each of them must then be attached to the scene
+// (their reference sheet goes with the storyboard and video requests), named in the storyboard panel
+// and the video shot of that beat, and placed there: a stated position on screen keeps a character
+// from drifting, morphing or turning up somewhere odd. Nobody else is added: a close-up shows one face.
+
+import { normalizeCharacterName } from '@/lib/characterNames';
+import { parseShotPlan, sceneBeats, storyboardPanels } from '@/lib/sceneShots';
+
+export { storyboardPanels };
+
+/** Check, fix and check again at most this many times per scene. */
+export const CHARACTER_FIX_ROUNDS = 3;
+/** Beats the agent decides in one call; earlier beats are sent along as context. */
+export const CAST_CHECK_BEATS_PER_CALL = 8;
+
+export interface CastMember {
+  name: string;
+  description?: string | null;
+}
+
+export interface BeatCast {
+  beat: number;
+  /** Cast members the shot shows, by their exact cast names. */
+  onScreen: string[];
+  /** Characters the shot shows who are not in the episode cast, so nothing can be attached. */
+  notInCast: string[];
+}
+
+interface PanelProblem {
+  panel: number;
+  beat: number;
+  /** Not named in the panel. */
+  missing: string[];
+  /** Named, but with no place in frame. */
+  unplaced: string[];
+}
+
+interface ShotProblem {
+  shot: number;
+  beat: number;
+  missing: string[];
+  unplaced: string[];
+}
+
+export interface SceneCharacterIssues {
+  /** On screen in the script but not attached to the scene. */
+  missingLinks: string[];
+  /** Attached to the scene but on screen in none of its beats. */
+  extraLinks: string[];
+  /** On screen but not in the episode cast. */
+  notInCast: string[];
+  /** Attached but left out of the storyboard prompt's Characters line. */
+  storyboardLine: string[];
+  /** Panels that leave out, or do not place, a character the beat shows. */
+  storyboardPanels: PanelProblem[];
+  /** Attached but left out of a shot's attachment list. */
+  videoAttachments: string[];
+  /** Shots that leave out, or do not place, a character the beat shows. */
+  videoShots: ShotProblem[];
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function namePattern(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean).map(escapeRegExp);
+  return `(?<![\\p{L}\\p{N}])${words.join('\\s+')}(?![\\p{L}\\p{N}])`;
+}
+
+/** Whether the text names the character: the whole name, any case, not inside a longer word. */
+export function mentionsName(text: string, name: string): boolean {
+  if (!name.trim()) return false;
+  return new RegExp(namePattern(name), 'iu').test(text || '');
+}
+
+const SIDE_OF_FRAME = /\b(left|right|cent(?:er|re)|middle)\b/i;
+
+/**
+ * Whether a storyboard panel places the character: their name followed by a bracket that says which
+ * side of frame they are on, as in "Jaksh (left, foreground, kneeling, facing right)".
+ */
+export function placesInPanel(text: string, name: string): boolean {
+  const placed = new RegExp(`${namePattern(name)}\\s*\\(([^)]*)\\)`, 'giu');
+  return Array.from((text || '').matchAll(placed)).some((match) => SIDE_OF_FRAME.test(match[1]));
+}
+
+/** Whether a video shot's "Positions at 0:00" line places the character. */
+export function placesInShot(prompt: string, name: string): boolean {
+  const line = (prompt || '').match(/^Positions at 0:00 — (.*)$/m)?.[1] ?? '';
+  const entry = line.split(';').find((part) => mentionsName(part, name));
+  return Boolean(entry && SIDE_OF_FRAME.test(entry));
+}
+
+/**
+ * Every name a cast member goes by, mapped to their exact cast name: the full name and each part of
+ * a name like "Jaksh's Father - Kartik" ("Jaksh's Father", "Kartik"). A part shared by two members,
+ * or equal to another member's full name, is left out.
+ */
+export function castAliases(cast: CastMember[]): Map<string, string> {
+  const full = new Map(cast.map((member) => [normalizeCharacterName(member.name), member.name]));
+  const parts = new Map<string, Set<string>>();
+  for (const member of cast) {
+    for (const part of member.name.split(/\s+[-–—]\s+/)) {
+      const key = normalizeCharacterName(part);
+      if (!key || full.has(key)) continue;
+      parts.set(key, (parts.get(key) || new Set<string>()).add(member.name));
+    }
+  }
+  const aliases = new Map(full);
+  for (const [key, owners] of parts) if (owners.size === 1) aliases.set(key, [...owners][0]);
+  return aliases;
+}
+
+export function buildCastCheckPrompt(input: {
+  cast: CastMember[];
+  /** The beats to decide. */
+  scriptBeats: string;
+  beatNumbers: number[];
+  /** The beats just before, so the agent knows who is already in the place. Context only. */
+  earlierBeats?: string;
+}): string {
+  const aliases = castAliases(input.cast);
+  const cast = input.cast.length
+    ? input.cast.map((member) => {
+      const about = (member.description || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+      const called = member.name.split(/\s+[-–—]\s+/)
+        .filter((part) => normalizeCharacterName(part) !== normalizeCharacterName(member.name) &&
+          aliases.get(normalizeCharacterName(part)) === member.name);
+      return `- "${member.name}"${called.length ? ` (also called ${called.map((name) => `"${name}"`).join(', ')})` : ''}${about ? `: ${about}` : ''}`;
+    }).join('\n')
+    : 'None.';
+  const earlier = input.earlierBeats?.trim()
+    ? `EARLIER BEATS (context only, to know who is already present; do not answer for them):
+"""
+${input.earlierBeats.trim()}
+"""
+
+`
+    : '';
+
+  return `You are the continuity supervisor for a 3D animated children's series. Each beat below is one camera shot. For every beat, decide which characters that shot shows, so exactly those characters' reference sheets are attached to its storyboard panel and video clip.
+
+EPISODE CAST (exact names):
+${cast}
+
+HOW TO DECIDE:
+1. Track who is present. Follow the beats in order: a character is present in a place from the moment they are there until the script moves them away. Characters stay present across beats even when a beat's ACTION does not name them again.${earlier ? ' Use the EARLIER BEATS to know who is already there.' : ''}
+2. Decide who the shot shows, from the ACTION, DIALOGUE and CAMERA lines:
+   - The character who acts, and anyone who speaks on camera.
+   - The characters they speak to, look at, touch, hand something to or react with, when those characters are present.
+   - A character the ACTION says arrives, enters, returns, or is looked at, gasped at or reacted to: the shot shows them, unless the CAMERA line names only someone else ("push-in on Sonal's face").
+   - Characters inside a vehicle, behind a wall or far off in a landscape shot are shown only when the CAMERA framing is close enough to see them.
+   - Everyone present for a group moment ("the family gathers", "they all", "the children") and in wide or medium wide shots of the group.
+   - In a close-up, extreme close-up, POV or insert, only the character or object the camera isolates.
+3. Leave out characters who are somewhere else, have left, are only mentioned or remembered, or are heard off-screen (O.S. or V.O.). Never add a cast member only because they are in the episode: keep each list as small as the shot allows.
+4. Match short names, nicknames, roles, relations and pronouns ("Kartik", "Papa", "his mother", "she", "the children") to the cast member they mean, and answer with that member's exact name, character for character.
+5. A visible character who is not in the cast goes in "not_in_cast" by the name the script uses. Crowds, unnamed extras, animals and objects are left out.
+
+${earlier}BEATS TO DECIDE:
+"""
+${(input.scriptBeats || '').trim()}
+"""
+
+Return ONLY valid JSON, one entry per beat in this order ${JSON.stringify(input.beatNumbers)}:
+{
+  "beats": [
+    { "beat_number": ${input.beatNumbers[0] ?? 1}, "present": ["Exact Cast Name"], "on_screen": ["Exact Cast Name"], "not_in_cast": [], "why": "a few words" }
+  ]
+}`;
+}
+
+/**
+ * The agent's answer, with every name mapped to its exact cast name (short names included). Names
+ * that match no cast member are returned in `unknown` so the agent can be asked again; they are
+ * never attached.
+ */
+export function parseBeatCast(value: unknown, cast: CastMember[], beatNumbers: number[]): { beats: BeatCast[]; unknown: string[] } {
+  const answer = value as { beats?: { beat_number?: unknown; on_screen?: unknown; not_in_cast?: unknown }[] } | null;
+  if (!answer || !Array.isArray(answer.beats) || answer.beats.length !== beatNumbers.length) {
+    throw new Error(`The character check must answer for exactly ${beatNumbers.length} beat(s).`);
+  }
+  const aliases = castAliases(cast);
+  const unknown = new Set<string>();
+  const names = (list: unknown) => (Array.isArray(list) ? list : [])
+    .filter((name): name is string => typeof name === 'string' && Boolean(name.trim()));
+
+  const beats = answer.beats.map((entry, index): BeatCast => {
+    if (Number(entry?.beat_number) !== beatNumbers[index]) {
+      throw new Error(`The character check answered out of order near beat ${beatNumbers[index]}.`);
+    }
+    const onScreen: string[] = [];
+    const add = (exact: string) => { if (!onScreen.includes(exact)) onScreen.push(exact); };
+    for (const name of names(entry.on_screen)) {
+      const exact = aliases.get(normalizeCharacterName(name));
+      if (exact) add(exact);
+      else unknown.add(name.trim());
+    }
+    // A cast member listed outside the cast under a short name ("Sonal") is still that cast member.
+    const notInCast: string[] = [];
+    for (const name of names(entry.not_in_cast)) {
+      const exact = aliases.get(normalizeCharacterName(name));
+      if (exact) add(exact);
+      else if (!notInCast.includes(name.trim())) notInCast.push(name.trim());
+    }
+    return { beat: beatNumbers[index], onScreen, notInCast };
+  });
+  return { beats, unknown: Array.from(unknown) };
+}
+
+/**
+ * Two independent reads combined: a character counts as on screen only when both reads say so. The
+ * check adds characters to scenes and prompts, so a borderline call from one read never forces
+ * someone into a shot.
+ */
+export function agreedBeatCast(first: BeatCast[], second: BeatCast[]): BeatCast[] {
+  return first.map((beat, index) => {
+    const other = second[index];
+    if (!other || other.beat !== beat.beat) return { ...beat, onScreen: [], notInCast: [] };
+    const both = (a: string[], b: string[]) => {
+      const keys = new Set(b.map(normalizeCharacterName));
+      return a.filter((name) => keys.has(normalizeCharacterName(name)));
+    };
+    return { beat: beat.beat, onScreen: both(beat.onScreen, other.onScreen), notInCast: both(beat.notInCast, other.notInCast) };
+  });
+}
+
+/**
+ * Splits an episode's scenes, in order, into groups of whole scenes of at most
+ * `CAST_CHECK_BEATS_PER_CALL` beats (a longer scene stands alone). Each group carries the scenes just
+ * before it, about `contextBeats` beats, so the agent knows who is already present.
+ */
+export function castCheckChunks<T extends { beatNumbers: number[] }>(scenes: T[], contextBeats = 6): { scenes: T[]; earlier: T[] }[] {
+  const groups: T[][] = [];
+  let count = 0;
+  for (const scene of scenes) {
+    const current = groups[groups.length - 1];
+    if (!current || count + scene.beatNumbers.length > CAST_CHECK_BEATS_PER_CALL) {
+      groups.push([scene]);
+      count = scene.beatNumbers.length;
+    } else {
+      current.push(scene);
+      count += scene.beatNumbers.length;
+    }
+  }
+  let start = 0;
+  return groups.map((group) => {
+    const earlier: T[] = [];
+    let beats = 0;
+    for (let i = start - 1; i >= 0 && beats < contextBeats; i--) {
+      earlier.unshift(scenes[i]);
+      beats += scenes[i].beatNumbers.length;
+    }
+    start += group.length;
+    return { scenes: group, earlier };
+  });
+}
+
+const CHARACTERS_LINE = /^[ \t]*\**Characters\**[ \t]*:[ \t]*(.*)$/im;
+
+/** The prompt's Characters line, null when it has none. */
+export function charactersLine(prompt: string): string | null {
+  return (prompt || '').match(CHARACTERS_LINE)?.[1] ?? null;
+}
+
+function withoutLine(text: string, line: RegExp): string {
+  return (text || '').replace(line, '');
+}
+
+export function findCharacterIssues(input: {
+  beats: BeatCast[];
+  /** Characters attached to the scene. */
+  linked: string[];
+  storyboardPrompt: string;
+  videoPrompt?: string | null;
+}): SceneCharacterIssues {
+  const isLinked = (name: string) => input.linked.some((linked) => normalizeCharacterName(linked) === normalizeCharacterName(name));
+  const onScreen = Array.from(new Set(input.beats.flatMap((beat) => beat.onScreen)));
+  const shown = new Set(onScreen.map(normalizeCharacterName));
+
+  const missingLinks = onScreen.filter((name) => !isLinked(name));
+  const extraLinks = input.linked.filter((name) => !shown.has(normalizeCharacterName(name)));
+  const notInCast = Array.from(new Set(input.beats.flatMap((beat) => beat.notInCast)));
+  // Everyone who should be in the images: the attached characters plus those the script shows.
+  const expected = [...input.linked, ...missingLinks];
+
+  const prompt = input.storyboardPrompt || '';
+  const line = charactersLine(prompt);
+  const storyboardLine = prompt.trim() ? expected.filter((name) => line === null || !mentionsName(line, name)) : [];
+
+  // Panel N shows the scene's Nth beat. A prompt without numbered panels (an older single frame)
+  // is checked as a whole.
+  const panels = storyboardPanels(prompt);
+  const promptBody = withoutLine(prompt, CHARACTERS_LINE);
+  const panelProblems: PanelProblem[] = prompt.trim()
+    ? input.beats.flatMap((beat, index) => {
+      const text = panels.size ? panels.get(index + 1) ?? '' : promptBody;
+      const missing = beat.onScreen.filter((name) => !mentionsName(text, name));
+      const unplaced = beat.onScreen.filter((name) => mentionsName(text, name) && !placesInPanel(text, name));
+      return missing.length || unplaced.length ? [{ panel: index + 1, beat: beat.beat, missing, unplaced }] : [];
+    })
+    : [];
+
+  const plan = parseShotPlan(input.videoPrompt);
+  const videoAttachments = new Set<string>();
+  const videoShots: ShotProblem[] = [];
+  for (const shot of plan?.shots || []) {
+    const attachments = shot.prompt.match(/^Attachments:.*$/m)?.[0] ?? '';
+    for (const name of expected) if (!mentionsName(attachments, name)) videoAttachments.add(name);
+    const beat = input.beats.find((item) => item.beat === shot.beat);
+    const body = withoutLine(shot.prompt, /^Attachments:.*$/m);
+    const missing = (beat?.onScreen || []).filter((name) => !mentionsName(body, name));
+    const unplaced = (beat?.onScreen || []).filter((name) => mentionsName(body, name) && !placesInShot(shot.prompt, name));
+    if (missing.length || unplaced.length) videoShots.push({ shot: shot.shot, beat: shot.beat ?? shot.shot, missing, unplaced });
+  }
+
+  return {
+    missingLinks,
+    extraLinks,
+    notInCast,
+    storyboardLine,
+    storyboardPanels: panelProblems,
+    videoAttachments: Array.from(videoAttachments),
+    videoShots,
+  };
+}
+
+const problemCount = (items: { missing: string[]; unplaced: string[] }[]) =>
+  items.reduce((total, item) => total + item.missing.length + item.unplaced.length, 0);
+
+/** Problems the check can fix itself. Extra links and characters outside the cast need a person. */
+export function fixableIssueCount(issues: SceneCharacterIssues): number {
+  return issues.missingLinks.length + issues.storyboardLine.length + problemCount(issues.storyboardPanels) +
+    issues.videoAttachments.length + problemCount(issues.videoShots);
+}
+
+export function storyboardNeedsFix(issues: SceneCharacterIssues): boolean {
+  return issues.storyboardLine.length > 0 || issues.storyboardPanels.length > 0;
+}
+
+export function videoNeedsFix(issues: SceneCharacterIssues): boolean {
+  return issues.videoAttachments.length > 0 || issues.videoShots.length > 0;
+}
+
+function list(names: string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? '';
+}
+
+function problemSentence(where: string, problem: { missing: string[]; unplaced: string[] }): string {
+  const parts = [
+    problem.missing.length ? `does not name ${list(problem.missing)}` : '',
+    problem.unplaced.length ? `does not say where ${list(problem.unplaced)} ${problem.unplaced.length === 1 ? 'is' : 'are'} in frame` : '',
+  ].filter(Boolean);
+  return `${where} ${parts.join(' and ')}.`;
+}
+
+/** One plain sentence per problem, for the report. */
+export function describeIssues(issues: SceneCharacterIssues): string[] {
+  return [
+    ...(issues.missingLinks.length ? [`${list(issues.missingLinks)} ${issues.missingLinks.length === 1 ? 'is' : 'are'} in the script but not attached to the scene.`] : []),
+    ...(issues.storyboardLine.length ? [`The storyboard prompt's Characters line leaves out ${list(issues.storyboardLine)}.`] : []),
+    ...issues.storyboardPanels.map((panel) => problemSentence(`Storyboard panel ${panel.panel} (beat ${panel.beat})`, panel)),
+    ...(issues.videoAttachments.length ? [`The video prompts do not attach the sheet of ${list(issues.videoAttachments)}.`] : []),
+    ...issues.videoShots.map((shot) => problemSentence(`Video shot ${shot.shot} (beat ${shot.beat})`, shot)),
+  ];
+}
+
+/** Problems that need a person: the check never removes links or adds characters to the cast. */
+export function describeWarnings(issues: SceneCharacterIssues): string[] {
+  return [
+    ...(issues.extraLinks.length ? [`${list(issues.extraLinks)} ${issues.extraLinks.length === 1 ? 'is' : 'are'} attached but on screen in none of the scene's beats. Remove ${issues.extraLinks.length === 1 ? 'it' : 'them'} if that is right.`] : []),
+    ...(issues.notInCast.length ? [`${list(issues.notInCast)} ${issues.notInCast.length === 1 ? 'is' : 'are'} on screen but not in the episode cast, so no sheet can be attached. Add ${issues.notInCast.length === 1 ? 'the character' : 'them'} to the episode's characters.`] : []),
+  ];
+}
+
+/**
+ * Writes the exact cast name where a panel that should show a character calls them by a short name
+ * ("Sonal" for "Jaksh's Mother - Sonal"). Reference sheets are matched by exact name.
+ */
+export function withExactNames(prompt: string, beats: BeatCast[], cast: CastMember[]): string {
+  const aliases = castAliases(cast);
+  const shortNames = (name: string) => Array.from(aliases)
+    .filter(([key, exact]) => exact === name && key !== normalizeCharacterName(name))
+    .map(([key]) => key);
+  const fix = (text: string, names: string[]) => names.reduce((out, name) => (mentionsName(out, name)
+    ? out
+    : shortNames(name).reduce((current, alias) => current.replace(new RegExp(namePattern(alias), 'giu'), name), out)), text);
+
+  const panels = storyboardPanels(prompt);
+  if (panels.size) {
+    let result = prompt;
+    beats.forEach((beat, index) => {
+      const text = panels.get(index + 1);
+      if (!text) return;
+      const fixed = fix(text, beat.onScreen);
+      if (fixed !== text) result = result.replace(text, fixed);
+    });
+    return result;
+  }
+  // An older single frame: everything but the Characters line.
+  const names = Array.from(new Set(beats.flatMap((beat) => beat.onScreen)));
+  const line = prompt.match(CHARACTERS_LINE)?.[0] ?? '';
+  const at = line ? prompt.indexOf(line) : -1;
+  if (at < 0) return fix(prompt, names);
+  return fix(prompt.slice(0, at), names) + line + fix(prompt.slice(at + line.length), names);
+}
+
+/** The storyboard prompt with its Characters line listing exactly these characters. */
+export function withCharactersLine(prompt: string, names: string[]): string {
+  const content = names.length
+    ? `${names.join(', ')}. Each appears as exactly one individual, matching the attached reference images.`
+    : 'None.';
+  if (CHARACTERS_LINE.test(prompt)) {
+    return prompt.replace(CHARACTERS_LINE, (whole, current: string) => whole.slice(0, whole.length - current.length) + content);
+  }
+  const setting = prompt.search(/^[ \t]*\**Setting\**[ \t]*:/im);
+  if (setting < 0) return prompt;
+  return `${prompt.slice(0, setting)}Characters: ${content}\n\n${prompt.slice(setting)}`;
+}
+
+export function buildStoryboardRevisionPrompt(input: {
+  storyboardPrompt: string;
+  scriptBeats: string;
+  panels: PanelProblem[];
+}): string {
+  // An older single-frame prompt has no numbered panels; its one shot is described as a whole.
+  const hasPanels = storyboardPanels(input.storyboardPrompt).size > 0;
+  const quoted = (names: string[]) => names.map((name) => `"${name}"`).join(', ');
+  const fixes = input.panels.map((panel) => {
+    const where = hasPanels ? `Panel ${panel.panel} (beat ${panel.beat})` : `The shot (beat ${panel.beat})`;
+    return `- ${where}: ${[
+      panel.missing.length ? `name and place ${quoted(panel.missing)}` : '',
+      panel.unplaced.length ? `place ${quoted(panel.unplaced)}` : '',
+    ].filter(Boolean).join('; ')}.`;
+  }).join('\n');
+
+  return `You are a storyboard artist correcting one storyboard image prompt for a 3D animated children's series. Some characters the script shows are not named in their panels, or their place in frame is not stated, which makes the image and video models put them in odd places or merge their bodies. Change as little as possible.
+
+FIX THESE PANELS:
+${fixes}
+
+RULES:
+- If the panel already shows the character under a short name, nickname, role word or pronoun ("Kartik", "Dad", "his mother", "she"), replace those words with the exact name. Otherwise add the character and what they are doing in that beat.
+- Write each exact name character for character, without quotes. Reference sheets are matched by these names.
+- Right after a character's first name in a panel, put their place in brackets: side of frame (left, center or right), depth (foreground, midground or background), pose and facing, for example "Jaksh (left, foreground, kneeling, facing right)". Do this for every character in the panels you fix, including ones already named there.
+- Place characters apart so they never overlap, and keep each character on the same side of frame from panel to panel unless the action moves them. Take positions from the beat and from the other panels.
+- Never describe looks (species, colors, face, hair, body, outfit): attached reference sheets define them.
+- Keep every other line word for word: the style line, the Characters, Objects and Setting lines, the lighting line, the panels you are not fixing and the closing line.
+- Keep the layout, the number of panels and the panel numbering. Never add panel labels or numbers to a single-frame prompt. Each panel stays one sentence that starts with its shot size and angle.
+- Keep the whole prompt under 300 words.
+
+THE SCENE'S BEATS (context only):
+"""
+${(input.scriptBeats || '').trim()}
+"""
+
+CURRENT PROMPT:
+"""
+${input.storyboardPrompt}
+"""
+
+Return ONLY valid JSON: { "storyboard_prompt": "the corrected prompt, newlines escaped" }`;
+}
+
+/** The agent's corrected prompt. A revision that changes the panel layout is rejected: clips open on their panel number. */
+export function parseRevisedStoryboardPrompt(value: unknown, original: string): string {
+  const prompt = (value as { storyboard_prompt?: unknown } | null)?.storyboard_prompt;
+  if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('The corrected storyboard prompt is missing.');
+  const panels = (text: string) => Array.from(storyboardPanels(text).keys()).join(',');
+  if (panels(prompt) !== panels(original)) throw new Error('The corrected storyboard prompt changed the panel layout.');
+  return prompt.trim();
+}
+
+/** The beats the check reads: the scene's beat script, numbered like the scene. */
+export function checkedBeatNumbers(scene: { scriptBeats: string; beatNumbers?: number[]; description: string }): number[] {
+  return sceneBeats(scene).map((beat, index) => beat.number ?? scene.beatNumbers?.[index] ?? index + 1);
+}

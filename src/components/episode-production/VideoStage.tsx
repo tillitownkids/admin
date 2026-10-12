@@ -19,6 +19,7 @@ import {
   sceneBeats,
   serializeShotPlan,
   shotTakes,
+  storyboardIsGrid,
   type SceneShot,
   type SceneShotPlan,
   type ShotSceneContext,
@@ -144,13 +145,19 @@ function sceneCharacters(scene: SceneRow) {
   return (scene.SceneCharacter || []).flatMap((link) => (link.Character ? [link.Character] : []));
 }
 
+function sceneObjects(scene: SceneRow) {
+  return (scene.SceneProp || []).flatMap((link) => (link.Prop ? [link.Prop] : []));
+}
+
 function shotContext(scene: SceneRow): ShotSceneContext {
   return {
     locationName: scene.locationName || '',
     characterNames: sceneCharacters(scene).map((character) => character.name),
+    objectNames: sceneObjects(scene).map((object) => object.name),
     scriptBeats: scene.script_beats || '',
     beatNumbers: Array.isArray(scene.beat_numbers) ? scene.beat_numbers : undefined,
     description: scene.description || '',
+    storyboardPrompt: scene.storyboard_prompt,
   };
 }
 
@@ -169,6 +176,16 @@ function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: Ep
   }
   if (missingCharacters.length > 0) {
     throw new Error(`Scene ${scene.scene_number}: ${missingCharacters.join(', ')} ${missingCharacters.length === 1 ? 'has' : 'have'} no reference sheet yet. Generate ${missingCharacters.length === 1 ? 'it' : 'them'} in Characters, then try again.`);
+  }
+
+  const objectRefs: Record<string, string> = {};
+  const objectsWithoutSheet: string[] = [];
+  for (const object of sceneObjects(scene)) {
+    if (object.magnific_identifier) objectRefs[object.name] = object.magnific_identifier;
+    else objectsWithoutSheet.push(object.name);
+  }
+  if (objectsWithoutSheet.length > 0) {
+    throw new Error(`Scene ${scene.scene_number}: ${objectsWithoutSheet.join(', ')} ${objectsWithoutSheet.length === 1 ? 'has' : 'have'} no object sheet yet. Generate ${objectsWithoutSheet.length === 1 ? 'it' : 'them'} in Objects, then try again.`);
   }
 
   const matchedEpLoc = episodeLocations.find(
@@ -191,6 +208,8 @@ function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: Ep
       references: {
         characters: charRefs,
         locations: { [matchedEpLoc.Location.name]: matchedEpLoc.Location.magnific_identifier },
+        // Object sheets: the video workflow passes them to the generator with the other references.
+        objects: objectRefs,
       },
     }],
   };
@@ -539,7 +558,7 @@ function SceneShotsCard({
   );
   const clipCount = plan ? plan.shots.filter((shot) => shot.videoUrl).length : 0;
   const shotCount = plan ? plan.shots.length : parsedBeatNumbers.length;
-  const isGrid = shotCount > 1;
+  const isGrid = storyboardIsGrid(shotCount, scene.storyboard_prompt);
   const clipsToGenerate = (shotCount - clipCount) * takesPerRun;
 
   return (

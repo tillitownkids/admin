@@ -64,6 +64,7 @@ export class AiService {
               content: [{ text: prompt }],
             },
           ],
+          ...(options?.temperature !== undefined ? { inferenceConfig: { temperature: options.temperature } } : {}),
         });
 
         response = await this.bedrockClient.send(command);
@@ -93,6 +94,7 @@ export class AiService {
       : await this.anthropicClient.messages.stream({
           model,
           max_tokens: maxTokens,
+          ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
           messages: [
             {
               role: "user",

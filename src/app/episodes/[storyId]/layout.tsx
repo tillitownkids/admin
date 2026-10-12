@@ -50,7 +50,7 @@ export default async function EpisodeLayout({
         <h1 className="text-2xl font-semibold tracking-tight text-foreground text-balance">{episode.title}</h1>
         <div className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
           <span>Episode {episode.number}</span>
-          <EpisodeReferences characters={episode.characters} locations={episode.locations} />
+          <EpisodeReferences storyId={storyId} characters={episode.characters} locations={episode.locations} objects={episode.objects} />
         </div>
       </header>
 

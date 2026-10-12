@@ -4,7 +4,8 @@ export type ImageOwnerType =
   | 'character_reference'
   | 'location_reference'
   | 'episode_location_stylesheet'
-  | 'scene_storyboard';
+  | 'scene_storyboard'
+  | 'prop_reference';
 
 interface OwnerMapping {
   table: string;
@@ -17,6 +18,7 @@ const OWNER_TABLE_MAP: Record<ImageOwnerType, OwnerMapping> = {
   location_reference: { table: 'Location', urlColumn: 'reference_image_url' },
   episode_location_stylesheet: { table: 'EpisodeLocation', urlColumn: 'stylesheet_image_url', statusColumn: 'status' },
   scene_storyboard: { table: 'Scene', urlColumn: 'storyboard_image_url', statusColumn: 'storyboard_status' },
+  prop_reference: { table: 'Prop', urlColumn: 'reference_image_url' },
 };
 
 interface RecordImageAssetInput {

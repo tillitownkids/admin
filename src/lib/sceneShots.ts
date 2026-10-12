@@ -145,17 +145,49 @@ export function planShotTiming(beat: Pick<ScriptBeat, 'dialogue' | 'wpm'> & { se
 
 export interface ShotDirection {
   lighting: string;
-  shots: { beat_number: number | null; camera: string; action: string }[];
+  /** `placement`: where each character is at the first frame, e.g. "Jaksh: left, foreground, kneeling, facing right". */
+  shots: { beat_number: number | null; camera: string; action: string; placement?: string }[];
+}
+
+const PANEL_HEADER = /(?:^|\n)[ \t]*\**[ \t]*Panel[ \t]+(\d+)[ \t]*\**[ \t]*[:—–-]/gi;
+
+/** Each "Panel N:" description of a storyboard prompt, up to the blank line that ends it. */
+export function storyboardPanels(prompt: string): Map<number, string> {
+  const text = (prompt || '').replaceAll('\r\n', '\n');
+  const headers = Array.from(text.matchAll(PANEL_HEADER));
+  const panels = new Map<number, string>();
+  headers.forEach((header, index) => {
+    const start = header.index! + header[0].length;
+    const end = index + 1 < headers.length ? headers[index + 1].index! : text.length;
+    const body = text.slice(start, end);
+    const blank = body.search(/\n[ \t]*\n/);
+    panels.set(Number(header[1]), (blank >= 0 ? body.slice(0, blank) : body).trim());
+  });
+  return panels;
+}
+
+/** The storyboard description of each beat's opening frame: its numbered panel, or an older single frame's shot line. */
+function openingFrames(storyboardPrompt: string | null | undefined, beatCount: number): (string | null)[] {
+  const panels = storyboardPanels(storyboardPrompt || '');
+  if (panels.size) return Array.from({ length: beatCount }, (_, index) => panels.get(index + 1) ?? null);
+  const shot = (storyboardPrompt || '').match(/^[ \t]*\**Shot\**[ \t]*:[ \t]*(.+)$/im)?.[1]?.trim() ?? null;
+  return Array.from({ length: beatCount }, (_, index) => (index === 0 ? shot : null));
 }
 
 export interface ShotSceneContext {
   locationName: string;
   characterNames: string[];
+  /** Objects (props) seen in the scene; each has a reference sheet attached to the clip request. */
+  objectNames?: string[];
   scriptBeats: string;
   /** The scene's beat numbers, used to number a beat saved without its header. */
   beatNumbers?: number[];
   /** Used when the scene has no parseable beat script. */
   description: string;
+  /** The storyboard image prompt; it tells a panel grid from an older single full frame. */
+  storyboardPrompt?: string | null;
+  /** Cast on screen in each beat, by beat number, from the character check. Each is named in that beat's action. */
+  beatCast?: Record<number, string[]>;
 }
 
 /** Beats of a scene; a scene without a parseable beat script is treated as one shot. */
@@ -177,6 +209,24 @@ export function buildShotDirectionPrompt(scene: ShotSceneContext): string {
   const cast = scene.characterNames.length
     ? scene.characterNames.map((name) => `"${name}"`).join(', ')
     : 'none';
+  const objects = scene.objectNames?.length
+    ? `\nObjects (exact names): ${scene.objectNames.map((name) => `"${name}"`).join(', ')}`
+    : '';
+  const onScreen = scene.beatCast
+    ? beatList.flatMap((number) => {
+      const names = scene.beatCast![number] || [];
+      return names.length ? [`- Beat ${number}: ${names.map((name) => `"${name}"`).join(', ')}`] : [];
+    })
+    : [];
+  const onScreenSection = onScreen.length
+    ? `\n\nON SCREEN IN EACH BEAT (name every one of them in that beat's "action" and "placement", by exact name):\n${onScreen.join('\n')}`
+    : '';
+  // Each clip opens on its storyboard panel, so the characters start where the panel put them.
+  const frames = openingFrames(scene.storyboardPrompt, beats.length);
+  const frameLines = frames.flatMap((frame, index) => (frame ? [`- Beat ${beatList[index]}: ${frame}`] : []));
+  const framesSection = frameLines.length
+    ? `\n\nSTORYBOARD OPENING FRAMES (each clip starts on its beat's frame; copy where each character is):\n${frameLines.join('\n')}`
+    : '';
 
   return `You are a film director preparing shot directions for a 3D animated children's series. Each beat below becomes ONE separate short video clip: one shot, one action.
 
@@ -191,14 +241,16 @@ Format exactly like: "Medium shot, eye level, slow push-in." A static shot is wr
 One shot only: no "then", no cuts, no second framing. Keep the opening framing of the beat's own CAMERA line.
 Consecutive beats must differ in shot size or camera move.
 
-"action" — ONE sentence, at most 25 words, stating the single physical action visible in this shot in concrete physical verbs. Name characters exactly as listed. Subject motion only: no camera words, no dialogue, no appearance description, no decorative adjectives.
+"action" — ONE sentence, at most 25 words, stating the single physical action visible in this shot in concrete physical verbs. Name characters and objects exactly as listed. Subject motion only: no camera words, no dialogue, no appearance description, no decorative adjectives.
+
+"placement" — where every character in the shot is at its first frame, one entry per character separated by semicolons, in the form "Exact Name: left, center or right of frame, foreground, midground or background, pose, facing which way" (for example "Jaksh: left, foreground, kneeling, facing right; Tilli: right, midground, standing, facing Jaksh"). Copy positions from the beat's storyboard opening frame when it gives them. List every character the shot shows and no one else; keep a character on the same side of frame as in the beat before unless the action moves them. Write "none" when no character is in the shot.
 
 Also write "lighting": one phrase of at most 14 words for the whole scene — time of day plus one specific light quality (for example "Warm late-afternoon light spilling through the doorway").
 
 Do not write, change, or remove dialogue. It is inserted separately, word for word.
 
 Location: ${scene.locationName || 'not specified'}
-Characters (exact names): ${cast}
+Characters (exact names): ${cast}${objects}${onScreenSection}${framesSection}
 
 BEATS:
 """
@@ -209,7 +261,7 @@ Return ONLY valid JSON, one "shots" entry per beat in this order ${JSON.stringif
 {
   "lighting": "...",
   "shots": [
-    { "beat_number": ${beatList[0]}, "camera": "...", "action": "..." }
+    { "beat_number": ${beatList[0]}, "camera": "...", "action": "...", "placement": "..." }
   ]
 }`;
 }
@@ -224,7 +276,8 @@ export function validateShotDirection(value: unknown, beats: ScriptBeat[]): Shot
     const expected = beats[index].number ?? index + 1;
     if (!shot || Number(shot.beat_number) !== expected ||
         typeof shot.camera !== 'string' || !shot.camera.trim() ||
-        typeof shot.action !== 'string' || !shot.action.trim()) {
+        typeof shot.action !== 'string' || !shot.action.trim() ||
+        (shot.placement !== undefined && typeof shot.placement !== 'string')) {
       throw new Error(`Shot direction for beat ${expected} is missing, out of order, or incomplete.`);
     }
   });
@@ -234,6 +287,17 @@ export function validateShotDirection(value: unknown, beats: ScriptBeat[]): Shot
 function sentence(text: string): string {
   const trimmed = text.replace(/\s+/g, ' ').trim();
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/**
+ * Whether a scene's storyboard image is a numbered panel grid. Every sheet planned now is a grid;
+ * single-beat scenes planned earlier were one full frame, and their prompt says so.
+ */
+export function storyboardIsGrid(beatCount: number, storyboardPrompt?: string | null): boolean {
+  const prompt = storyboardPrompt || '';
+  if (/\b\d\s*x\s*\d\b|\bpanel grid\b|\bPanel 1\s*:/i.test(prompt)) return true;
+  if (/\bsingle full-frame\b/i.test(prompt)) return false;
+  return beatCount > 1;
 }
 
 export function buildShotPrompt(input: {
@@ -247,12 +311,18 @@ export function buildShotPrompt(input: {
   dialogue: string;
   dialogueWords: number;
   characterNames: string[];
+  /** Objects whose sheets are attached. */
+  objectNames?: string[];
   locationName: string;
+  /** Where each character is at the first frame; "none" or empty when no one is placed. */
+  placement?: string;
 }): string {
   const hasCast = input.characterNames.length > 0;
+  const objectNames = input.objectNames || [];
   const attachments = [
     input.isGrid ? 'storyboard grid' : 'storyboard frame',
     hasCast ? `character sheets (${input.characterNames.join(', ')})` : '',
+    objectNames.length ? `object sheets (${objectNames.join(', ')})` : '',
     input.locationName ? `location sheet (${input.locationName})` : 'location sheet',
   ].filter(Boolean).join(', ');
 
@@ -262,6 +332,7 @@ export function buildShotPrompt(input: {
   const roles = [
     opening,
     hasCast ? 'Use the character sheets for character appearance only.' : '',
+    objectNames.length ? 'Use the object sheets for object appearance only.' : '',
     'Use the location sheet for the environment only.',
   ].filter(Boolean).join(' ');
 
@@ -271,14 +342,20 @@ export function buildShotPrompt(input: {
     ? `${spoken} — ${input.dialogueWords} word${input.dialogueWords === 1 ? '' : 's'}, spoken slowly at about 2 words per second, ${pauses}.`
     : 'No one speaks.';
   const end = `0:${String(input.seconds).padStart(2, '0')}`;
+  // Stated positions keep characters from drifting, morphing into each other or popping up elsewhere.
+  const placement = (input.placement || '').replace(/\s+/g, ' ').trim().replace(/[.;]+$/, '');
+  const positions = placement && !/^none$/i.test(placement)
+    ? `Positions at 0:00 — ${placement}. Each character keeps one body with fixed proportions, stays in this place unless the action moves them, and never appears, vanishes, duplicates or swaps places.`
+    : '';
 
   return [
     `Attachments: ${attachments}.`,
     roles,
     `3D animated video, Pixar/DreamWorks style, full color, ${input.seconds} seconds total, landscape 16:9. ${sentence(input.lighting)} One continuous shot, no cuts.`,
+    positions,
     `Shot 1 [0:00–${end}] — ${sentence(input.camera)} ${sentence(input.action)} ${speech}`,
     `Consistent character design and lighting throughout, matching the attached sheets. No morphing, warping, or distorted geometry. Avoid jitter and bent limbs.${hasCast ? ' No extra characters.' : ''}`,
-  ].join('\n\n');
+  ].filter(Boolean).join('\n\n');
 }
 
 export const SHOT_PLAN_FORMAT = 'tillitown-shots-v1';
@@ -373,7 +450,7 @@ export function buildShotPlan(scene: ShotSceneContext, direction: ShotDirection,
       dialogueWords: timing.dialogueWords,
       prompt: buildShotPrompt({
         panel: index + 1,
-        isGrid: beats.length > 1,
+        isGrid: storyboardIsGrid(beats.length, scene.storyboardPrompt),
         seconds: timing.seconds,
         lighting: direction.lighting,
         camera: direction.shots[index].camera,
@@ -381,7 +458,9 @@ export function buildShotPlan(scene: ShotSceneContext, direction: ShotDirection,
         dialogue: beat.dialogue,
         dialogueWords: timing.dialogueWords,
         characterNames: scene.characterNames,
+        objectNames: scene.objectNames,
         locationName: scene.locationName,
+        placement: direction.shots[index].placement,
       }),
       videoUrl: existing?.videoUrl ?? null,
       magnificId: existing?.magnificId ?? null,

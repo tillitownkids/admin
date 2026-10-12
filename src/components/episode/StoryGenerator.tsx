@@ -5,6 +5,7 @@ import { getStoryDurationBudget } from "@/lib/storyDurationBudget";
 import { episodeTitle } from "@/lib/episodeSteps";
 import { getStoriesAction, saveGeneratedStoryAction } from "@/actions/saveStoryAction";
 import { getGlobalSettingsAction } from "@/actions/settingsAction";
+import { detectEpisodeObjectsAction } from "@/actions/propsAction";
 import { GlassPanel } from "@/components/GlassPanel";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass, selectFieldClass } from "@/lib/styles";
 import { useState, useEffect } from "react";
@@ -172,7 +173,7 @@ export function StoryGenerator() {
   const [activeLocationIds, setActiveLocationIds] = useState<string[]>([]);
   const [acceptedCharacterIds, setAcceptedCharacterIds] = useState<string[]>([]);
   const [acceptedLocationIds, setAcceptedLocationIds] = useState<string[]>([]);
-  const [savePhase, setSavePhase] = useState<'references' | 'story' | null>(null);
+  const [savePhase, setSavePhase] = useState<'references' | 'story' | 'objects' | null>(null);
 
   async function createCharacter(char: PendingCharacter) {
     const res = await fetch('/api/characters', {
@@ -352,6 +353,11 @@ export function StoryGenerator() {
       });
 
       if (saveRes.success && saveRes.story?.id) {
+        // The object detection agent links library objects and creates this episode's new ones.
+        // A failure never blocks the story: Find objects on the episode page runs it again.
+        setSavePhase('objects');
+        const objects = await detectEpisodeObjectsAction(saveRes.story.id);
+        if (!objects.ok) console.warn(objects.error);
         setAcceptedCharacterIds([]);
         setAcceptedLocationIds([]);
         setShowReviewModal(false);
@@ -913,7 +919,7 @@ Return ONLY valid JSON matching this exact structure:
             {savePhase && (
               <p className="text-sm text-primary font-medium flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {savePhase === 'references' ? 'Generating accepted references…' : 'Saving story…'}
+                {savePhase === 'references' ? 'Generating accepted references…' : savePhase === 'objects' ? 'Finding objects…' : 'Saving story…'}
               </p>
             )}
             {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
@@ -927,7 +933,7 @@ Return ONLY valid JSON matching this exact structure:
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {savePhase === 'references' ? 'Generating References…' : 'Saving Story…'}
+                    {savePhase === 'references' ? 'Generating References…' : savePhase === 'objects' ? 'Finding Objects…' : 'Saving Story…'}
                   </>
                 ) : (
                   <>

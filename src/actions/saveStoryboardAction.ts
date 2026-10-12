@@ -13,6 +13,8 @@ export interface ConfirmSceneInput {
   episodeLocationId?: string;
   locationName?: string;
   characterNames?: string[];
+  /** Objects seen in the scene, by exact name. Replaces the scene's object links when given. */
+  objectNames?: string[];
   beatNumbers?: number[] | string;
   sceneScriptBeats?: string;
 }
@@ -222,6 +224,17 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
 
     const availableCharacters = storyChars.map(sc => sc.Character).filter(Boolean);
 
+    // The episode's objects (props), matched by exact name like the cast. Optional: if their tables
+    // cannot be read, scenes are saved without object links.
+    let availableObjects: { id: string; name: string }[] = [];
+    if (scenes.some((scene) => Array.isArray(scene.objectNames))) {
+      const { data: objectLinks, error: objectError } = await supabase
+        .from('StoryProp').select('Prop(id, name)').eq('story_id', validStoryId);
+      if (objectError) console.warn('Episode objects could not be loaded:', objectError.message);
+      availableObjects = ((objectLinks || []) as unknown as { Prop: { id: string; name: string } | null }[])
+        .flatMap((link) => (link.Prop ? [link.Prop] : []));
+    }
+
     const savedScenes = [];
 
     // If batch updating all scenes, clean up old leftover scenes across the story's episode locations
@@ -338,6 +351,23 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
             const rows = matchedCharIds.map(charId => ({ scene_id: updatedScene.id, character_id: charId }));
             await supabase.from('SceneCharacter').insert(rows);
           }
+        }
+      }
+
+      // Object links are replaced the same way, so a re-planned scene never keeps stale object sheets.
+      if (updatedScene?.id && Array.isArray(sceneInput.objectNames)) {
+        const { matched, unmatched } = matchCharactersByName(availableObjects, sceneInput.objectNames);
+        if (unmatched.length > 0) {
+          console.warn(`Scene #${sceneInput.sceneNumber}: no episode object named ${unmatched.map(n => `"${n}"`).join(", ")}; not linked.`);
+        }
+        const { error: clearError } = await supabase.from('SceneProp').delete().eq('scene_id', updatedScene.id);
+        if (clearError) {
+          console.warn('Scene object links could not be replaced:', clearError.message);
+        } else if (matched.length > 0) {
+          const { error: linkError } = await supabase
+            .from('SceneProp')
+            .insert(matched.map((object) => ({ scene_id: updatedScene.id, prop_id: object.id })));
+          if (linkError) console.warn('Scene object links could not be saved:', linkError.message);
         }
       }
 

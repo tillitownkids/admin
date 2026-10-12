@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { CharacterCheck } from "@/components/episode/CharacterCheck";
+import type { SceneCharacterReport } from "@/actions/characterCheckAction";
 import { StoryboardGenerator } from "@/components/episode/StoryboardGenerator";
 import { StoryboardImages } from "@/components/episode/StoryboardImages";
 import { StoryboardPromptEditor } from "@/components/episode/StoryboardPromptEditor";
@@ -30,6 +32,10 @@ export function StoryboardStep({
   const router = useRouter();
   const [view, setView] = useState<View>(imageCount > 0 ? "images" : "prompts");
   const [replanning, setReplanning] = useState(false);
+  // Bumped when the character check changes prompts or links, so the open view loads them again.
+  const [checkVersion, setCheckVersion] = useState(0);
+  // The character check that ran right after planning, shown until the next check.
+  const [planReports, setPlanReports] = useState<SceneCharacterReport[] | null>(null);
 
   if (sceneCount === 0 || replanning) {
     return (
@@ -37,7 +43,8 @@ export function StoryboardStep({
         <StoryboardGenerator
           storyId={storyId}
           scriptId={scriptId}
-          onPlanned={() => {
+          onPlanned={(characterReports) => {
+            setPlanReports(characterReports);
             setReplanning(false);
             setView("prompts");
           }}
@@ -84,10 +91,19 @@ export function StoryboardStep({
         </ConfirmButton>
       </div>
 
+      <CharacterCheck
+        storyId={storyId}
+        initialReports={planReports}
+        onChanged={() => {
+          setCheckVersion((version) => version + 1);
+          router.refresh();
+        }}
+      />
+
       {view === "prompts" ? (
-        <StoryboardPromptEditor storyId={storyId} onSaved={() => router.refresh()} />
+        <StoryboardPromptEditor key={checkVersion} storyId={storyId} onSaved={() => router.refresh()} />
       ) : (
-        <StoryboardImagesView storyId={storyId} />
+        <StoryboardImagesView key={checkVersion} storyId={storyId} />
       )}
     </div>
   );
