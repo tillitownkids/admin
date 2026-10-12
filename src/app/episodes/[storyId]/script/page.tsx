@@ -1,6 +1,5 @@
 import { loadEpisode } from "@/lib/episodeLoader";
-import { BeatScriptEditor } from "@/components/episode/BeatScriptEditor";
-import { ScriptGenerator } from "@/components/episode/ScriptGenerator";
+import { ScriptStep } from "@/components/episode/ScriptStep";
 
 export default async function EpisodeScriptPage({ params }: { params: Promise<{ storyId: string }> }) {
   const { storyId } = await params;
@@ -8,7 +7,5 @@ export default async function EpisodeScriptPage({ params }: { params: Promise<{ 
   // The layout reports a missing episode.
   if (!result.success) return null;
 
-  return result.episode.scriptId
-    ? <BeatScriptEditor key={result.episode.scriptId} scriptId={result.episode.scriptId} />
-    : <ScriptGenerator storyId={storyId} />;
+  return <ScriptStep key={result.episode.scriptId ?? "none"} storyId={storyId} scriptId={result.episode.scriptId} />;
 }

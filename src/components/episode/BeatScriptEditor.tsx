@@ -91,7 +91,7 @@ function formatTextToHtml(text: string): string {
   return html;
 }
 
-export function BeatScriptEditor({ scriptId: id }: { scriptId: string }) {
+export function BeatScriptEditor({ scriptId: id, headerAction }: { scriptId: string; headerAction?: React.ReactNode }) {
 
   const [script, setScript] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -206,7 +206,8 @@ export function BeatScriptEditor({ scriptId: id }: { scriptId: string }) {
       {/* Full Page Workspace */}
       <div className="space-y-4">
         {/* Action Bar Header */}
-        <div className="flex w-full items-center justify-end gap-4">
+        <div className="flex w-full items-center justify-between gap-4">
+          <div>{headerAction}</div>
           <div className="flex items-center gap-3">
             <button
               type="button"

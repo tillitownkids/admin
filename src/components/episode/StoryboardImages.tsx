@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Textarea } from "@/components/ui/textarea";
 import type { GeneratedImageTake } from "@/lib/generatedImageHistory";
+import { sceneRuntime } from "@/lib/sceneTiming";
 
 const STORYBOARD_WEBHOOK = "https://automation.tillitown.com/webhook/generate-storyboard";
 
@@ -442,6 +443,7 @@ export function StoryboardImages({
                       {Array.isArray(scene.beat_numbers) && scene.beat_numbers.length > 0 && (
                         <span>{scene.beat_numbers.length === 1 ? `Beat ${scene.beat_numbers[0]}` : `Beats ${scene.beat_numbers[0]} to ${scene.beat_numbers[scene.beat_numbers.length - 1]}`}</span>
                       )}
+                      {sceneRuntime(scene) > 0 && <span className="tabular-nums">{sceneRuntime(scene)} s</span>}
                     </div>
                   </div>
                   {scene.storyboard_image_url ? (
