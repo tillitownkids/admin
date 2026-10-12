@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, ChevronDown, ImageIcon, Loader2, MapPin, Plus, User } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowRight, Check, ChevronDown, ImageIcon, Loader2, MapPin, Plus, Upload, User } from "lucide-react";
 
 import { ButtonLink } from "@/components/ButtonLink";
 import { ConfirmButton } from "@/components/ConfirmButton";
@@ -14,6 +14,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Textarea } from "@/components/ui/textarea";
 import type { GeneratedImageTake } from "@/lib/generatedImageHistory";
 import { sceneRuntime } from "@/lib/sceneTiming";
+import { finishStoryboardUploadAction, startStoryboardUploadAction } from "@/actions/uploadStoryboardTakeAction";
+import { createClient } from "@/lib/supabase/client";
 
 const STORYBOARD_WEBHOOK = "https://automation.tillitown.com/webhook/generate-storyboard";
 
@@ -99,6 +101,9 @@ export function StoryboardImages({
   // Prompt edits not saved yet, each remembered with the saved prompt it was started from.
   const [drafts, setDrafts] = useState<Record<string, { source: string; text: string }>>({});
   const [savingPrompt, setSavingPrompt] = useState<string | null>(null);
+  // One file picker serves every scene; this remembers which scene opened it.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadScene, setUploadScene] = useState<SceneRow | null>(null);
 
   const sceneIds = scenes.map((scene) => scene.id).sort().join(",");
   const loadTakes = useCallback(async () => {
@@ -351,10 +356,52 @@ export function StoryboardImages({
     }
   };
 
+  // A storyboard made outside the app becomes a take of the scene and is put in use.
+  const uploadTake = async (scene: SceneRow, file: File) => {
+    setWorking((previous) => ({ ...previous, [scene.id]: true }));
+    setSceneErrors((previous) => ({ ...previous, [scene.id]: "" }));
+    try {
+      const start = await startStoryboardUploadAction(scene.id, file.type, file.size);
+      if (!start.ok) throw new Error(start.error);
+      // Straight from the browser to storage, through the one-time link.
+      const { error: uploadError } = await createClient().storage
+        .from(start.bucket)
+        .uploadToSignedUrl(start.path, start.token, file, { contentType: file.type });
+      if (uploadError) throw new Error(`The image could not be uploaded: ${uploadError.message}`);
+      const finish = await finishStoryboardUploadAction(scene.id, start.path);
+      if (!finish.ok) throw new Error(finish.error);
+      await Promise.all([onChanged(), loadTakes()]);
+      setNotice({
+        type: "success",
+        text: `Scene ${scene.scene_number} now uses the uploaded image. Earlier takes are kept, so you can switch back at any time.`,
+      });
+    } catch (error) {
+      setSceneErrors((previous) => ({ ...previous, [scene.id]: error instanceof Error ? error.message : "The image could not be uploaded." }));
+    } finally {
+      // A scene counts as working while it has an entry, so the entry is removed, not set to false.
+      setWorking((previous) => {
+        const next = { ...previous };
+        delete next[scene.id];
+        return next;
+      });
+    }
+  };
+
   const takeWord = takesPerRun === 1 ? "take" : "takes";
 
   return (
     <div className="space-y-5">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file && uploadScene) uploadTake(uploadScene, file);
+        }}
+      />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <p className="text-sm text-muted-foreground">
@@ -446,17 +493,32 @@ export function StoryboardImages({
                       {sceneRuntime(scene) > 0 && <span className="tabular-nums">{sceneRuntime(scene)} s</span>}
                     </div>
                   </div>
-                  {scene.storyboard_image_url ? (
-                    <Button variant="outline" size="sm" onClick={() => generate([scene])} disabled={isWorking}>
-                      {busy ? <Loader2 className="animate-spin" /> : <Plus />}
-                      {takesPerRun === 1 ? "New take" : `${takesPerRun} new takes`}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isWorking}
+                      title="Use a storyboard image made outside the app as a take of this scene"
+                      onClick={() => {
+                        setUploadScene(scene);
+                        fileInputRef.current?.click();
+                      }}
+                    >
+                      <Upload />
+                      Upload image
                     </Button>
-                  ) : (
-                    <Button size="sm" onClick={() => generate([scene])} disabled={isWorking}>
-                      {busy ? <Loader2 className="animate-spin" /> : <ImageIcon />}
-                      {takesPerRun === 1 ? "Generate image" : `Generate ${takesPerRun} takes`}
-                    </Button>
-                  )}
+                    {scene.storyboard_image_url ? (
+                      <Button variant="outline" size="sm" onClick={() => generate([scene])} disabled={isWorking}>
+                        {busy ? <Loader2 className="animate-spin" /> : <Plus />}
+                        {takesPerRun === 1 ? "New take" : `${takesPerRun} new takes`}
+                      </Button>
+                    ) : (
+                      <Button size="sm" onClick={() => generate([scene])} disabled={isWorking}>
+                        {busy ? <Loader2 className="animate-spin" /> : <ImageIcon />}
+                        {takesPerRun === 1 ? "Generate image" : `Generate ${takesPerRun} takes`}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {characters.length > 0 && (

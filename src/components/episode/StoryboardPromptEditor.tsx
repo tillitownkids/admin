@@ -8,7 +8,7 @@ import { fieldClass, primaryButtonClass, secondaryButtonClass } from "@/lib/styl
 import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction, getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
-import { formatRuntime, sceneRuntime } from "@/lib/sceneTiming";
+import { SCENE_MAX_SECONDS, formatRuntime, sceneRuntime } from "@/lib/sceneTiming";
 
 
 interface StoryboardScene {
@@ -397,7 +397,12 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
                             <>
                               <span>{beatsArr.length === 1 ? `Beat ${beatsArr[0]}` : `Beats ${beatsArr[0]} to ${beatsArr[beatsArr.length - 1]}`}</span>
                               <span>{getGridBadge(beatsArr.length, scene.storyboard_prompt || "")}</span>
-                              {runtimeOf(scene) > 0 && <span className="tabular-nums">{runtimeOf(scene)} s</span>}
+                              {runtimeOf(scene) > 0 && (
+                                // A storyboard planned before scenes were split by time can run longer; planning again fixes it.
+                                beatsArr.length > 1 && runtimeOf(scene) > SCENE_MAX_SECONDS
+                                  ? <span className="tabular-nums text-destructive">{runtimeOf(scene)} s, over the {SCENE_MAX_SECONDS} s limit</span>
+                                  : <span className="tabular-nums">{runtimeOf(scene)} s</span>
+                              )}
                             </>
                           );
                         })()}
