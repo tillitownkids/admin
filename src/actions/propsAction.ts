@@ -3,7 +3,7 @@
 import { aiService } from "@/services/aiService";
 import { supabase } from "@/lib/supabase";
 import { parseStoryboardJson } from "@/lib/storyboardGeneration";
-import { normalizeCharacterName } from "@/lib/characterNames";
+import { findExistingByName } from "@/lib/characterNames";
 import { buildObjectDetectionPrompt, parseDetectedObjects, type DetectedObject } from "@/lib/propSheet";
 import { errorText, linkPropToEpisode } from "@/lib/props";
 
@@ -41,7 +41,6 @@ export async function detectEpisodeObjectsAction(storyId: string): Promise<Detec
 
     // The objects this episode may reuse: every permanent object, and its own episode objects.
     const library = ((props || []) as PropRow[]).filter((prop) => prop.kind === "permanent" || prop.story_id === storyId);
-    const byName = new Map(library.map((prop) => [normalizeCharacterName(prop.name), prop]));
 
     let detected: DetectedObject[] | null = null;
     let failure: unknown;
@@ -59,7 +58,8 @@ export async function detectEpisodeObjectsAction(storyId: string): Promise<Detec
     const linked: string[] = [];
     const created: string[] = [];
     for (const object of detected) {
-      const known = byName.get(normalizeCharacterName(object.name));
+      // Matched by words as well as exactly, so "Car" or "Red Car" is never created beside "Family Car".
+      const known = findExistingByName(object.name, library);
       if (known) {
         await linkPropToEpisode(known.id, storyId);
         linked.push(known.name);
@@ -74,7 +74,7 @@ export async function detectEpisodeObjectsAction(storyId: string): Promise<Detec
         .single();
       if (error) throw error;
       await linkPropToEpisode(prop.id, storyId);
-      byName.set(normalizeCharacterName(prop.name), { ...prop, description: object.description, kind: "episode", story_id: storyId });
+      library.push({ ...prop, description: object.description, kind: "episode", story_id: storyId });
       created.push(prop.name);
     }
     return { ok: true, linked, created };

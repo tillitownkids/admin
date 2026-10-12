@@ -22,3 +22,31 @@ export function matchCharactersByName<T extends { name: string }>(
 
   return { matched: [...matched.values()], unmatched };
 }
+
+// Words that never identify anyone on their own.
+const NAME_FILLER_WORDS = new Set(["the", "a", "an", "of", "and"]);
+
+function nameWords(name: string): string[] {
+  return normalizeCharacterName(name).split(/[^\p{L}\p{N}']+/u).filter((word) => word && !NAME_FILLER_WORDS.has(word));
+}
+
+/**
+ * The library entry a model-written name refers to: the exact name, or else the only entry whose name
+ * contains every word of it ("Kartik" is "Jaksh's Father - Kartik", "Nimo" is "Nimo the Bellbird").
+ * Models often shorten names, and treating a shortened name as new duplicated characters. Null when
+ * nothing matches or the words fit more than one entry, so a person decides.
+ */
+export function findExistingByName<T extends { name: string }>(name: string, available: T[]): T | null {
+  const key = normalizeCharacterName(name);
+  if (!key) return null;
+  const exact = available.find((item) => normalizeCharacterName(item.name) === key);
+  if (exact) return exact;
+
+  const words = nameWords(name);
+  if (!words.length) return null;
+  const candidates = available.filter((item) => {
+    const own = new Set(nameWords(item.name));
+    return words.every((word) => own.has(word));
+  });
+  return candidates.length === 1 ? candidates[0] : null;
+}
