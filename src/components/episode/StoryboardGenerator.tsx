@@ -12,6 +12,7 @@ import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction"
 import { MAX_BEATS_PER_SCENE, parseStoryboardJson, validateScenePlan, type ScenePlan } from "@/lib/storyboardGeneration";
 import { generateStoryboardBatchAction } from "@/actions/generateStoryboardBatchAction";
 import { estimateBeatTimingAction } from "@/actions/estimateBeatTimingAction";
+import { resetStoryboardAction } from "@/actions/resetStoryboardAction";
 import {
   SCENE_MAX_SECONDS,
   SCENE_MIN_SECONDS,
@@ -101,7 +102,15 @@ function splitScriptIntoBeatChunks(fullScriptText: string, chunkSize = 10): stri
   return chunks;
 }
 
-export function StoryboardGenerator({ scriptId, onPlanned }: { scriptId: string; onPlanned?: () => void }) {
+export function StoryboardGenerator({
+  storyId,
+  scriptId,
+  onPlanned,
+}: {
+  storyId: string;
+  scriptId: string;
+  onPlanned?: () => void;
+}) {
   const router = useRouter();
 
   // The episode decides the script; there is nothing to pick.
@@ -486,6 +495,15 @@ Return ONLY valid JSON with this structure:
           // Each beat carries its planned clip length, so the video stage uses the same timing.
           sceneScriptBeats: withBeatDurations(scene.scene_script_beats, scene.beat_numbers, timings),
         }));
+
+        // The old storyboard is removed only now that the new plan is ready, so a failed run keeps it.
+        // Nothing of the old split survives: scenes, prompts, images, clips and all their takes go.
+        setStage("Replacing the old storyboard…");
+        const resetRes = await resetStoryboardAction(storyId);
+        if (!resetRes.success) {
+          setError(resetRes.error);
+          return;
+        }
 
         const saveRes = await saveStoryboardScenesAction(payload);
         if (saveRes.success) {

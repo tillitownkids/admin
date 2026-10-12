@@ -172,8 +172,8 @@ export async function processAndUploadCharacterSheet(
   return (await processAndUploadCharacterSheetAsset(imageUrl, identifier)).publicUrl;
 }
 
-const STORYBOARDS_BUCKET = 'storyboards';
-const SCENE_VIDEOS_BUCKET = 'scene_videos';
+export const STORYBOARDS_BUCKET = 'storyboards';
+export const SCENE_VIDEOS_BUCKET = 'scene_videos';
 
 export async function processAndUploadStoryboardImageAsset(
   imageUrl: string,

@@ -35,6 +35,7 @@ export function StoryboardStep({
     return (
       <div className="space-y-2">
         <StoryboardGenerator
+          storyId={storyId}
           scriptId={scriptId}
           onPlanned={() => {
             setReplanning(false);
@@ -73,8 +74,9 @@ export function StoryboardStep({
           variant="ghost"
           size="sm"
           title="Plan the storyboard again?"
-          description={`This regroups the script into scenes and writes new prompts, replacing the ${sceneCount} saved ones. Images and clips already generated stay attached to their scene numbers and may no longer match the new prompts.`}
+          description={`This splits the script into new scenes of 5 to 15 seconds and writes new prompts. Once the new plan is ready, the ${sceneCount} current scenes are deleted with their prompts, storyboard images, video clips and every take. Stitched episodes, character sheets and location sheets are kept. This cannot be undone.`}
           confirmLabel="Plan again"
+          destructive
           onConfirm={() => setReplanning(true)}
         >
           <RefreshCw />

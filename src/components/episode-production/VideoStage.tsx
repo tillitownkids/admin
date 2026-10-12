@@ -157,7 +157,7 @@ function shotContext(scene: SceneRow): ShotSceneContext {
 // One request per shot. `shot` and `duration` are additions to the scene payload the webhook already accepts.
 function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: EpisodeLocationRow[]) {
   if (!scene.magnific_identifier) {
-    throw new Error(`Scene ${scene.scene_number}'s storyboard image was saved without its generator reference. Regenerate that image in the Storyboard step, then try again.`);
+    throw new Error(`Scene ${scene.scene_number}'s storyboard image has no generator reference (it was uploaded, or saved without one), so the video generator cannot open a clip on it. In the Storyboard step, put a generated take in use for this scene, then try again.`);
   }
 
   // SceneCharacter is the authoritative character list for this scene.
