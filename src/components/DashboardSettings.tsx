@@ -1,7 +1,8 @@
 'use client';
 
-import { Users, Type, Sparkles, Save, Check, Loader2, Cpu } from "lucide-react";
+import { Save, Check, Loader2, AlertTriangle } from "lucide-react";
 import { useState, useEffect } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { labelClass, selectFieldClass, primaryButtonClass } from "@/lib/styles";
 import { getGlobalSettingsAction, saveGlobalSettingsAction } from "@/actions/settingsAction";
 
@@ -27,12 +28,15 @@ export function DashboardSettings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadSettings() {
       setIsLoading(true);
       try {
         const res = await getGlobalSettingsAction();
+        // Without this, a failed load would show the defaults as if they were saved.
+        if (!res.success) setError(res.error || "The settings could not be loaded.");
         if (res.success && res.settings) {
           const loaded = {
             targetAudience: res.settings.targetAudience || 'kids',
@@ -44,6 +48,7 @@ export function DashboardSettings() {
         }
       } catch (err) {
         console.error("Failed to load global settings from DB:", err);
+        setError("The settings could not be loaded. Reload the page and try again.");
       } finally {
         setIsLoading(false);
       }
@@ -70,6 +75,7 @@ export function DashboardSettings() {
 
   const handleSaveChanges = async () => {
     setIsSaving(true);
+    setError(null);
     try {
       const res = await saveGlobalSettingsAction({
         targetAudience: currentState.targetAudience,
@@ -87,9 +93,12 @@ export function DashboardSettings() {
         localStorage.setItem('tone', currentState.tone);
         localStorage.setItem('aiModel', currentState.aiModel);
         setTimeout(() => setSaveSuccess(false), 3000);
+      } else {
+        setError(res.error || "The settings could not be saved.");
       }
     } catch (err) {
       console.error("Failed to save global settings to DB:", err);
+      setError("The settings could not be saved. Try again.");
     } finally {
       setIsSaving(false);
     }
@@ -104,6 +113,12 @@ export function DashboardSettings() {
         </div>
 
         {/* Save Changes button appears ONLY when inputs are modified */}
+        {!isDirty && saveSuccess && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Check size={14} />
+            Saved
+          </span>
+        )}
         {isDirty && (
           <button
             onClick={handleSaveChanges}
@@ -130,7 +145,13 @@ export function DashboardSettings() {
         )}
       </div>
 
-      <div className="p-5">
+      <div className="space-y-4 p-5">
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
             <Loader2 size={14} className="animate-spin text-primary" />
