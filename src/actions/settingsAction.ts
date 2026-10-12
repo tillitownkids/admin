@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma } from "@/lib/prisma";
+import { supabase } from "@/lib/supabase";
 
 export interface GlobalSettings {
   targetAudience?: string;
@@ -9,70 +9,53 @@ export interface GlobalSettings {
   aiModel?: string;
 }
 
-export async function getGlobalSettingsAction(): Promise<{ success: boolean; settings: { targetAudience: string; tone: string; aiModel: string } }> {
-  try {
-    const rows = await prisma.setting.findMany({
-      where: {
-        key: { in: ["targetAudience", "tone", "aiModel"] }
-      }
-    }).catch(() => []);
+const DEFAULT_SETTINGS = { targetAudience: "kids", tone: "educational", aiModel: "claude" };
 
-    const map = new Map((rows || []).map((r) => [r.key, r.value]));
+// Read and written through Supabase, which works wherever the app runs; Prisma needs DATABASE_URL.
+export async function getGlobalSettingsAction(): Promise<{
+  success: boolean;
+  settings: { targetAudience: string; tone: string; aiModel: string };
+  error?: string;
+}> {
+  const { data, error } = await supabase
+    .from("Setting")
+    .select("key, value")
+    .in("key", ["targetAudience", "tone", "aiModel"]);
 
-    return {
-      success: true,
-      settings: {
-        targetAudience: map.get("targetAudience") || "kids",
-        tone: map.get("tone") || "educational",
-        aiModel: map.get("aiModel") || "claude",
-      }
-    };
-  } catch (err: any) {
-    console.error("Error fetching global settings from database:", err);
-    return {
-      success: false,
-      settings: { targetAudience: "kids", tone: "educational", aiModel: "claude" }
-    };
+  if (error) {
+    console.error("Error fetching global settings from database:", error);
+    return { success: false, settings: DEFAULT_SETTINGS, error: `The settings could not be loaded: ${error.message}` };
   }
+
+  const map = new Map((data || []).map((row) => [row.key as string, row.value as string]));
+  return {
+    success: true,
+    settings: {
+      targetAudience: map.get("targetAudience") || DEFAULT_SETTINGS.targetAudience,
+      tone: map.get("tone") || DEFAULT_SETTINGS.tone,
+      aiModel: map.get("aiModel") || DEFAULT_SETTINGS.aiModel,
+    },
+  };
 }
 
 export async function saveGlobalSettingsAction(input: GlobalSettings) {
-  try {
-    const targetAudience = input.targetAudience || input.audience || "kids";
-    const tone = input.tone || "educational";
-    const aiModel = input.aiModel || "claude";
+  const targetAudience = input.targetAudience || input.audience || DEFAULT_SETTINGS.targetAudience;
+  const tone = input.tone || DEFAULT_SETTINGS.tone;
+  const aiModel = input.aiModel || DEFAULT_SETTINGS.aiModel;
+  const updated_at = new Date().toISOString();
 
-    await prisma.$transaction([
-      prisma.setting.upsert({
-        where: { key: "targetAudience" },
-        update: { value: targetAudience },
-        create: { key: "targetAudience", value: targetAudience }
-      }),
-      prisma.setting.upsert({
-        where: { key: "tone" },
-        update: { value: tone },
-        create: { key: "tone", value: tone }
-      }),
-      prisma.setting.upsert({
-        where: { key: "aiModel" },
-        update: { value: aiModel },
-        create: { key: "aiModel", value: aiModel }
-      })
-    ]);
+  const { error } = await supabase.from("Setting").upsert(
+    [
+      { key: "targetAudience", value: targetAudience, updated_at },
+      { key: "tone", value: tone, updated_at },
+      { key: "aiModel", value: aiModel, updated_at },
+    ],
+    { onConflict: "key" }
+  );
 
-    const resultPayload = {
-      success: true,
-      targetAudience,
-      tone,
-      aiModel,
-      timestamp: new Date().toISOString()
-    };
-
-    console.log("[GLOBAL STORY SETTINGS SAVED TO DATABASE]", resultPayload);
-
-    return resultPayload;
-  } catch (err: any) {
-    console.error("Error saving global settings to database:", err);
-    return { success: false, error: err?.message || "Failed to save settings to database." };
+  if (error) {
+    console.error("Error saving global settings to database:", error);
+    return { success: false, error: `The settings could not be saved: ${error.message}` };
   }
+  return { success: true, targetAudience, tone, aiModel, timestamp: updated_at };
 }
