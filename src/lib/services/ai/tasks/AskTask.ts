@@ -51,7 +51,7 @@ You MUST respond ONLY with a raw JSON object matching the following structure (n
 
   async execute(input: AskInput): Promise<string> {
     const prompt = this.buildPrompt(input);
-    const responseText = await this.bedrockService.invokeModel(prompt);
+    const responseText = await this.bedrockService.invokeModel(prompt, { webSearch: true });
     
     if (input.isStoryEdit) {
       const parsedResult = this.parseAiResponse(responseText, input.userQuestion);

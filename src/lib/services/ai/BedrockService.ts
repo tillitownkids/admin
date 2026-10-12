@@ -1,4 +1,6 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { type AiCallOptions, claudeWithWebSearch, converseWithWebSearch, isWebSearchEnabled } from './webSearch';
 
 export class BedrockService {
   private client: BedrockRuntimeClient;
@@ -19,9 +21,11 @@ export class BedrockService {
   /**
    * Invokes the model with the given prompt string and returns the raw response text.
    * Uses direct Anthropic API as primary if ANTHROPIC_API_KEY is available, falling back to Bedrock.
+   * With `webSearch`, the model can call the Brave-backed web_search tool while answering.
    */
-  async invokeModel(promptText: string): Promise<string> {
+  async invokeModel(promptText: string, options?: AiCallOptions): Promise<string> {
     const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
+    const webSearch = isWebSearchEnabled(options);
     
     if (anthropicKey) {
       const models = [
@@ -31,6 +35,13 @@ export class BedrockService {
       
       for (const model of models) {
         try {
+          if (webSearch) {
+            const message = await claudeWithWebSearch(new Anthropic({ apiKey: anthropicKey }), model, promptText, 4096);
+            const text = message.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
+            if (text) return text;
+            throw new Error("Unexpected response format from direct Anthropic API");
+          }
+
           const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -65,6 +76,10 @@ export class BedrockService {
           }
           throw new Error("Unexpected response format from direct Anthropic API");
         } catch (anthropicError: any) {
+          if (anthropicError instanceof Anthropic.NotFoundError) {
+            console.warn(`Model ${model} not found or access denied, trying next model...`);
+            continue;
+          }
           console.error(`Direct Anthropic API failed for model ${model}:`, anthropicError);
           // If this is the last model, break to proceed to Bedrock fallback
           if (model === models[models.length - 1]) {
@@ -72,6 +87,13 @@ export class BedrockService {
           }
         }
       }
+    }
+
+    if (webSearch) {
+      const response = await converseWithWebSearch(this.client, this.modelId, promptText, 4096);
+      const text = (response.output?.message?.content ?? []).map((block) => block.text ?? '').join('');
+      if (text) return text;
+      throw new Error("Unexpected response format from Bedrock");
     }
 
     const payload = {

@@ -2,6 +2,7 @@ import { ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import Anthropic from "@anthropic-ai/sdk";
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { getGlobalSettingsAction } from "@/actions/settingsAction";
+import { type AiCallOptions, claudeWithWebSearch, converseWithWebSearch, isWebSearchEnabled } from "@/lib/services/ai/webSearch";
 
 export class AiService {
   private anthropicClient: Anthropic;
@@ -21,7 +22,7 @@ export class AiService {
     });
   }
 
-  async call(prompt: string, maxTokens = 64000) {
+  async call(prompt: string, maxTokens = 64000, options?: AiCallOptions) {
     try {
       // 1. Fetch active model preference from Supabase DB
       let aiModelPreference = "claude";
@@ -37,32 +38,36 @@ export class AiService {
       // 2. Dispatch to the selected AI provider
       if (aiModelPreference === "kimi2.5" || aiModelPreference === "kimi") {
         const bedrockModelId = process.env.BEDROCK_MODEL_ID || "moonshotai.kimi-k2.5";
-        const bedrockResponse = await this.callBedrock(prompt, bedrockModelId);
+        const bedrockResponse = await this.callBedrock(prompt, bedrockModelId, options);
         if (bedrockResponse) {
           return bedrockResponse;
         }
       }
-      return await this.callClaude(prompt, maxTokens);
+      return await this.callClaude(prompt, maxTokens, options);
     } catch (error) {
       console.error("AI Service Error:", error);
       throw error;
     }
   }
 
-  private async callBedrock(prompt: string, modelId: string) {
+  private async callBedrock(prompt: string, modelId: string, options?: AiCallOptions) {
     let response;
     try {
-      const command = new ConverseCommand({
-        modelId,
-        messages: [
-          {
-            role: "user",
-            content: [{ text: prompt }],
-          },
-        ],
-      });
+      if (isWebSearchEnabled(options)) {
+        response = await converseWithWebSearch(this.bedrockClient, modelId, prompt);
+      } else {
+        const command = new ConverseCommand({
+          modelId,
+          messages: [
+            {
+              role: "user",
+              content: [{ text: prompt }],
+            },
+          ],
+        });
 
-      response = await this.bedrockClient.send(command);
+        response = await this.bedrockClient.send(command);
+      }
     } catch (err: unknown) {
       console.error(`Bedrock Error for modelId "${modelId}":`, err instanceof Error ? err.message : err);
       return null;
@@ -79,21 +84,22 @@ export class AiService {
     return { text };
   }
 
-  private async callClaude(prompt: string, maxTokens: number) {
+  private async callClaude(prompt: string, maxTokens: number, options?: AiCallOptions) {
+    const model = "claude-sonnet-4-5-20250929";
     // Large output budgets require streaming in the Anthropic SDK. Collect
     // the completed message here to preserve the existing { text } contract.
-    const stream = this.anthropicClient.messages.stream({
-      model: "claude-sonnet-4-5-20250929",
-      max_tokens: maxTokens,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
-
-    const response = await stream.finalMessage();
+    const response = isWebSearchEnabled(options)
+      ? await claudeWithWebSearch(this.anthropicClient, model, prompt, maxTokens)
+      : await this.anthropicClient.messages.stream({
+          model,
+          max_tokens: maxTokens,
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+        }).finalMessage();
 
     if (response.stop_reason === "max_tokens") {
       throw new Error("AI generation reached its output limit before finishing. The incomplete response was not accepted. Try generating the content in smaller sections.");
