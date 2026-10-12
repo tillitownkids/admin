@@ -8,18 +8,31 @@ import { fieldClass, primaryButtonClass, secondaryButtonClass } from "@/lib/styl
 import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction, getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
+import { formatRuntime, sceneRuntime } from "@/lib/sceneTiming";
 
 
 interface StoryboardScene {
   scene_number: number;
   title: string;
   beat_numbers?: number[] | string;
+  /** Beat text as freshly generated. */
   scene_script_beats?: string;
+  /** Beat text as saved. */
+  script_beats?: string | null;
   description?: string;
   storyboard_prompt: string;
   location_name?: string;
   character_names?: string[];
   episodeLocationId?: string;
+}
+
+/** Seconds of video the scene's beats run, from their planned clip lengths. */
+function runtimeOf(scene: StoryboardScene): number {
+  return sceneRuntime({
+    script_beats: scene.script_beats ?? scene.scene_script_beats,
+    beat_numbers: scene.beat_numbers,
+    description: scene.description,
+  });
 }
 
 interface ChatMessage {
@@ -321,7 +334,14 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
       {generatedScenes.length > 0 ? (
         <div className="space-y-6">
           {/* Top Control Bar */}
-          <div className="flex items-center justify-end gap-3 flex-wrap">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-sm text-muted-foreground tabular-nums">
+              {(() => {
+                const total = generatedScenes.reduce((sum, scene) => sum + runtimeOf(scene), 0);
+                const count = `${generatedScenes.length} ${generatedScenes.length === 1 ? "scene" : "scenes"}`;
+                return total > 0 ? `${count} · ${formatRuntime(total)} of video` : count;
+              })()}
+            </p>
             <button
               type="button"
               onClick={handleConfirmAll}
@@ -377,6 +397,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
                             <>
                               <span>{beatsArr.length === 1 ? `Beat ${beatsArr[0]}` : `Beats ${beatsArr[0]} to ${beatsArr[beatsArr.length - 1]}`}</span>
                               <span>{getGridBadge(beatsArr.length, scene.storyboard_prompt || "")}</span>
+                              {runtimeOf(scene) > 0 && <span className="tabular-nums">{runtimeOf(scene)} s</span>}
                             </>
                           );
                         })()}

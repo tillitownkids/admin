@@ -91,7 +91,16 @@ function formatTextToHtml(text: string): string {
   return html;
 }
 
-export function ScriptGenerator({ storyId: episodeStoryId }: { storyId: string }) {
+export function ScriptGenerator({
+  storyId: episodeStoryId,
+  scriptId,
+  onGenerated,
+}: {
+  storyId: string;
+  /** The episode's saved script, rewritten in place when the script is written again. */
+  scriptId?: string | null;
+  onGenerated?: () => void;
+}) {
   const router = useRouter();
 
   const [stories, setStories] = useState<any[]>([]);
@@ -393,6 +402,7 @@ Now convert the provided story into the beat script format.`;
       }
 
       const saveRes = await saveGeneratedScriptAction({
+        ...(scriptId ? { id: scriptId } : {}),
         story_id: selectedStory.id,
         topic: selectedStory.topic || selectedStory.concept || "Beat Script",
         generationType: selectedStory.generation_type || "new",
@@ -400,6 +410,7 @@ Now convert the provided story into the beat script format.`;
       });
 
       if (saveRes.success && saveRes.data?.id) {
+        onGenerated?.();
         router.refresh();
       } else {
         setError(saveRes.error || "The script was written but could not be saved. Try again.");
@@ -422,7 +433,7 @@ Now convert the provided story into the beat script format.`;
         </Alert>
       )}
       <StepStart
-        title="Write the beat script"
+        title={scriptId ? "Write the beat script again" : "Write the beat script"}
         description="Turns this episode's story into numbered beats. Each beat is one shot with its action, dialogue, camera and motion, and becomes one storyboard panel and one video clip."
         action={
           <Button onClick={handleGenerateScript} disabled={isGeneratingScript || !selectedStory || isDetailsLoading}>

@@ -9,8 +9,18 @@ import { Button } from "@/components/ui/button";
 import { callAi } from "@/actions/actions";
 import { saveStoryboardScenesAction, getSavedStoryboardsAction } from "@/actions/saveStoryboardAction";
 import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
-import { MAX_BEATS_PER_SCENE, parseStoryboardJson, validateScenePlan } from "@/lib/storyboardGeneration";
+import { MAX_BEATS_PER_SCENE, parseStoryboardJson, validateScenePlan, type ScenePlan } from "@/lib/storyboardGeneration";
 import { generateStoryboardBatchAction } from "@/actions/generateStoryboardBatchAction";
+import { estimateBeatTimingAction } from "@/actions/estimateBeatTimingAction";
+import {
+  SCENE_MAX_SECONDS,
+  SCENE_MIN_SECONDS,
+  formatRuntime,
+  lengthenShortScenes,
+  sceneLengthProblems,
+  splitLongScenes,
+  withBeatDurations,
+} from "@/lib/sceneTiming";
 import { matchCharactersByName, normalizeCharacterName } from "@/lib/characterNames";
 
 
@@ -98,6 +108,7 @@ export function StoryboardGenerator({ scriptId, onPlanned }: { scriptId: string;
   const [selectedScript] = useState(scriptId);
   const [prompt, setPrompt] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [scripts, setScripts] = useState<DatabaseScript[]>([]);
@@ -176,6 +187,31 @@ export function StoryboardGenerator({ scriptId, onPlanned }: { scriptId: string;
 
     setIsLoading(true);
     setError(null);
+    setStage("Timing each beat of the script…");
+
+    // The timing agent runs first: scenes are split by how long their beats run on screen.
+    let episodeTiming;
+    try {
+      episodeTiming = await estimateBeatTimingAction(prompt);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The script could not be timed.");
+      setIsLoading(false);
+      setStage(null);
+      return;
+    }
+    let timings = episodeTiming.timings;
+    const runtime = formatRuntime(episodeTiming.runtimeSeconds);
+    const timingSection = timings.length > 0
+      ? `## BEAT TIMING
+Each beat's clip length in seconds. The whole episode runs ${runtime} across ${timings.length} beats.
+${timings.map((t) => `- Beat ${t.beat}: ${t.seconds} s`).join("\n")}`
+      : "";
+    setStage([
+      episodeTiming.agentError ? "The timing agent did not answer, so beats are timed by their dialogue." : "",
+      timings.length > 0
+        ? `Splitting ${timings.length} beats (${runtime} in total) into scenes…`
+        : "Splitting the script into scenes…",
+    ].filter(Boolean).join(" "));
 
     const locationPromptSection = storyLocations.length > 0
       ? `OFFICIAL EPISODE LOCATIONS & DESCRIPTIONS:
@@ -200,7 +236,14 @@ Analyze the provided beat script and group consecutive beats into visual scenes 
 ---
 
 ## SCENE GROUPING RULES
-A scene is one storyboard sheet: a 2x2 grid with one panel per beat. Every beat is later generated as its own short video clip, so grouping only decides which beats share a sheet. Runtime does not limit a scene.
+A scene is one storyboard sheet: a 2x2 grid with one panel per beat. Every beat is later generated as its own short video clip, with the length given in BEAT TIMING.
+
+SCENE LENGTH (STRICT, ${SCENE_MIN_SECONDS} TO ${SCENE_MAX_SECONDS} SECONDS):
+- A scene's length is the sum of its beats' seconds in BEAT TIMING. Add them up before closing each scene.
+- Every scene runs at least ${SCENE_MIN_SECONDS} and at most ${SCENE_MAX_SECONDS} seconds.
+- Keep scene lengths dynamic: end a scene where its story moment ends, whether that is at 6 seconds or at 14. Do not fill scenes up to ${SCENE_MAX_SECONDS} seconds and do not make scenes equal.
+- A beat shorter than ${SCENE_MIN_SECONDS} seconds stands alone only when a location or lighting change forces it; otherwise it joins the neighbouring beat it belongs with. A single beat longer than ${SCENE_MAX_SECONDS} seconds stands alone.
+
 Group consecutive beats together when they share:
 - The same physical location.
 - The same time of day and lighting.
@@ -220,11 +263,12 @@ Start a new scene when:
 - The location or INT/EXT changes.
 - The time of day or lighting changes.
 - A new dramatic sequence starts.
+- Adding the next beat would take the scene past ${SCENE_MAX_SECONDS} seconds.
 - The beat count reaches ${MAX_BEATS_PER_SCENE} beats (split into a new scene sheet).
 
 Every beat must belong to exactly ONE scene.
 Never reorder, skip, duplicate, or omit any beats.
-After grouping, verify every scene: no more than ${MAX_BEATS_PER_SCENE} beats, one location, one time of day.
+After grouping, verify every scene: no more than ${MAX_BEATS_PER_SCENE} beats, ${SCENE_MIN_SECONDS} to ${SCENE_MAX_SECONDS} seconds long, one location, one time of day.
 
 ${castPromptSection}
 
@@ -252,6 +296,10 @@ Count ALL beats in the source, including the final beat, and put that count in t
 
 ---
 
+${timingSection}
+
+---
+
 ## BEAT SCRIPT
 ${prompt}`;
 
@@ -267,14 +315,33 @@ ${prompt}`;
         plan.flatMap((scene) => scene.character_names).filter((name) => !castNames.has(normalizeCharacterName(name)))
       ));
 
-      let detectedScenes = await detectScenes();
       // A nickname or shortened name matches no cast member, so that character would get no
-      // reference image. Ask once more, naming the mistake, and keep the better plan.
-      const firstOffCast = castNames.size > 0 ? offCastNames(detectedScenes) : [];
-      if (firstOffCast.length > 0) {
-        const retried = await detectScenes(`\n\n---\n\nCORRECTION: a previous answer listed character names that are not in the cast list: ${firstOffCast.map((name) => `"${name}"`).join(", ")}. Copy names EXACTLY from the OFFICIAL EPISODE CAST list.`);
-        if (offCastNames(retried).length < firstOffCast.length) detectedScenes = retried;
+      // reference image; a scene over the length limit is longer than its sheet should cover.
+      const planProblems = (plan: ScenePlan[]) => {
+        const offCast = castNames.size > 0 ? offCastNames(plan) : [];
+        return [
+          ...(offCast.length > 0
+            ? [`Character names that are not in the cast list: ${offCast.map((name) => `"${name}"`).join(", ")}. Copy names EXACTLY from the OFFICIAL EPISODE CAST list.`]
+            : []),
+          ...sceneLengthProblems(plan, timings),
+        ];
+      };
+
+      let detectedScenes = await detectScenes();
+      // Ask once more, naming the mistakes, and keep the better plan.
+      const firstProblems = planProblems(detectedScenes);
+      if (firstProblems.length > 0) {
+        try {
+          const retried = await detectScenes(`\n\n---\n\nCORRECTION: a previous answer had these problems. Fix them and return the whole plan again:\n${firstProblems.map((problem) => `- ${problem}`).join("\n")}`);
+          if (planProblems(retried).length < firstProblems.length) detectedScenes = retried;
+        } catch {
+          // The first plan is still valid; its remaining length problems are repaired below.
+        }
       }
+      // Whatever is still too long is split here, and a lone short beat is lengthened to the minimum.
+      detectedScenes = splitLongScenes(detectedScenes, timings);
+      timings = lengthenShortScenes(detectedScenes, timings);
+      setStage(`Writing image prompts for ${detectedScenes.length} scenes…`);
 
       // PASS 2: Extract each scene's original beats and produce its image prompt.
       const sceneRequests = detectedScenes.map((scene, idx) => {
@@ -416,7 +483,8 @@ Return ONLY valid JSON with this structure:
           locationName: scene.location_name,
           characterNames: scene.character_names,
           beatNumbers: scene.beat_numbers,
-          sceneScriptBeats: scene.scene_script_beats,
+          // Each beat carries its planned clip length, so the video stage uses the same timing.
+          sceneScriptBeats: withBeatDurations(scene.scene_script_beats, scene.beat_numbers, timings),
         }));
 
         const saveRes = await saveStoryboardScenesAction(payload);
@@ -433,6 +501,7 @@ Return ONLY valid JSON with this structure:
       setError(err?.message || "An error occurred while generating storyboard prompts.");
     } finally {
       setIsLoading(false);
+      setStage(null);
     }
   }
 
@@ -449,7 +518,7 @@ Return ONLY valid JSON with this structure:
       )}
       <StepStart
         title="Plan the storyboard"
-        description="Groups the script's beats into scenes of up to four beats in one location, and writes an image prompt for each scene. No images are generated yet; you review the prompts first."
+        description={`Times every beat, then groups the beats into scenes of ${SCENE_MIN_SECONDS} to ${SCENE_MAX_SECONDS} seconds in one location, and writes an image prompt for each scene. No images are generated yet; you review the prompts first.`}
         action={
           <Button onClick={handleGenerateStoryboard} disabled={isLoading || !hasScript}>
             {isLoading ? <Loader2 className="animate-spin" /> : <Sparkles />}
@@ -458,7 +527,7 @@ Return ONLY valid JSON with this structure:
         }
         note={
           isLoading
-            ? "This takes a few minutes for a full script. Keep this tab open."
+            ? `${stage ?? "Planning…"} This takes a few minutes for a full script. Keep this tab open.`
             : isFetchingScripts
             ? "Loading the script…"
             : !hasScript

@@ -13,10 +13,12 @@ export interface ScriptBeat {
   camera: string;
   motion: string;
   wpm: number | null;
+  /** Clip length planned for this beat by the timing agent ([DURATION] line). */
+  seconds: number | null;
 }
 
-const BEAT_HEADER = /^\s*(?:#{1,6}\s*)?\**\s*BEAT\s*(\d+)\b(.*)$/;
-const TAG_NAMES = 'EMOTION|WPM|TIMING|ACTION|DIALOGUE|CAMERA|MOTION|SFX|END';
+export const BEAT_HEADER = /^\s*(?:#{1,6}\s*)?\**\s*BEAT\s*(\d+)\b(.*)$/;
+const TAG_NAMES = 'EMOTION|WPM|TIMING|DURATION|ACTION|DIALOGUE|CAMERA|MOTION|SFX|END';
 // Saved scripts use **[ACTION]**, [ACTION] and **ACTION:**. A bare "Dialogue: 3.3 seconds"
 // (inside a timing block) is not a tag.
 const TAG_LINE = new RegExp(`^\\s*(?:\\*\\*\\[(${TAG_NAMES})\\]\\*\\*|\\[(${TAG_NAMES})\\]|\\*\\*(${TAG_NAMES}):?\\*\\*)\\s*:?\\s*(.*)$`, 'i');
@@ -28,7 +30,7 @@ function isNoDialogue(text: string): boolean {
 }
 
 function emptyBeat(number: number | null, title: string): ScriptBeat {
-  return { number, title, setting: '', action: '', dialogue: '', camera: '', motion: '', wpm: null };
+  return { number, title, setting: '', action: '', dialogue: '', camera: '', motion: '', wpm: null, seconds: null };
 }
 
 export function parseScriptBeats(script: string): ScriptBeat[] {
@@ -63,6 +65,7 @@ export function parseScriptBeats(script: string): ScriptBeat[] {
       const name = (tag[1] || tag[2] || tag[3]).toLowerCase();
       // "[WPM] 132" is also written without its unit.
       if (name === 'wpm' && beat.wpm === null) beat.wpm = Number(tag[4].match(/\d{2,3}/)?.[0]) || null;
+      if (name === 'duration') beat.seconds = Number(tag[4].match(/\d+(?:\.\d+)?/)?.[0]) || null;
       field = name === 'action' || name === 'dialogue' || name === 'camera' || name === 'motion' ? name : null;
       if (field) beat[field] = tag[4].trim();
       continue;
@@ -114,15 +117,23 @@ export interface ShotTiming {
   overMax: boolean;
 }
 
-export function planShotTiming(beat: Pick<ScriptBeat, 'dialogue' | 'wpm'>): ShotTiming {
+/** The shortest accepted clip length that holds `needed` seconds. */
+export function snapShotSeconds(needed: number): number {
+  return SHOT_DURATIONS.find((duration) => duration >= needed) ?? SHOT_DURATIONS[SHOT_DURATIONS.length - 1];
+}
+
+/**
+ * A beat's clip length. Dialogue sets the floor; a length planned by the timing agent ([DURATION])
+ * can only lengthen the clip, never squeeze the speech. An unplanned silent beat gets 5 seconds.
+ */
+export function planShotTiming(beat: Pick<ScriptBeat, 'dialogue' | 'wpm'> & { seconds?: number | null }): ShotTiming {
   const dialogueWords = dialogueWordCount(beat.dialogue);
-  if (!dialogueWords) {
-    return { dialogueWords: 0, neededSeconds: SILENT_SHOT_SECONDS, seconds: SILENT_SHOT_SECONDS, overCap: false, overMax: false };
-  }
   const wordsPerSecond = Math.min(beat.wpm || DEFAULT_WPM, MAX_WPM) / 60;
-  const needed = dialogueWords / wordsPerSecond + dialoguePauseSeconds(beat.dialogue) + 0.5;
+  const speech = dialogueWords ? dialogueWords / wordsPerSecond + dialoguePauseSeconds(beat.dialogue) + 0.5 : 0;
+  const planned = beat.seconds && beat.seconds > 0 ? beat.seconds : dialogueWords ? 0 : SILENT_SHOT_SECONDS;
+  const needed = Math.max(speech, planned);
   const longest = SHOT_DURATIONS[SHOT_DURATIONS.length - 1];
-  const seconds = SHOT_DURATIONS.find((duration) => duration >= needed) ?? longest;
+  const seconds = snapShotSeconds(needed);
   return {
     dialogueWords,
     neededSeconds: Math.round(needed * 10) / 10,
