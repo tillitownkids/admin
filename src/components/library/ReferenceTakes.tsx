@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
 
 import { TakePicker, type Take } from '@/components/TakePicker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { GeneratedImageOwnerType, GeneratedImageTake } from '@/lib/generatedImageHistory';
+import { queryKeys } from '@/lib/queryKeys';
 
 /** Every reference sheet generated for one character or location, with the one in use marked. */
 export function ReferenceTakes({
@@ -25,29 +27,34 @@ export function ReferenceTakes({
   disabled?: boolean;
   onChosen: (asset: GeneratedImageTake) => void;
 }) {
-  const [assets, setAssets] = useState<GeneratedImageTake[] | null>(null);
+  const queryClient = useQueryClient();
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
+  // Cached: reopening a character, location or object shows its takes at once.
+  const takesKey = queryKeys.imageTakes(ownerType, ownerId);
+  const takesQuery = useQuery({
+    queryKey: takesKey,
+    queryFn: async (): Promise<GeneratedImageTake[]> => {
       const query = new URLSearchParams({ ownerType, ownerId });
       const res = await fetch(`/api/generated-image-history?${query.toString()}`, { cache: 'no-store' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `The takes could not be loaded (HTTP ${res.status}).`);
-      setAssets(data.assets || []);
-      setError(null);
-    } catch (err) {
-      setAssets((current) => current ?? []);
-      setError(err instanceof Error ? err.message : 'The takes could not be loaded.');
-    }
-  }, [ownerId, ownerType]);
+      return data.assets || [];
+    },
+  });
+  const assets = takesQuery.data ?? (takesQuery.isError ? [] : null);
+  const error = actionError ?? (takesQuery.error ? takesQuery.error.message : null);
+  const setError = setActionError;
+  const load = () => queryClient.invalidateQueries({ queryKey: takesKey });
 
+  // A new take was generated: load the takes again.
+  const lastReloadKey = useRef(reloadKey);
   useEffect(() => {
-    (async () => {
-      await load();
-    })();
-  }, [load, reloadKey]);
+    if (lastReloadKey.current === reloadKey) return;
+    lastReloadKey.current = reloadKey;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.imageTakes(ownerType, ownerId) });
+  }, [queryClient, reloadKey, ownerType, ownerId]);
 
   const act = async (take: Take, method: 'PATCH' | 'DELETE') => {
     setBusyKey(take.key);

@@ -1,8 +1,11 @@
 "use client";
 
 import { callAi } from "@/actions/actions";
-import { getStoryByIdAction, saveGeneratedStoryAction, getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
+import { saveGeneratedStoryAction } from "@/actions/saveStoryAction";
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
+import { useSeededEditor } from "@/components/editor/useSeededEditor";
+import { storyQuery } from "@/lib/episodeQueries";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from "@/lib/styles";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
@@ -22,6 +25,18 @@ import {
   BookOpen
 } from "lucide-react";
 
+// Stories saved as JSON keep their text under one of these keys.
+function storyText(content: unknown): string {
+  const raw = typeof content === "string" ? content : "";
+  try {
+    const parsed = raw.trim().startsWith("{") || raw.trim().startsWith("[") ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === "object") return parsed.story || parsed.text || parsed.content || raw;
+  } catch {}
+  return raw;
+}
+
+const NO_ROWS: any[] = [];
+
 interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
@@ -30,85 +45,36 @@ interface ChatMessage {
 
 export function StoryEditor({ storyId: id }: { storyId: string }) {
 
-  const [story, setStory] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const queryClient = useQueryClient();
+  // Cached: reopening the Story step shows the story at once; a newer copy replaces it only while unedited.
+  const storyData = useQuery(storyQuery(id));
+  const story = storyData.data?.story ?? null;
+  const storyCharacters = storyData.data?.characters ?? NO_ROWS;
+  const storyLocations = storyData.data?.locations ?? NO_ROWS;
+  const isLoading = storyData.isPending;
+  const loadError = storyData.error ? storyData.error.message : null;
+
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
 
   const [storyHtml, setStoryHtml] = useState<string>('');
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
+    {
+      role: 'ai',
+      content: `Edit the story on the left, or describe a change here. Suggested rewrites appear in this panel for you to accept.`
+    }
+  ]);
   const [userQuery, setUserQuery] = useState<string>('');
   const [isAiChatLoading, setIsAiChatLoading] = useState<boolean>(false);
-
-  const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
-  const [storyLocations, setStoryLocations] = useState<any[]>([]);
 
   const editorRef = useRef<any>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    async function loadStory() {
-      setIsLoading(true);
-      setError(null);
-      const res = await getStoryByIdAction(id);
-      if (res.success && res.story) {
-        setStory(res.story);
-        let rawContent = res.story.content || '';
-        try {
-          const parsed = typeof rawContent === "string" && (rawContent.trim().startsWith('{') || rawContent.trim().startsWith('[')) ? JSON.parse(rawContent) : null;
-          if (parsed && typeof parsed === "object") {
-            rawContent = parsed.story || parsed.text || parsed.content || rawContent;
-          }
-        } catch {}
-
-        const formatted = formatTextToHtml(rawContent);
-        setStoryHtml(formatted);
-        
-        setChatHistory([
-          { 
-            role: 'ai', 
-            content: `Edit the story on the left, or describe a change here. Suggested rewrites appear in this panel for you to accept.` 
-          }
-        ]);
-
-        try {
-          const [detailsRes, locRes, charRes] = await Promise.all([
-            getStoryCharactersAndLocationsAction(id),
-            fetch('/api/locations'),
-            fetch('/api/characters')
-          ]);
-
-          if (detailsRes.success) {
-            setStoryCharacters(detailsRes.characters || []);
-            setStoryLocations(detailsRes.locations || []);
-          }
-
-          if (locRes.ok) {
-            const locData = await locRes.json();
-          }
-
-          if (charRes.ok) {
-            const charData = await charRes.json();
-          }
-        } catch (err) {
-          console.error("Error loading story characters/locations:", err);
-        }
-
-        setTimeout(() => {
-          if (editorRef.current) {
-            editorRef.current.commands.setContent(formatted);
-          }
-        }, 150);
-      } else {
-        setError(res.error || "Failed to load story details.");
-      }
-      setIsLoading(false);
-    }
-
-    loadStory();
-  }, [id]);
+  const htmlOf = (content: unknown) => formatTextToHtml(storyText(content));
+  const loadedHtml = story ? htmlOf(story.content) : null;
+  const { markSaved } = useSeededEditor(editorRef, loadedHtml);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -230,6 +196,10 @@ export function StoryEditor({ storyId: id }: { storyId: string }) {
       });
 
       if (res.success) {
+        // The cache now holds the saved story, so the next visit opens on it.
+        markSaved(htmlOf(currentHtml));
+        queryClient.setQueryData(storyQuery(id).queryKey, (old) => old && { ...old, story: { ...old.story, content: currentHtml } });
+        void queryClient.invalidateQueries({ queryKey: ["episodes"] });
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 4000);
       } else {
@@ -346,11 +316,11 @@ export function StoryEditor({ storyId: id }: { storyId: string }) {
 
   return (
     <div className="space-y-6">
-      {error && (
+      {(error || loadError) && (
         <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg flex items-center justify-between">
           <div className="flex items-center gap-2">
             <X className="w-4 h-4 cursor-pointer" onClick={() => setError(null)} />
-            <span className="text-sm font-medium">{error}</span>
+            <span className="text-sm font-medium">{error || loadError}</span>
           </div>
           <button onClick={() => setError(null)} className="text-destructive/80 hover:text-destructive">
             <X className="w-4 h-4" />
@@ -410,7 +380,7 @@ export function StoryEditor({ storyId: id }: { storyId: string }) {
           <div className="md:col-span-3 rounded-xl border border-border/60 bg-background/50 flex flex-col focus-within:ring-1 focus-within:ring-primary/40 transition-colors p-2">
             <TiptapEditor
               editorRef={editorRef}
-              initialContent={storyHtml}
+              initialContent={storyHtml || loadedHtml || ""}
               className="w-full !bg-transparent !border-none !rounded-none min-h-[400px]"
             />
           </div>

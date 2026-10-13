@@ -4,10 +4,12 @@ import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
 import { StepStart } from "@/components/episode/StepStart";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { getStoriesAction, getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
 import { saveGeneratedScriptAction } from "@/actions/saveScriptAction";
 import { callAi } from "@/actions/actions";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { storyQuery } from "@/lib/episodeQueries";
+import { queryKeys } from "@/lib/queryKeys";
 import { useRouter } from "next/navigation";
 
 export interface ScriptHistory {
@@ -103,68 +105,17 @@ export function ScriptGenerator({
 }) {
   const router = useRouter();
 
-  const [stories, setStories] = useState<any[]>([]);
-  const [selectedStoryId, setSelectedStoryId] = useState<string>('');
-  const [selectedStory, setSelectedStory] = useState<any | null>(null);
-  const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
-  const [storyLocations, setStoryLocations] = useState<any[]>([]);
-  const [isFetchingStories, setIsFetchingStories] = useState<boolean>(true);
-  const [isDetailsLoading, setIsDetailsLoading] = useState<boolean>(false);
+  const queryClient = useQueryClient();
+  // Only this episode's story and cast are needed; they are cached and shared with the Story step.
+  const storyData = useQuery(storyQuery(episodeStoryId));
+  const selectedStory = storyData.data?.story ?? null;
+  const storyCharacters: any[] = storyData.data?.characters ?? [];
+  const storyLocations: any[] = storyData.data?.locations ?? [];
+  const isFetchingStories = storyData.isPending;
+  const isDetailsLoading = false;
   const [isGeneratingScript, setIsGeneratingScript] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchStories();
-  }, []);
-
-  const fetchStories = async () => {
-    setIsFetchingStories(true);
-    try {
-      const res = await getStoriesAction();
-      if (res.success && res.stories) {
-        setStories(res.stories);
-        // The episode decides the story; there is nothing to pick.
-        await handleStorySelect(episodeStoryId, res.stories);
-      } else if (res.error) {
-        setError(res.error);
-      }
-    } catch (e: any) {
-      console.error("Failed to load stories from DB", e);
-      setError(e?.message || "The story could not be loaded. Reload the page and try again.");
-    } finally {
-      setIsFetchingStories(false);
-    }
-  };
-
-  // A declaration, so loading the stories above can call it.
-  async function handleStorySelect(storyId: string, pool: any[] = stories) {
-    setSelectedStoryId(storyId);
-    const story = pool.find((s) => s.id === storyId) || null;
-    setSelectedStory(story);
-
-    if (story) {
-      setIsDetailsLoading(true);
-      try {
-        const detailsRes = await getStoryCharactersAndLocationsAction(storyId);
-        if (detailsRes.success) {
-          setStoryCharacters(detailsRes.characters || []);
-          setStoryLocations(detailsRes.locations || []);
-        } else {
-          setStoryCharacters([]);
-          setStoryLocations([]);
-        }
-      } catch (err) {
-        console.error("Error fetching story characters and locations:", err);
-        setStoryCharacters([]);
-        setStoryLocations([]);
-      } finally {
-        setIsDetailsLoading(false);
-      }
-    } else {
-      setStoryCharacters([]);
-      setStoryLocations([]);
-    }
-  };
+  const loadError = storyData.error ? storyData.error.message : null;
 
   const handleGenerateScript = async () => {
     if (!selectedStory) {
@@ -410,6 +361,8 @@ Now convert the provided story into the beat script format.`;
       });
 
       if (saveRes.success && saveRes.data?.id) {
+        // The script editor and the storyboard planner read the new script, not a cached copy.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.episodeScript(saveRes.data.id) });
         onGenerated?.();
         router.refresh();
       } else {
@@ -425,11 +378,11 @@ Now convert the provided story into the beat script format.`;
 
   return (
     <div className="space-y-4">
-      {error && (
+      {(error || loadError) && (
         <Alert variant="destructive">
           <AlertTriangle />
-          <AlertTitle>The script was not written</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertTitle>{error ? "The script was not written" : "The story could not be loaded"}</AlertTitle>
+          <AlertDescription>{error || loadError}</AlertDescription>
         </Alert>
       )}
       <StepStart

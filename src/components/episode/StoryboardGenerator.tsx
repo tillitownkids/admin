@@ -1,21 +1,22 @@
 "use client";
 
 import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { StepStart } from "@/components/episode/StepStart";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { callAi } from "@/actions/actions";
-import { saveStoryboardScenesAction, getSavedStoryboardsAction } from "@/actions/saveStoryboardAction";
-import { getStoryCharactersAndLocationsAction } from "@/actions/saveStoryAction";
+import { saveStoryboardScenesAction } from "@/actions/saveStoryboardAction";
+import { episodeObjectsQuery, scriptQuery, storyQuery } from "@/lib/episodeQueries";
 import { MAX_BEATS_PER_SCENE, STORYBOARD_PANELS, parseStoryboardJson, validateScenePlan, type ScenePlan } from "@/lib/storyboardGeneration";
 import { generateStoryboardBatchAction } from "@/actions/generateStoryboardBatchAction";
 import { estimateBeatTimingAction } from "@/actions/estimateBeatTimingAction";
 import { resetStoryboardAction } from "@/actions/resetStoryboardAction";
 import type { SceneCharacterReport } from "@/actions/characterCheckAction";
 import { runCharacterCheck } from "@/lib/runCharacterCheck";
-import { getEpisodeObjectsAction, type EpisodeObject } from "@/actions/propsAction";
+import type { EpisodeObject } from "@/actions/propsAction";
 import { MAX_SCENE_OBJECTS } from "@/lib/propSheet";
 import {
   SCENE_MAX_SECONDS,
@@ -28,24 +29,6 @@ import {
 } from "@/lib/sceneTiming";
 import { matchCharactersByName, normalizeCharacterName } from "@/lib/characterNames";
 
-
-interface DatabaseScript {
-  id: string;
-  story_id?: string | null;
-  topic?: string;
-  episode_number?: string;
-  title?: string;
-  content?: string;
-  status?: string;
-  generated_at?: string;
-}
-
-interface SavedStoryboard {
-  id: string;
-  episode_number: string;
-  topic: string;
-  generated_at: string;
-}
 
 interface StoryboardScene {
   scene_number: number;
@@ -119,85 +102,22 @@ export function StoryboardGenerator({
   const router = useRouter();
 
   // The episode decides the script; there is nothing to pick.
-  const [selectedScript] = useState(scriptId);
-  const [prompt, setPrompt] = useState("");
+  const selectedScript = scriptId;
   const [isLoading, setIsLoading] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [scripts, setScripts] = useState<DatabaseScript[]>([]);
-  const [savedStoryboards, setSavedStoryboards] = useState<SavedStoryboard[]>([]);
-  const [isFetchingScripts, setIsFetchingScripts] = useState(true);
-  const [storyLocations, setStoryLocations] = useState<any[]>([]);
-  const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
+  // Only this episode's script, cast, locations and objects are needed. They are cached and shared
+  // with the Script and Story steps, so planning starts without a wait after those steps.
+  const scriptData = useQuery(scriptQuery(scriptId));
+  const storyData = useQuery(storyQuery(storyId));
+  const objectsData = useQuery(episodeObjectsQuery(storyId));
+  const prompt = stripHtmlToMarkdown(scriptData.data?.content || "");
+  const storyLocations: any[] = storyData.data?.locations ?? [];
+  const storyCharacters: any[] = storyData.data?.characters ?? [];
   // Objects (props) linked to the episode; each scene lists the ones it shows.
-  const [storyObjects, setStoryObjects] = useState<EpisodeObject[]>([]);
-
-  function getScriptLabel(script: DatabaseScript) {
-    if (script.title) return script.title;
-    const ep = script.episode_number ? `Episode ${script.episode_number}` : "";
-    const topic = script.topic || "";
-    if (ep && topic) return `${ep} - ${topic}`;
-    if (topic) return topic;
-    if (ep) return ep;
-    return `Script #${script.id.slice(0, 8)}`;
-  }
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setIsFetchingScripts(true);
-        const [scriptResponse, savedRes] = await Promise.all([
-          fetch("/api/scripts"),
-          getSavedStoryboardsAction()
-        ]);
-
-        if (scriptResponse.ok) {
-          const data = await scriptResponse.json();
-          setScripts(data.scripts || []);
-        }
-
-        if (savedRes.success && savedRes.storyboards) {
-          setSavedStoryboards(savedRes.storyboards);
-        }
-      } catch (err) {
-        console.error("Failed to fetch storyboard data:", err);
-      } finally {
-        setIsFetchingScripts(false);
-      }
-    }
-    fetchData();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedScript) {
-      setPrompt("");
-      setStoryLocations([]);
-      setStoryCharacters([]);
-      return;
-    }
-
-    const scriptObj = scripts.find((s) => s.id === selectedScript);
-    if (scriptObj && scriptObj.content) {
-      setPrompt(stripHtmlToMarkdown(scriptObj.content));
-    } else {
-      setPrompt("");
-    }
-
-    async function loadEpisodeContext() {
-      try {
-        const res = await getStoryCharactersAndLocationsAction(scriptObj?.story_id || selectedScript);
-        if (res.success) {
-          setStoryLocations(res.locations || []);
-          setStoryCharacters(res.characters || []);
-        }
-        setStoryObjects(await getEpisodeObjectsAction(storyId));
-      } catch (err) {
-        console.error("Error fetching story characters/locations:", err);
-      }
-    }
-    loadEpisodeContext();
-  }, [selectedScript, scripts, storyId]);
+  const storyObjects: EpisodeObject[] = objectsData.data ?? [];
+  const isFetchingScripts = scriptData.isPending || storyData.isPending || objectsData.isPending;
 
   async function handleGenerateStoryboard() {
     if (!selectedScript || !prompt.trim()) return;

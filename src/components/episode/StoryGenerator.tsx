@@ -3,13 +3,16 @@
 import { callAi } from "@/actions/actions";
 import { getStoryDurationBudget } from "@/lib/storyDurationBudget";
 import { episodeTitle } from "@/lib/episodeSteps";
-import { getStoriesAction, saveGeneratedStoryAction } from "@/actions/saveStoryAction";
+import { saveGeneratedStoryAction } from "@/actions/saveStoryAction";
+import { libraryQuery, storiesQuery } from "@/lib/episodeQueries";
+import { queryKeys } from "@/lib/queryKeys";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getGlobalSettingsAction } from "@/actions/settingsAction";
 import { detectEpisodeObjectsAction } from "@/actions/propsAction";
 import { findExistingByName } from "@/lib/characterNames";
 import { GlassPanel } from "@/components/GlassPanel";
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass, selectFieldClass } from "@/lib/styles";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 import { useRouter } from "next/navigation";
 import { 
@@ -69,11 +72,16 @@ interface LibraryItem {
 const normalizedName = (name: string) => name.trim().toLocaleLowerCase();
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
+const NO_ITEMS: LibraryItem[] = [];
+const NO_STORIES: unknown[] = [];
+
 export function StoryGenerator() {
   const router = useRouter();
 
-  const [stories, setStories] = useState<StoryRecord[]>([]);
-  const [isFetchingStories, setIsFetchingStories] = useState<boolean>(true);
+  const queryClient = useQueryClient();
+  // Cached and shared: the story list, and the Characters and Locations libraries.
+  const storiesData = useQuery(storiesQuery());
+  const stories = (storiesData.data ?? NO_STORIES) as StoryRecord[];
 
   const [generationType, setGenerationType] = useState<'new' | 'continue'>('new');
   const [previousEpisodeId, setPreviousEpisodeId] = useState<string>('');
@@ -89,9 +97,15 @@ export function StoryGenerator() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [locations, setLocations] = useState<LibraryItem[]>([]);
-  const [characters, setCharacters] = useState<LibraryItem[]>([]);
-  const [isFetchingDetails, setIsFetchingDetails] = useState<boolean>(false);
+  const locationsData = useQuery(libraryQuery('/api/locations'));
+  const charactersData = useQuery(libraryQuery('/api/characters'));
+  const locations = (locationsData.data?.locations ?? NO_ITEMS) as LibraryItem[];
+  const characters = (charactersData.data?.characters ?? NO_ITEMS) as LibraryItem[];
+  const isFetchingDetails = locationsData.isPending || charactersData.isPending;
+  // A character or location created here joins the cached library list, so it is matched at once.
+  const addToLibrary = (apiPath: string, listKey: string, item: LibraryItem) =>
+    queryClient.setQueryData<Record<string, unknown>>(queryKeys.library(apiPath), (data) =>
+      data ? { ...data, [listKey]: [...((data[listKey] as LibraryItem[] | undefined) ?? []), item] } : data);
 
   const [pendingLocations, setPendingLocations] = useState<PendingLocation[]>([]);
   const [pendingCharacters, setPendingCharacters] = useState<PendingCharacter[]>([]);
@@ -100,46 +114,6 @@ export function StoryGenerator() {
   const [isSavingLocation, setIsSavingLocation] = useState<string | null>(null);
   const [isSavingCharacter, setIsSavingCharacter] = useState<string | null>(null);
   const [pendingSavedStoryId, setPendingSavedStoryId] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadStories();
-    loadLocationsAndCharacters();
-  }, []);
-
-  async function loadLocationsAndCharacters() {
-    setIsFetchingDetails(true);
-    try {
-      const [locationsRes, charactersRes] = await Promise.all([
-        fetch('/api/locations'),
-        fetch('/api/characters'),
-      ]);
-
-      if (locationsRes.ok) {
-        const locData = await locationsRes.json();
-        const locs = locData.locations || [];
-        setLocations(locs);
-      }
-
-      if (charactersRes.ok) {
-        const charData = await charactersRes.json();
-        const chars = charData.characters || [];
-        setCharacters(chars);
-      }
-    } catch (err) {
-      console.error("Error fetching locations and characters:", err);
-    } finally {
-      setIsFetchingDetails(false);
-    }
-  }
-
-  async function loadStories() {
-    setIsFetchingStories(true);
-    const res = await getStoriesAction();
-    if (res.success && res.stories) {
-      setStories(res.stories);
-    }
-    setIsFetchingStories(false);
-  }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     const { name, value } = e.target;
@@ -188,7 +162,7 @@ export function StoryGenerator() {
     }
     const body = await res.json();
     if (!body.character?.id) throw new Error(`Character "${char.name}" was not saved.`);
-    setCharacters((prev) => [...prev, body.character]);
+    addToLibrary('/api/characters', 'characters', body.character);
     setActiveCharacterIds((prev) => Array.from(new Set([...prev, body.character.id])));
     return body.character.id as string;
   }
@@ -225,7 +199,7 @@ export function StoryGenerator() {
         const resData = await res.json();
         const createdLoc = resData.location;
         if (!createdLoc?.id) throw new Error(`Location "${loc.name}" was not saved.`);
-        setLocations((prev) => [...prev, createdLoc]);
+        addToLibrary('/api/locations', 'locations', createdLoc);
         setActiveLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
         setAcceptedLocationIds((prev) => Array.from(new Set([...prev, createdLoc.id])));
         setPendingLocations((prev) =>
@@ -271,7 +245,7 @@ export function StoryGenerator() {
             const resData = await res.json();
             const createdLoc = resData.location;
             if (!createdLoc?.id) throw new Error(`Location "${loc.name}" was not saved.`);
-            setLocations((prev) => [...prev, createdLoc]);
+            addToLibrary('/api/locations', 'locations', createdLoc);
             newLocIds.push(createdLoc.id);
             setPendingLocations((prev) => prev.map((item) => item === loc ? { ...item, added: true } : item));
       }
@@ -354,6 +328,10 @@ export function StoryGenerator() {
       });
 
       if (saveRes.success && saveRes.story?.id) {
+        // A new episode: the lists that show episodes and stories load it.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.episodes() });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.stories() });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
         // The object detection agent links library objects and creates this episode's new ones.
         // A failure never blocks the story: Find objects on the episode page runs it again.
         setSavePhase('objects');
