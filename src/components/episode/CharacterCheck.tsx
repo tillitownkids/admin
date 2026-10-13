@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Check, Loader2, UserCheck, Wrench } from "lucide-react";
+import { AlertTriangle, Check, ImageIcon, Loader2, UserCheck, Wrench } from "lucide-react";
 
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,8 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   checkSceneCharactersAction,
+  completeEpisodeCastAction,
   detectEpisodeCastAction,
   listCharacterCheckScenesAction,
+  type CastCompletion,
   type SceneCharacterReport,
 } from "@/actions/characterCheckAction";
 
@@ -23,14 +25,36 @@ const PARALLEL_SCENES = 2;
  */
 export async function runCharacterCheck(
   storyId: string,
-  options: { fix: boolean; onProgress?: (done: number, total: number) => void; onReading?: () => void },
+  options: {
+    fix: boolean;
+    onProgress?: (done: number, total: number) => void;
+    onReading?: () => void;
+    /** Called before characters outside the episode's cast are attached or created. */
+    onCompletingCast?: (names: string[]) => void;
+    /** What completing the cast did; null when it failed. */
+    onCastCompleted?: (completion: CastCompletion | null) => void;
+  },
 ): Promise<SceneCharacterReport[]> {
   // First the agent reads the whole episode in order, so it knows who is present in every scene.
   options.onReading?.();
-  const [scenes, episodeCast] = await Promise.all([
+  const [scenes, firstRead] = await Promise.all([
     listCharacterCheckScenesAction(storyId),
     detectEpisodeCastAction(storyId).catch(() => null),
   ]);
+  let episodeCast = firstRead;
+
+  // Characters on screen but outside the episode's cast are brought in, from the library or newly
+  // created with a sheet, then the episode is read again so every scene counts them.
+  const outsideCast = Array.from(new Set(Object.values(episodeCast?.byScene || {}).flat().flatMap((beat) => beat.notInCast)));
+  if (options.fix && outsideCast.length) {
+    options.onCompletingCast?.(outsideCast);
+    const completion = await completeEpisodeCastAction(storyId, outsideCast).catch(() => null);
+    options.onCastCompleted?.(completion);
+    if (completion && (completion.attached.length || completion.created.length)) {
+      options.onReading?.();
+      episodeCast = await detectEpisodeCastAction(storyId).catch(() => episodeCast);
+    }
+  }
   const reports: SceneCharacterReport[] = new Array(scenes.length);
   let next = 0;
   let done = 0;
@@ -139,27 +163,40 @@ export function CharacterCheck({
   storyId,
   initialReports = null,
   onChanged,
+  onRegenerateImages,
 }: {
   storyId: string;
   /** A check that already ran, such as the one right after planning. */
   initialReports?: SceneCharacterReport[] | null;
   onChanged?: () => void | Promise<void>;
+  /** Generates new storyboard images for these scenes and puts them in use. Offered when given. */
+  onRegenerateImages?: (sceneIds: string[]) => void;
 }) {
   const [progress, setProgress] = useState<string | null>(null);
   const [reports, setReports] = useState<SceneCharacterReport[] | null>(initialReports);
+  const [castCompletion, setCastCompletion] = useState<CastCompletion | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const run = async () => {
     setError(null);
     setReports(null);
+    setCastCompletion(null);
+    // Read below in this same run, so it is kept here rather than read back from state.
+    let completion: CastCompletion | null = null;
     try {
       const result = await runCharacterCheck(storyId, {
         fix: true,
         onReading: () => setProgress("Reading the episode to see who is present in each scene…"),
+        onCompletingCast: (names) => setProgress(`Adding ${names.join(", ")} to the episode's characters…`),
+        onCastCompleted: (result) => {
+          completion = result;
+          setCastCompletion(result);
+        },
         onProgress: (done, total) => setProgress(`Checked ${done} of ${total} scenes…`),
       });
       setReports(result);
-      if (result.some((report) => report.fixed.length > 0)) await onChanged?.();
+      const castChanged = Boolean(completion && ((completion as CastCompletion).attached.length || (completion as CastCompletion).created.length));
+      if (castChanged || result.some((report) => report.fixed.length > 0)) await onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "The character check could not run.");
     } finally {
@@ -168,6 +205,14 @@ export function CharacterCheck({
   };
 
   const summary = reports ? summarizeCharacterCheck(reports) : null;
+  const outdatedImages = (reports || []).filter((report) => report.imageOutdated).map((report) => report.sceneId);
+  const castLines = castCompletion
+    ? [
+        castCompletion.attached.length ? `Added from the character library: ${castCompletion.attached.join(", ")}.` : null,
+        castCompletion.created.length ? `Created as new characters, each with a reference sheet: ${castCompletion.created.join(", ")}.` : null,
+        castCompletion.skipped.length ? `Left out (not one specific character): ${castCompletion.skipped.join(", ")}.` : null,
+      ].filter((line): line is string => Boolean(line))
+    : [];
 
   return (
     <Card size="sm">
@@ -185,7 +230,7 @@ export function CharacterCheck({
             size="sm"
             disabled={Boolean(progress)}
             title="Check and fix every scene's characters?"
-            description="An agent reads the episode in order and decides who each shot shows. Characters it finds are attached to the scene, missing names and positions are written into the storyboard prompt, and video shots that leave someone out or unplaced are planned again (their clips are kept). Nothing is removed, and no images or clips are generated. This makes a few AI calls per scene."
+            description="An agent reads the episode in order and decides who each shot shows. Characters on screen but missing from the episode are added from the character library, or created with a reference sheet if they are new (this uses image credits). Characters it finds are attached to the scene, missing names and positions are written into the storyboard prompt, and video shots that leave someone out or unplaced are planned again (their clips are kept). Nothing is removed. This makes a few AI calls per scene."
             confirmLabel="Check characters"
             onConfirm={run}
           >
@@ -214,6 +259,35 @@ export function CharacterCheck({
               <AlertTitle>{summary.clean ? "Every character is in place" : "Character check finished"}</AlertTitle>
               <AlertDescription>{summary.text}</AlertDescription>
             </Alert>
+          )}
+          {castLines.map((line) => (
+            <p key={line} className="flex items-start gap-1.5 text-sm text-muted-foreground">
+              <Check className="mt-0.5 size-3.5 shrink-0" />
+              {line}
+            </p>
+          ))}
+          {castCompletion?.sheetErrors.map((line) => (
+            <p key={line} className="flex items-start gap-1.5 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              {line} Generate the sheet in Characters before making images for its scenes.
+            </p>
+          ))}
+          {onRegenerateImages && outdatedImages.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+              <p className="text-sm text-muted-foreground">
+                {outdatedImages.length} storyboard image{outdatedImages.length === 1 ? " was" : "s were"} made before these fixes.
+              </p>
+              <ConfirmButton
+                size="sm"
+                title={`Generate ${outdatedImages.length} new storyboard image${outdatedImages.length === 1 ? "" : "s"}?`}
+                description="Each fixed scene gets a new image from its corrected prompt and characters, and the new image is put in use. Earlier images are kept as takes. Each image spends image credits."
+                confirmLabel="Generate images"
+                onConfirm={() => onRegenerateImages(outdatedImages)}
+              >
+                <ImageIcon />
+                Update {outdatedImages.length} image{outdatedImages.length === 1 ? "" : "s"}
+              </ConfirmButton>
+            </div>
           )}
           {reports && <CharacterCheckReports reports={reports} />}
         </CardContent>

@@ -293,7 +293,7 @@ export async function deleteSceneVideoFromStorage(videoUrl: string): Promise<boo
   return true;
 }
 
-const FULL_EPISODES_BUCKET = 'full_episodes';
+export const FULL_EPISODES_BUCKET = 'full_episodes';
 
 export async function uploadFullEpisodeVideo(
   fileBuffer: Buffer,
