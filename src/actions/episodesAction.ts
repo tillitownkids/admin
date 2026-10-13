@@ -25,6 +25,8 @@ interface SceneRow {
 }
 interface VideoRow { id: string; story_id: string | null; created_at: string | null }
 interface UploadRow { video_id: string; status: string }
+/** One asset (character, location or object) linked to an episode, and whether it has its reference sheet. */
+interface AssetRow { story_id: string; hasSheet: boolean }
 
 async function rows<T>(query: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const { data, error } = await query;
@@ -38,6 +40,7 @@ function summarize(
   scenes: SceneRow[],
   videos: VideoRow[],
   uploads: UploadRow[],
+  assets: AssetRow[],
 ): EpisodeSummary[] {
   const publishedVideoIds = new Set(uploads.filter((upload) => upload.status === "published").map((upload) => upload.video_id));
   const oldestFirst = [...stories].sort((a, b) => a.generated_at.localeCompare(b.generated_at));
@@ -61,6 +64,8 @@ function summarize(
       updatedAt: lastChange,
       scriptId: script?.id ?? null,
       progress: {
+        assets: assets.filter((asset) => asset.story_id === story.id).length,
+        assetsWithSheet: assets.filter((asset) => asset.story_id === story.id && asset.hasSheet).length,
         hasScript: Boolean(script),
         scenes: storyScenes.length,
         scenesWithImage: storyScenes.filter((scene) => scene.storyboard_image_url).length,
@@ -77,17 +82,31 @@ async function loadEpisodes(storyId?: string): Promise<EpisodeSummary[]> {
   let scriptQuery = supabase.from("Script").select("id,story_id,generated_at").order("generated_at", { ascending: false });
   let sceneQuery = supabase.from("Scene").select("story_id,storyboard_image_url,video_url,video_prompt,updated_at");
   let videoQuery = supabase.from("Video").select("id,story_id,created_at");
+  let castQuery = supabase.from("StoryCharacter").select("story_id,Character(magnific_identifier)");
+  let placeQuery = supabase.from("EpisodeLocation").select("story_id,Location(magnific_identifier)");
+  let objectQuery = supabase.from("StoryProp").select("story_id,Prop(magnific_identifier)");
   if (storyId) {
     scriptQuery = scriptQuery.eq("story_id", storyId);
     sceneQuery = sceneQuery.eq("story_id", storyId);
     videoQuery = videoQuery.eq("story_id", storyId);
+    castQuery = castQuery.eq("story_id", storyId);
+    placeQuery = placeQuery.eq("story_id", storyId);
+    objectQuery = objectQuery.eq("story_id", storyId);
   }
-  const [stories, scripts, scenes, videos] = await Promise.all([
+  type LinkRow = { story_id: string } & Record<string, { magnific_identifier: string | null } | null>;
+  const asAssets = (links: LinkRow[], key: string): AssetRow[] =>
+    links.flatMap((link) => (link[key] ? [{ story_id: link.story_id, hasSheet: Boolean(link[key]!.magnific_identifier) }] : []));
+  const [stories, scripts, scenes, videos, cast, places, objects] = await Promise.all([
     rows<StoryRow>(supabase.from("Story").select(storyId ? "id,topic,generated_at" : "id,topic,content,generated_at")),
     rows<ScriptRow>(scriptQuery),
     rows<SceneRow>(sceneQuery),
     rows<VideoRow>(videoQuery),
+    rows<LinkRow>(castQuery),
+    rows<LinkRow>(placeQuery),
+    // Objects are optional: without their tables, episodes still load.
+    rows<LinkRow>(objectQuery).catch(() => [] as LinkRow[]),
   ]);
+  const assets = [...asAssets(cast, "Character"), ...asAssets(places, "Location"), ...asAssets(objects, "Prop")];
   const uploads = videos.length
     ? await rows<UploadRow>(supabase.from("YouTubeUpload").select("video_id,status").in("video_id", videos.map((video) => video.id)))
     : [];
@@ -96,7 +115,7 @@ async function loadEpisodes(storyId?: string): Promise<EpisodeSummary[]> {
     const story = stories.find((item) => item.id === storyId);
     if (story && own) story.content = own.content;
   }
-  return summarize(stories, scripts, scenes, videos, uploads);
+  return summarize(stories, scripts, scenes, videos, uploads, assets);
 }
 
 /** Every episode with where it stands, most recently changed first. */

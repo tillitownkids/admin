@@ -1,8 +1,9 @@
-// An episode moves through five steps in order. Everything that shows where an
+// An episode moves through six steps in order. Everything that shows where an
 // episode stands (the Episodes list, the stepper) derives it from these counts.
 
 export const EPISODE_STEPS = [
   { key: 'story', label: 'Story' },
+  { key: 'assets', label: 'Assets' },
   { key: 'script', label: 'Script' },
   { key: 'storyboard', label: 'Storyboard' },
   { key: 'video', label: 'Video' },
@@ -13,6 +14,10 @@ export type EpisodeStepKey = (typeof EPISODE_STEPS)[number]['key'];
 export type EpisodeStepState = 'done' | 'active' | 'todo' | 'locked';
 
 export interface EpisodeProgress {
+  /** Assets: characters, locations and objects linked to the episode. */
+  assets: number;
+  /** Assets with a reference sheet, which image and clip generation need. */
+  assetsWithSheet: number;
   hasScript: boolean;
   scenes: number;
   scenesWithImage: number;
@@ -25,6 +30,10 @@ export interface EpisodeProgress {
 function isDone(step: EpisodeStepKey, progress: EpisodeProgress): boolean {
   switch (step) {
     case 'story': return true; // An episode exists once its story is saved.
+    // Every asset has its sheet. An episode whose storyboard images are all made is past needing them.
+    case 'assets':
+      return (progress.assets > 0 && progress.assetsWithSheet === progress.assets)
+        || (progress.scenes > 0 && progress.scenesWithImage === progress.scenes);
     case 'script': return progress.hasScript;
     case 'storyboard': return progress.scenes > 0 && progress.scenesWithImage === progress.scenes;
     case 'video': return progress.stitchedVideos > 0;
@@ -36,6 +45,7 @@ function isDone(step: EpisodeStepKey, progress: EpisodeProgress): boolean {
 function isAvailable(step: EpisodeStepKey, progress: EpisodeProgress): boolean {
   switch (step) {
     case 'story': return true;
+    case 'assets': return true;
     case 'script': return true;
     case 'storyboard': return progress.hasScript;
     case 'video': return progress.scenesWithImage > 0;
@@ -72,6 +82,11 @@ export function lockedStepReason(step: EpisodeStepKey): string {
 export function episodeStatusLine(progress: EpisodeProgress): string {
   switch (nextEpisodeStep(progress)) {
     case 'story': return 'Story saved';
+    case 'assets': {
+      if (!progress.assets) return 'No characters, locations or objects linked yet';
+      const missing = progress.assets - progress.assetsWithSheet;
+      return `${missing} of ${progress.assets} assets need a sheet`;
+    }
     case 'script': return 'Script not written yet';
     case 'storyboard':
       return progress.scenes === 0

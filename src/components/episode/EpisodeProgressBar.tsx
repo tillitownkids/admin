@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 const STATE_LABEL = { done: "done", active: "in progress", todo: "not started", locked: "not started" } as const;
 
-/** Five segments, one per step, so a row shows at a glance how far an episode has got. */
+/** One segment per step, so a row shows at a glance how far an episode has got. */
 export function EpisodeProgressBar({ progress }: { progress: EpisodeProgress }) {
   const states = episodeStepStates(progress);
 
