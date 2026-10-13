@@ -1,7 +1,9 @@
 'use client';
 
 import { Save, Check, Loader2, AlertTriangle } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queryKeys";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { labelClass, selectFieldClass, primaryButtonClass } from "@/lib/styles";
 import { getGlobalSettingsAction, saveGlobalSettingsAction } from "@/actions/settingsAction";
@@ -25,36 +27,39 @@ export function DashboardSettings() {
     aiModel: 'claude',
   });
 
-  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadSettings() {
-      setIsLoading(true);
-      try {
-        const res = await getGlobalSettingsAction();
-        // Without this, a failed load would show the defaults as if they were saved.
-        if (!res.success) setError(res.error || "The settings could not be loaded.");
-        if (res.success && res.settings) {
-          const loaded = {
-            targetAudience: res.settings.targetAudience || 'kids',
-            tone: res.settings.tone || 'educational',
-            aiModel: res.settings.aiModel || 'claude',
-          };
-          setSavedState(loaded);
-          setCurrentState(loaded);
-        }
-      } catch (err) {
-        console.error("Failed to load global settings from DB:", err);
-        setError("The settings could not be loaded. Reload the page and try again.");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadSettings();
-  }, []);
+  // Cached: reopening Settings shows the saved values at once.
+  const queryClient = useQueryClient();
+  const settingsQuery = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: async (): Promise<SettingsState> => {
+      const res = await getGlobalSettingsAction();
+      // Without this, a failed load would show the defaults as if they were saved.
+      if (!res.success) throw new Error(res.error || "The settings could not be loaded.");
+      return {
+        targetAudience: res.settings?.targetAudience || 'kids',
+        tone: res.settings?.tone || 'educational',
+        aiModel: res.settings?.aiModel || 'claude',
+      };
+    },
+  });
+  const isLoading = settingsQuery.isPending;
+  const loadError = settingsQuery.error ? settingsQuery.error.message : null;
+
+  // Loaded values fill the form; a newer load replaces them only while nothing was changed.
+  const [seededFrom, setSeededFrom] = useState<SettingsState | undefined>(undefined);
+  const unchanged =
+    currentState.targetAudience === savedState.targetAudience &&
+    currentState.tone === savedState.tone &&
+    currentState.aiModel === savedState.aiModel;
+  if (settingsQuery.data && settingsQuery.data !== seededFrom && unchanged) {
+    setSeededFrom(settingsQuery.data);
+    setSavedState(settingsQuery.data);
+    setCurrentState(settingsQuery.data);
+  }
 
   const isDirty =
     currentState.targetAudience !== savedState.targetAudience ||
@@ -87,6 +92,7 @@ export function DashboardSettings() {
 
       if (res.success) {
         setSavedState(currentState);
+        queryClient.setQueryData(queryKeys.settings(), currentState);
         setSaveSuccess(true);
         // Sync localStorage for fallback
         localStorage.setItem('targetAudience', currentState.targetAudience);
@@ -146,10 +152,10 @@ export function DashboardSettings() {
       </div>
 
       <div className="space-y-4 p-5">
-        {error && (
+        {(error || loadError) && (
           <Alert variant="destructive">
             <AlertTriangle />
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error || loadError}</AlertDescription>
           </Alert>
         )}
         {isLoading ? (

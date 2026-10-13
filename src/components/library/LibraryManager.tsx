@@ -10,6 +10,7 @@ import { ReferenceTakes } from '@/components/library/ReferenceTakes';
 import { Button } from '@/components/ui/button';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
+import { libraryQuery } from '@/lib/episodeQueries';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
 
 export interface LibraryItem {
@@ -74,14 +75,8 @@ export function LibraryManager({
   // Cached per library: reopening Characters, Locations or Objects shows the list at once and
   // refreshes it in the background.
   const queryClient = useQueryClient();
-  const listQuery = useQuery({
-    queryKey: queryKeys.library(apiPath),
-    queryFn: async (): Promise<Record<string, unknown>> => {
-      const res = await fetch(apiPath);
-      if (!res.ok) throw new Error(`Failed to load ${resourceNamePlural}`);
-      return res.json();
-    },
-  });
+  // Shared with the new-episode form, which matches story characters and locations against it.
+  const listQuery = useQuery(libraryQuery(apiPath));
   const listData = listQuery.data;
   const items = (listData?.[listKey] as LibraryItem[] | undefined) ?? NO_ITEMS;
   const isFetchingItems = listQuery.isPending;

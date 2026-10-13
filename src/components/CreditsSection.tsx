@@ -1,64 +1,12 @@
 'use client';
 
-import { useState, useEffect } from "react";
 import { Coins, RotateCw, AlertCircle } from "lucide-react";
-
-interface CreditsData {
-  available: number;
-  totalPlan: number;
-  spent: number;
-  hasExtraCredits: boolean;
-}
-
-interface PlanData {
-  tier?: string;
-  productName?: string;
-  isUnlimitedMode?: boolean;
-  unlimitedAppliesHere?: boolean;
-}
+import { useCredits } from "@/lib/useCredits";
 
 export function CreditsSection() {
-  const [data, setData] = useState<CreditsData | null>(null);
-  const [plan, setPlan] = useState<PlanData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefetching, setIsRefetching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function fetchCredits(showRefetchState = false) {
-    if (showRefetchState) setIsRefetching(true);
-    else setIsLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch("https://automation.tillitown.com/webhook/get-credits", {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch credits (Status ${res.status})`);
-      }
-
-      const json = await res.json();
-      if (json) {
-        if (json.credits) setData(json.credits);
-        if (json.Plan) setPlan(json.Plan);
-      } else {
-        throw new Error("Invalid credits data format received");
-      }
-    } catch (err: any) {
-      console.error("Error fetching credits:", err);
-      setError(err?.message || "Failed to load credits");
-    } finally {
-      setIsLoading(false);
-      setIsRefetching(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchCredits();
-  }, []);
+  // Shared with the header chip: one cached balance, refreshed on demand.
+  const { data, plan, isLoading, isRefetching, error, refetch } = useCredits();
+  const fetchCredits = () => void refetch();
 
   // Calculate percentages safely
   const total = data?.totalPlan || 1;
@@ -91,7 +39,7 @@ export function CreditsSection() {
           )}
 
           <button
-            onClick={() => fetchCredits(true)}
+            onClick={fetchCredits}
             disabled={isLoading || isRefetching}
             className="p-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-muted transition-colors disabled:opacity-50 cursor-pointer"
             title="Refresh Credits"

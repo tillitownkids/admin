@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, Check, ChevronDown, ImageIcon, Loader2, MapPin, Package, Plus, Upload, User } from "lucide-react";
 
 import { ButtonLink } from "@/components/ButtonLink";
@@ -16,6 +17,9 @@ import type { GeneratedImageTake } from "@/lib/generatedImageHistory";
 import { sceneRuntime } from "@/lib/sceneTiming";
 import { finishStoryboardUploadAction, startStoryboardUploadAction } from "@/actions/uploadStoryboardTakeAction";
 import { createClient } from "@/lib/supabase/client";
+import { queryKeys } from "@/lib/queryKeys";
+
+const NO_TAKES: Record<string, Take[]> = {};
 
 const STORYBOARD_WEBHOOK = "https://automation.tillitown.com/webhook/generate-storyboard";
 
@@ -106,7 +110,6 @@ export function StoryboardImages({
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [takesPerRun, setTakesPerRun] = useState(1);
   const [progress, setProgress] = useState<string | null>(null);
-  const [takesByScene, setTakesByScene] = useState<Record<string, Take[]>>({});
   const [takeBusy, setTakeBusy] = useState<string | null>(null);
   // Prompt edits not saved yet, each remembered with the saved prompt it was started from.
   const [drafts, setDrafts] = useState<Record<string, { source: string; text: string }>>({});
@@ -115,10 +118,14 @@ export function StoryboardImages({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadScene, setUploadScene] = useState<SceneRow | null>(null);
 
+  const queryClient = useQueryClient();
   const sceneIds = scenes.map((scene) => scene.id).sort().join(",");
-  const loadTakes = useCallback(async () => {
-    if (!sceneIds) return;
-    try {
+  // Cached: reopening the images shows every scene's takes at once. If they cannot load, the images
+  // in use still show from the scenes themselves; only the other takes are missing.
+  const takesKey = queryKeys.imageTakes("scene_storyboard", sceneIds);
+  const takesQuery = useQuery({
+    queryKey: takesKey,
+    queryFn: async (): Promise<Record<string, Take[]>> => {
       const res = await fetch(`/api/generated-image-history?ownerType=scene_storyboard&ownerIds=${sceneIds}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const assets: GeneratedImageTake[] = (await res.json()).assets || [];
@@ -132,18 +139,14 @@ export function StoryboardImages({
           deletable: asset.id !== null,
         });
       }
-      setTakesByScene(grouped);
-    } catch (error) {
-      // The images in use still show from the scenes themselves; only the other takes are missing.
-      console.error("Could not load storyboard takes:", error);
-    }
-  }, [sceneIds]);
-
-  useEffect(() => {
-    (async () => {
-      await loadTakes();
-    })();
-  }, [loadTakes]);
+      return grouped;
+    },
+    enabled: Boolean(sceneIds),
+  });
+  const takesByScene = takesQuery.data ?? NO_TAKES;
+  const loadTakes = async () => {
+    await queryClient.invalidateQueries({ queryKey: takesKey });
+  };
 
   const sortedScenes = [...scenes].sort((a, b) => a.scene_number - b.scene_number || a.order_index - b.order_index);
   const pendingScenes = sortedScenes.filter((scene) => !scene.storyboard_image_url);

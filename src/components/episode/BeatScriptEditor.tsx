@@ -1,9 +1,12 @@
 "use client";
 
-import { getScriptByIdAction, saveGeneratedScriptAction } from "@/actions/saveScriptAction";
+import { saveGeneratedScriptAction } from "@/actions/saveScriptAction";
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
+import { useSeededEditor } from "@/components/editor/useSeededEditor";
+import { scriptQuery } from "@/lib/episodeQueries";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { primaryButtonClass, secondaryButtonClass } from "@/lib/styles";
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import Link from "next/link";
 import { 
   Loader2, 
@@ -93,40 +96,21 @@ function formatTextToHtml(text: string): string {
 
 export function BeatScriptEditor({ scriptId: id, headerAction }: { scriptId: string; headerAction?: React.ReactNode }) {
 
-  const [script, setScript] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const queryClient = useQueryClient();
+  // Cached: reopening the Script step shows the script at once; a newer copy replaces it only while unedited.
+  const scriptData = useQuery(scriptQuery(id));
+  const script = scriptData.data ?? null;
+  const isLoading = scriptData.isPending;
+  const loadError = scriptData.error ? scriptData.error.message : null;
+
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
-  const [scriptHtml, setScriptHtml] = useState<string>('');
 
   const editorRef = useRef<any>(null);
-
-  useEffect(() => {
-    async function loadScript() {
-      setIsLoading(true);
-      setError(null);
-      const res = await getScriptByIdAction(id);
-      if (res.success && res.script) {
-        setScript(res.script);
-        const rawContent = res.script.content || '';
-        const formatted = formatTextToHtml(rawContent);
-        setScriptHtml(formatted);
-
-        setTimeout(() => {
-          if (editorRef.current) {
-            editorRef.current.commands.setContent(formatted);
-          }
-        }, 150);
-      } else {
-        setError(res.error || "Failed to load script details.");
-      }
-      setIsLoading(false);
-    }
-
-    loadScript();
-  }, [id]);
+  const scriptHtml = script ? formatTextToHtml(script.content || '') : '';
+  const { markSaved } = useSeededEditor(editorRef, script ? scriptHtml : null);
 
   async function handleSaveChanges() {
     const currentHtml = editorRef.current?.getHTML() || scriptHtml;
@@ -146,6 +130,9 @@ export function BeatScriptEditor({ scriptId: id, headerAction }: { scriptId: str
       });
 
       if (res.success) {
+        // The cache now holds the saved script, so the next visit (and the storyboard planner) reads it.
+        markSaved(formatTextToHtml(currentHtml));
+        queryClient.setQueryData(scriptQuery(id).queryKey, (old: any) => old && { ...old, content: currentHtml });
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 4000);
       } else {
@@ -179,11 +166,11 @@ export function BeatScriptEditor({ scriptId: id, headerAction }: { scriptId: str
   return (
     <div className="space-y-6">
 
-      {error && (
+      {(error || loadError) && (
         <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg flex items-center justify-between">
           <div className="flex items-center gap-2">
             <X className="w-4 h-4 cursor-pointer" onClick={() => setError(null)} />
-            <span className="text-sm font-medium">{error}</span>
+            <span className="text-sm font-medium">{error || loadError}</span>
           </div>
           <button onClick={() => setError(null)} className="text-destructive/80 hover:text-destructive">
             <X className="w-4 h-4" />
