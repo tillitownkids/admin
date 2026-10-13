@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowRight, Check, ChevronDown, Download, Film, Loader2, Trash2 } from "lucide-react";
 
-import { getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
 import { deleteEpisodeVideoAction, getEpisodeVideosAction, stitchEpisodeVideosAction } from "@/actions/stitchVideosAction";
 import { ButtonLink } from "@/components/ButtonLink";
 import { ConfirmButton } from "@/components/ConfirmButton";
@@ -15,6 +15,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { sceneClips } from "@/lib/sceneShots";
+import { storyboardQuery } from "@/lib/episodeQueries";
+import { queryKeys } from "@/lib/queryKeys";
 
 // One clip to stitch. A scene generated shot by shot contributes one entry per shot.
 interface Clip {
@@ -39,6 +41,8 @@ interface StitchedVideo {
   created_at?: string | Date | null;
 }
 
+const NO_VIDEOS: StitchedVideo[] = [];
+
 const dateTimeFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
 
 /** Joins the episode's clips into one video, and lists the versions already made. */
@@ -53,43 +57,48 @@ export function EpisodeStitcher({
   reloadKey?: number;
 }) {
   const router = useRouter();
-  const [clips, setClips] = useState<Clip[] | null>(null);
-  const [incompleteScenes, setIncompleteScenes] = useState<string[]>([]);
-  const [videos, setVideos] = useState<StitchedVideo[]>([]);
+  const queryClient = useQueryClient();
+  // Cached: the clips (from the shared storyboard data) and the stitched versions show at once on return.
+  const storyboard = useQuery(storyboardQuery(storyId));
+  const videosQuery = useQuery({
+    queryKey: queryKeys.episodeVideos(storyId),
+    queryFn: async (): Promise<StitchedVideo[]> => {
+      const saved = await getEpisodeVideosAction(storyId);
+      return saved.success && saved.videos ? (saved.videos as StitchedVideo[]) : [];
+    },
+  });
+  const videos = videosQuery.data ?? NO_VIDEOS;
+  const setVideos = (update: (previous: StitchedVideo[]) => StitchedVideo[]) =>
+    queryClient.setQueryData<StitchedVideo[]>(queryKeys.episodeVideos(storyId), (previous) => update(previous ?? []));
+
+  // The clips in playback order, and the scenes still missing some.
+  const { clips, incompleteScenes } = useMemo(() => {
+    if (storyboard.error) return { clips: [] as Clip[], incompleteScenes: [] as string[] };
+    if (!storyboard.data) return { clips: null, incompleteScenes: [] as string[] };
+    const ordered = [...((storyboard.data.scenes || []) as StoryboardScene[])].sort((a, b) => (a.scene_number || 0) - (b.scene_number || 0));
+    const incomplete: string[] = [];
+    const list = ordered.flatMap((scene) => {
+      const { clips: sceneClipList, missingShots } = sceneClips(scene);
+      if (missingShots > 0) incomplete.push(`scene ${scene.scene_number} (${missingShots} missing)`);
+      return sceneClipList.map((clip) => ({ sceneId: scene.id, sceneNumber: scene.scene_number, shot: clip.shot, url: clip.url }));
+    });
+    return { clips: list as Clip[] | null, incompleteScenes: incomplete };
+  }, [storyboard.data, storyboard.error]);
   const [title, setTitle] = useState(`${episodeTitle} - Full Episode`);
   const [isStitching, setIsStitching] = useState(false);
   const [busyVideoId, setBusyVideoId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const [storyboard, saved] = await Promise.all([
-        getStoryboardByStoryIdAction(storyId),
-        getEpisodeVideosAction(storyId),
-      ]);
-      if (!storyboard.success) throw new Error(storyboard.error || "The clips could not be loaded.");
-
-      const ordered = [...((storyboard.scenes || []) as StoryboardScene[])].sort((a, b) => (a.scene_number || 0) - (b.scene_number || 0));
-      const incomplete: string[] = [];
-      setClips(ordered.flatMap((scene) => {
-        const { clips: sceneClipList, missingShots } = sceneClips(scene);
-        if (missingShots > 0) incomplete.push(`scene ${scene.scene_number} (${missingShots} missing)`);
-        return sceneClipList.map((clip) => ({ sceneId: scene.id, sceneNumber: scene.scene_number, shot: clip.shot, url: clip.url }));
-      }));
-      setIncompleteScenes(incomplete);
-      if (saved.success && saved.videos) setVideos(saved.videos as StitchedVideo[]);
-    } catch (err) {
-      setClips([]);
-      setError(err instanceof Error ? err.message : "The clips could not be loaded.");
-    }
-  }, [storyId]);
-
+  // New clips above: reload the clip list and the stitched versions.
+  const lastReloadKey = useRef(reloadKey);
   useEffect(() => {
-    (async () => {
-      await load();
-    })();
-  }, [load, reloadKey]);
+    if (lastReloadKey.current === reloadKey) return;
+    lastReloadKey.current = reloadKey;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.episodeStoryboard(storyId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.episodeVideos(storyId) });
+  }, [queryClient, reloadKey, storyId]);
+  const loadError = storyboard.error ? storyboard.error.message : null;
 
   async function handleStitch() {
     if (!clips?.length) return;
@@ -165,11 +174,11 @@ export function EpisodeStitcher({
         </p>
       </div>
 
-      {error && (
+      {(error || loadError) && (
         <Alert variant="destructive">
           <AlertTriangle />
           <AlertTitle>That did not work</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{error || loadError}</AlertDescription>
         </Alert>
       )}
       {notice && (

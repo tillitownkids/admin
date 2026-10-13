@@ -17,6 +17,7 @@
     "@prisma/client": "^5.22.0",
     "@supabase/ssr": "^0.12.5",
     "@supabase/supabase-js": "^2.112.4",
+    "@tanstack/react-query": "^5.104.0",
     "@tiptap/core": "^3.27.4",
     "@tiptap/extension-bubble-menu": "^3.27.4",
     "@tiptap/extension-floating-menu": "^3.27.4",

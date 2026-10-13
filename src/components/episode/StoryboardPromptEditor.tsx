@@ -3,10 +3,13 @@
 import Link from "next/link";
 import { Image as ImageIcon, Loader2, Sparkles, Check, LayoutGrid, CheckCheck, Send, MessageSquareText, MapPin } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queryKeys";
+import { storyboardQuery } from "@/lib/episodeQueries";
 import { fieldClass, primaryButtonClass, secondaryButtonClass } from "@/lib/styles";
 
 import { callAi } from "@/actions/actions";
-import { saveStoryboardScenesAction, getStoryboardByStoryIdAction } from "@/actions/saveStoryboardAction";
+import { saveStoryboardScenesAction } from "@/actions/saveStoryboardAction";
 import { brainstormStoryboardAction } from "@/actions/brainstormStoryboardAction";
 import { SCENE_MAX_SECONDS, formatRuntime, sceneRuntime } from "@/lib/sceneTiming";
 
@@ -98,13 +101,20 @@ function extractSceneBeats(fullScriptText: string, targetBeatNumbers?: number[])
 
 export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: string; onSaved?: () => void }) {
 
+  const queryClient = useQueryClient();
+  // Cached: reopening the prompts shows them at once; the stored copy refreshes in the background.
+  const storyboard = useQuery(storyboardQuery(id));
+  const isLoading = storyboard.isPending;
+
   const [prompt, setPrompt] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [generatedScenes, setGeneratedScenes] = useState<StoryboardScene[]>([]);
   const [storyLocations, setStoryLocations] = useState<any[]>([]);
   const [storyCharacters, setStoryCharacters] = useState<any[]>([]);
+  // The loaded data last copied into the editor, and whether the prompts were edited since.
+  const [seededFrom, setSeededFrom] = useState<typeof storyboard.data>(undefined);
+  const [edited, setEdited] = useState(false);
   
   // Confirmation state
   const [confirmingIndex, setConfirmingIndex] = useState<number | null>(null);
@@ -125,45 +135,39 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
     return beatCount === 1 ? "Single Frame" : "2x2 Grid";
   }
 
-  useEffect(() => {
-    async function loadStoryboard() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const res = await getStoryboardByStoryIdAction(id);
-        if (res.success) {
-          if (res.scriptContent) setPrompt(stripHtmlToMarkdown(res.scriptContent));
-          if (res.scenes && res.scenes.length > 0) setGeneratedScenes(res.scenes);
-          if (res.locations) setStoryLocations(res.locations);
-          if (res.characters) setStoryCharacters(res.characters);
-
-          setChatHistory([
-            {
-              role: 'ai',
-              content: 'Welcome to Storyboard Brainstorm Assistant! Ask questions or request refinements (e.g. camera framing, lighting, poses) to brainstorm your prompts.'
-            }
-          ]);
-        } else {
-          setError(res.error || "Failed to load storyboard data.");
+  // Loaded data is copied into the editor when it arrives, cached or refreshed. Once a prompt is
+  // edited, a background refresh no longer replaces it; saving makes the stored copy current again.
+  const loaded = storyboard.data;
+  if (loaded && loaded !== seededFrom && !(seededFrom && edited)) {
+    setSeededFrom(loaded);
+    if (loaded.scriptContent) setPrompt(stripHtmlToMarkdown(loaded.scriptContent));
+    if (loaded.scenes && loaded.scenes.length > 0) setGeneratedScenes(loaded.scenes);
+    if (loaded.locations) setStoryLocations(loaded.locations);
+    if (loaded.characters) setStoryCharacters(loaded.characters);
+    if (!seededFrom) {
+      setChatHistory([
+        {
+          role: 'ai',
+          content: 'Welcome to Storyboard Brainstorm Assistant! Ask questions or request refinements (e.g. camera framing, lighting, poses) to brainstorm your prompts.'
         }
-      } catch (err: any) {
-        console.error("Error loading storyboard details:", err);
-        setError(err?.message || "Failed to load storyboard.");
-      } finally {
-        setIsLoading(false);
-      }
+      ]);
     }
+  }
+  const loadError = storyboard.error ? storyboard.error.message : null;
 
-    if (id) {
-      loadStoryboard();
-    }
-  }, [id]);
+  // After a save the stored scenes changed: refresh this editor's copy and the scene lists of the other views.
+  const afterSave = () => {
+    setEdited(false);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.episode(id) });
+    onSaved?.();
+  };
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, isAiChatLoading]);
 
   function handlePromptChange(index: number, newPrompt: string) {
+    setEdited(true);
     setGeneratedScenes((prev) => {
       const updated = [...prev];
       updated[index] = { ...updated[index], storyboard_prompt: newPrompt };
@@ -197,7 +201,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
 
       if (res.success) {
         setSuccessBanner(`Scene ${sceneToSave.scene_number || index + 1} prompt saved.`);
-        onSaved?.();
+        afterSave();
         setTimeout(() => setSuccessBanner(null), 5000);
       } else {
         setError(res.error || "Failed to confirm scene prompt.");
@@ -234,7 +238,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
 
       if (res.success) {
         setSuccessBanner(`All ${generatedScenes.length} prompts saved.`);
-        onSaved?.();
+        afterSave();
         setTimeout(() => setSuccessBanner(null), 5000);
       } else {
         setError(res.error || "Failed to confirm all scene prompts.");
@@ -293,6 +297,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
   function handleMergeChanges(aiScenes?: StoryboardScene[]) {
     if (!aiScenes || aiScenes.length === 0) return;
 
+    setEdited(true);
     setGeneratedScenes((prevScenes) => {
       return prevScenes.map((existingScene, idx) => {
         const existingNum = existingScene.scene_number || idx + 1;
@@ -317,9 +322,9 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
 
   return (
     <div className="space-y-6">
-      {error && (
+      {(error || loadError) && (
         <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-xl text-sm font-medium">
-          {error}
+          {error || loadError}
         </div>
       )}
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, Plus } from "lucide-react";
 
 import { getEpisodesAction, type EpisodeSummary } from "@/actions/episodesAction";
@@ -13,25 +13,23 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EPISODE_STEPS, episodeStatusLine, nextEpisodeStep } from "@/lib/episodeSteps";
+import { queryKeys } from "@/lib/queryKeys";
 
 const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 
 export default function EpisodesPage() {
-  const [episodes, setEpisodes] = useState<EpisodeSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    const result = await getEpisodesAction();
-    if (result.success) setEpisodes(result.episodes);
-    else setError(result.error);
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      await load();
-    })();
-  }, [load]);
+  // Cached: coming back to the list shows it at once and refreshes it in the background.
+  const query = useQuery({
+    queryKey: queryKeys.episodes(),
+    queryFn: async (): Promise<EpisodeSummary[]> => {
+      const result = await getEpisodesAction();
+      if (!result.success) throw new Error(result.error);
+      return result.episodes;
+    },
+  });
+  const episodes = query.data ?? null;
+  const error = query.error ? query.error.message : null;
+  const load = () => query.refetch();
 
   const newEpisodeButton = (
     <ButtonLink href="/episodes/new">

@@ -8,6 +8,8 @@ import { GlassPanel } from '@/components/GlassPanel';
 import { TakeCountSelect } from '@/components/TakePicker';
 import { ReferenceTakes } from '@/components/library/ReferenceTakes';
 import { Button } from '@/components/ui/button';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/queryKeys';
 import { fieldClass, labelClass, primaryButtonClass, secondaryButtonClass } from '@/lib/styles';
 
 export interface LibraryItem {
@@ -21,6 +23,8 @@ export interface LibraryItem {
 }
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
+
+const NO_ITEMS: LibraryItem[] = [];
 
 /** Fields one library adds to the shared form, such as an object's kind and episode. */
 export interface LibraryExtraFields {
@@ -67,8 +71,23 @@ export function LibraryManager({
   onListLoaded,
 }: LibraryManagerProps) {
   const [viewMode, setViewMode] = useState<'list' | 'create' | 'edit'>('list');
-  const [items, setItems] = useState<LibraryItem[]>([]);
-  const [isFetchingItems, setIsFetchingItems] = useState(true);
+  // Cached per library: reopening Characters, Locations or Objects shows the list at once and
+  // refreshes it in the background.
+  const queryClient = useQueryClient();
+  const listQuery = useQuery({
+    queryKey: queryKeys.library(apiPath),
+    queryFn: async (): Promise<Record<string, unknown>> => {
+      const res = await fetch(apiPath);
+      if (!res.ok) throw new Error(`Failed to load ${resourceNamePlural}`);
+      return res.json();
+    },
+  });
+  const listData = listQuery.data;
+  const items = (listData?.[listKey] as LibraryItem[] | undefined) ?? NO_ITEMS;
+  const isFetchingItems = listQuery.isPending;
+  const setItems = (update: (existing: LibraryItem[]) => LibraryItem[]) =>
+    queryClient.setQueryData<Record<string, unknown>>(queryKeys.library(apiPath), (data) =>
+      data ? { ...data, [listKey]: update((data[listKey] as LibraryItem[] | undefined) ?? []) } : data);
   const [current, setCurrent] = useState<LibraryItem | null>(null);
   const [name, setName] = useState('');
   const [itemDescription, setItemDescription] = useState('');
@@ -96,33 +115,15 @@ export function LibraryManager({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchItems = async () => {
-    try {
-      const res = await fetch(apiPath);
-      if (res.ok) {
-        const data = await res.json();
-        setItems(data[listKey] || []);
-        onListLoaded?.(data);
-      }
-    } catch (e) {
-      console.error(`Failed to load ${resourceNamePlural}`, e);
-    }
+    await queryClient.invalidateQueries({ queryKey: queryKeys.library(apiPath) });
   };
 
+  // Every load of the list, cached or fresh, is handed to the page (Objects reads its episodes from it).
   useEffect(() => {
-    let cancelled = false;
-    fetch(apiPath)
-      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Failed to load ${resourceNamePlural}`)))
-      .then((data) => {
-        if (cancelled) return;
-        setItems(data[listKey] || []);
-        onListLoaded?.(data);
-      })
-      .catch((err) => console.error(`Failed to load ${resourceNamePlural}`, err))
-      .finally(() => { if (!cancelled) setIsFetchingItems(false); });
-    return () => { cancelled = true; };
-    // onListLoaded is read once per load; a new function each render must not refetch.
+    if (listData) onListLoaded?.(listData);
+    // onListLoaded is a new function each render; only new data should call it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiPath, listKey, resourceNamePlural]);
+  }, [listData]);
 
   const startCreate = () => {
     setGenerationNotice(null);

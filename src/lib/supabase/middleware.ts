@@ -28,11 +28,14 @@ export async function updateSession(request: NextRequest) {
   )
 
   // IMPORTANT: Avoid writing any logic between createServerClient and
-  // supabase.auth.getUser(). A simple mistake could make it very hard to debug
+  // supabase.auth.getClaims(). A simple mistake could make it very hard to debug
   // issues with users being logged out unexpectedly.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // getClaims() refreshes an expired session like getUser() did, but verifies the
+  // JWT locally when the project uses asymmetric signing keys instead of asking the
+  // Auth server on every request, page and API call alike. With a symmetric key it
+  // falls back to the Auth server, so it is never slower than before.
+  const { data } = await supabase.auth.getClaims()
+  const user = data?.claims ?? null
 
   const pathname = request.nextUrl.pathname
 
