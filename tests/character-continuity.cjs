@@ -58,12 +58,39 @@ assert.deepEqual(parsed.unknown, ['Dad']);
 assert.throws(() => check.parseBeatCast({ beats: [{ beat_number: 4, on_screen: [] }] }, cast, [3]), /out of order/);
 assert.throws(() => check.parseBeatCast({ beats: [] }, cast, [3]), /exactly 1 beat/);
 
-// Two reads are combined by agreement, so a borderline call by one read adds no one.
+// Two reads are combined: a character one read alone shows is dropped unless both reads place them there.
 assert.deepEqual(check.agreedBeatCast(
   [{ beat: 2, onScreen: ['Jaksh', 'Tilli', "Jaksh's Father - Kartik"], notInCast: ['Mailman'] }, { beat: 3, onScreen: ['Tilli'], notInCast: [] }],
   [{ beat: 2, onScreen: ['tilli', 'Jaksh'], notInCast: ['Mailman', 'Baker'] }, { beat: 3, onScreen: [], notInCast: [] }],
-), [{ beat: 2, onScreen: ['Jaksh', 'Tilli'], notInCast: ['Mailman'] }, { beat: 3, onScreen: [], notInCast: [] }]);
-assert.deepEqual(check.agreedBeatCast([{ beat: 2, onScreen: ['Jaksh'], notInCast: [] }], [{ beat: 9, onScreen: ['Jaksh'], notInCast: [] }]), [{ beat: 2, onScreen: [], notInCast: [] }]);
+), [{ beat: 2, onScreen: ['Jaksh', 'Tilli'], notInCast: ['Mailman'], present: ['Jaksh', 'Tilli'] }, { beat: 3, onScreen: [], notInCast: [], present: [] }]);
+assert.deepEqual(check.agreedBeatCast([{ beat: 2, onScreen: ['Jaksh'], notInCast: [] }], [{ beat: 9, onScreen: ['Jaksh'], notInCast: [] }]), [{ beat: 2, onScreen: [], notInCast: [], present: [] }]);
+// Both reads put Tilli in the jeep; one shows her, one does not: she is shown. Kartik is in only one read's place.
+assert.deepEqual(check.agreedBeatCast(
+  [{ beat: 1, onScreen: ['Jaksh', 'Tilli'], notInCast: [], present: ['Jaksh', 'Tilli', "Jaksh's Mother - Sonal"] }],
+  [{ beat: 1, onScreen: ['Jaksh', "Jaksh's Father - Kartik"], notInCast: [], present: ['Jaksh', 'Tilli', "Jaksh's Father - Kartik"] }],
+), [{ beat: 1, onScreen: ['Jaksh', 'Tilli'], notInCast: [], present: ['Jaksh', 'Tilli'] }]);
+// The agent's "present" list is read by exact name, and everyone on screen is present.
+assert.deepEqual(check.parseBeatCast({ beats: [{ beat_number: 1, on_screen: ['Jaksh'], present: ['Kartik', 'Nobody'] }] }, cast, [1]).beats[0].present, ["Jaksh's Father - Kartik", 'Jaksh']);
+
+// Speakers are on screen unless their line is off-screen.
+assert.deepEqual(check.dialogueSpeakers('Jaksh: "Oasis!" <-Break 0.5 seconds-> Tilli: "Oasis!"', cast), ['Jaksh', 'Tilli']);
+assert.deepEqual(check.dialogueSpeakers('Kartik (O.S.): "Come back!" <-Break 1 second-> Jaksh (whispering): "Sorry."', cast), ['Jaksh']);
+assert.deepEqual(check.dialogueSpeakers("Jaksh's Father - Kartik: \"Look up.\" Tilli (V.O.): \"Wow.\"", cast), ["Jaksh's Father - Kartik"]);
+assert.deepEqual(check.dialogueSpeakers('Kartik: "Jaksh, Tilli," <-Break 0.5 seconds-> "Take this to the tent."', cast), ["Jaksh's Father - Kartik"]);
+assert.deepEqual(check.dialogueSpeakers('', cast), []);
+const jeepScene = {
+  scriptBeats: '### BEAT 1\n**[ACTION]** Kartik steers the jeep.\n**[DIALOGUE]** Jaksh: "Are we there?"\n\n---\n\n### BEAT 2\n**[ACTION]** The jeep crests the ridge.\n**[DIALOGUE]** Jaksh: "Oasis!" <-Break 0.5 seconds-> Tilli: "Oasis!"',
+  description: '',
+};
+assert.deepEqual(check.withSpeakers([
+  { beat: 1, onScreen: ["Jaksh's Father - Kartik"], notInCast: [] },
+  { beat: 2, onScreen: [], notInCast: [] },
+], jeepScene, cast).map((beat) => beat.onScreen), [["Jaksh's Father - Kartik", 'Jaksh'], ['Jaksh', 'Tilli']]);
+
+// Cast members a text names: full names first, so the father does not also count as Jaksh.
+assert.deepEqual(check.castNamedIn("Jaksh's Father - Kartik (left) steers; Tilli (right) looks ahead.", cast), ["Jaksh's Father - Kartik", 'Tilli']);
+assert.deepEqual(check.castNamedIn('Kartik steers while Jaksh and Tilli wave.', cast).sort(), ["Jaksh", "Jaksh's Father - Kartik", 'Tilli'].sort());
+assert.deepEqual(check.castNamedIn('The jeep climbs the dune.', cast), []);
 
 // The episode is read in groups of whole scenes, each with the scenes just before it as context.
 const scene = (id, beats) => ({ id, beatNumbers: beats });
@@ -269,5 +296,31 @@ assert.deepEqual(check.mergeWhereabouts(
   { name: 'Tilli', place: 'Pond edge' },
   { name: "Jaksh's Father - Kartik", place: 'Campsite, by the fire' },
 ]);
+
+// Episode 5, scene 1: the panels draw Tilli in the jeep, but Tilli is neither attached nor in the
+// Characters line. Whatever the reads decided, the drawn character is attached and listed.
+const familyCast = [...cast, { name: "Jaksh's Mother - Sonal" }];
+const jeepPrompt = [
+  "Characters: Jaksh, Jaksh's Father - Kartik, Jaksh's Mother - Sonal. Each appears as exactly one individual.",
+  '',
+  "Panel 1: Wide shot, eye level — Jaksh's Father - Kartik (left, midground, seated, facing right) steers; Jaksh (left, background, rear seat, facing forward) asks; Tilli (right, background, rear seat, facing forward) looks ahead.",
+  '',
+  'Panel 2: Wide shot, high angle — Sonal (right, foreground, seated, facing away) and Tilli (center-right, midground, standing in jeep, facing down) look at the oasis.',
+].join('\n');
+issues = check.findCharacterIssues({
+  beats: [{ beat: 1, onScreen: ["Jaksh's Father - Kartik", 'Jaksh'], notInCast: [] }, { beat: 2, onScreen: [], notInCast: [] }],
+  linked: ["Jaksh's Father - Kartik", "Jaksh's Mother - Sonal", 'Jaksh'],
+  storyboardPrompt: jeepPrompt,
+  cast: familyCast,
+});
+assert.deepEqual(issues.missingLinks, ['Tilli']);
+assert.deepEqual(issues.storyboardLine, ['Tilli']);
+assert.deepEqual(issues.extraLinks, []);
+// Without the cast, only what the reads decided counts (the old behaviour that missed Tilli).
+assert.deepEqual(check.findCharacterIssues({
+  beats: [{ beat: 1, onScreen: ['Jaksh'], notInCast: [] }], linked: ['Jaksh'], storyboardPrompt: jeepPrompt,
+}).missingLinks, []);
+// The vehicle rule now keeps a travelling family together in wide shots.
+assert.match(check.buildCastCheckPrompt({ cast, scriptBeats: 'x', beatNumbers: [1] }), /travelling together in a vehicle .* are all shown whenever the vehicle is in frame and anyone in it acts or speaks, wide shots included/);
 
 console.log('character-continuity: ok');

@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
-import { CharacterCheck } from "@/components/episode/CharacterCheck";
 import { EpisodeStitcher } from "@/components/episode/EpisodeStitcher";
 import { useEpisodeScenes } from "@/components/episode/useEpisodeScenes";
 import { VideoStage } from "@/components/episode-production/VideoStage";
@@ -15,8 +14,6 @@ export function VideoStep({ storyId, episodeTitle }: { storyId: string; episodeT
   const router = useRouter();
   const { scenes, episodeLocations, isLoading, error, refetch } = useEpisodeScenes(storyId);
   const [clipsVersion, setClipsVersion] = useState(0);
-  // Bumped when the character check re-plans shots, so the video stage drops plans it holds from before.
-  const [checkVersion, setCheckVersion] = useState(0);
 
   if (isLoading) {
     return (
@@ -37,16 +34,7 @@ export function VideoStep({ storyId, episodeTitle }: { storyId: string; episodeT
 
   return (
     <div className="space-y-10">
-      <CharacterCheck
-        storyId={storyId}
-        onChanged={async () => {
-          await refetch();
-          setCheckVersion((version) => version + 1);
-          router.refresh();
-        }}
-      />
       <VideoStage
-        key={checkVersion}
         scenes={scenes}
         episodeLocations={episodeLocations}
         onRefetchScenes={async () => {
