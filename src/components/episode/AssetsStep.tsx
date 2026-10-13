@@ -3,14 +3,16 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowRight, Check, Loader2, MapPin, Package, Plus, ScanSearch, Sparkles, Trash2, Users } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Link2, Loader2, MapPin, Package, Plus, ScanSearch, Search, Sparkles, Trash2, Users } from "lucide-react";
 
 import {
   addEpisodeAssetAction,
+  createEpisodeAssetAction,
   removeEpisodeAssetAction,
   type AssetCard,
   type AssetType,
   type EpisodeAssets,
+  type LibraryOption,
 } from "@/actions/episodeAssetsAction";
 import { detectEpisodeObjectsAction } from "@/actions/propsAction";
 import { ButtonLink } from "@/components/ButtonLink";
@@ -19,7 +21,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PROP_KINDS } from "@/lib/propSheet";
 
 const SECTIONS: { type: AssetType; key: "characters" | "locations" | "objects"; title: string; singular: string; library: string; icon: typeof Users }[] = [
   { type: "character", key: "characters", title: "Characters", singular: "character", library: "/characters", icon: Users },
@@ -114,45 +119,158 @@ function AssetTile({
   );
 }
 
-function AddFromLibrary({
-  options,
+// Library entries whose name, or else description, contains every word typed; name matches first.
+function searchLibrary(options: LibraryOption[], query: string): LibraryOption[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const has = (text: string) => words.every((word) => text.toLowerCase().includes(word));
+  return [...options.filter((option) => has(option.name)), ...options.filter((option) => !has(option.name) && has(option.description))].slice(0, 6);
+}
+
+/** Search the library for a character, location or object to attach, or create it when it is new. */
+function AssetSearch({
+  type,
   singular,
+  options,
+  inEpisode,
   disabled,
-  onAdd,
+  onAttach,
+  onCreate,
 }: {
-  options: { id: string; name: string }[];
+  type: AssetType;
   singular: string;
+  options: LibraryOption[];
+  /** Names already in the episode, so a search for one says so instead of offering to create it. */
+  inEpisode: string[];
   disabled: boolean;
-  onAdd: (id: string) => void;
+  onAttach: (option: LibraryOption) => void;
+  onCreate: (input: { name: string; description: string; kind?: "permanent" | "episode" }) => void;
 }) {
-  const labelId = useId();
-  const [choice, setChoice] = useState("");
-  if (!options.length) return null;
+  const kindLabel = useId();
+  const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<"permanent" | "episode">("episode");
+
+  const name = query.replace(/\s+/g, " ").trim();
+  const results = searchLibrary(options, name);
+  const alreadyIn = inEpisode.find((item) => item.toLowerCase() === name.toLowerCase());
+  const exists = alreadyIn || options.some((option) => option.name.toLowerCase() === name.toLowerCase());
+  const reset = () => {
+    setQuery("");
+    setCreating(false);
+    setDescription("");
+  };
+
   return (
-    <div className="flex items-center gap-2">
-      <span id={labelId} className="sr-only">Add a {singular} from the library</span>
-      <Select value={choice} onValueChange={(value) => setChoice(String(value ?? ""))} items={options.map((option) => ({ value: option.id, label: option.name }))}>
-        <SelectTrigger size="sm" aria-labelledby={labelId} className="w-56">
-          <SelectValue placeholder={`Add a ${singular} from the library`} />
-        </SelectTrigger>
-        <SelectContent align="start" alignItemWithTrigger={false}>
-          {options.map((option) => (
-            <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>
+    <div className="max-w-xl space-y-2">
+      <div className="relative">
+        <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setCreating(false);
+          }}
+          placeholder={`Search ${singular}s to attach, or type a new name`}
+          aria-label={`Search ${singular}s`}
+          className="pl-8"
+          disabled={disabled}
+        />
+      </div>
+
+      {name && !creating && (
+        <ul className="divide-y divide-border rounded-md border border-border">
+          {results.map((option) => (
+            <li key={option.id} className="flex items-center gap-3 p-2">
+              <div className="size-10 shrink-0 overflow-hidden rounded bg-muted">
+                {option.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={option.imageUrl} alt="" className="size-full object-cover" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">{option.name}</p>
+                <p className="truncate text-xs text-muted-foreground">{option.hasSheet ? "Sheet ready" : "No sheet yet"}{option.description ? ` · ${option.description}` : ""}</p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={disabled}
+                onClick={() => {
+                  onAttach(option);
+                  reset();
+                }}
+              >
+                <Link2 />
+                Attach
+              </Button>
+            </li>
           ))}
-        </SelectContent>
-      </Select>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={disabled || !choice}
-        onClick={() => {
-          onAdd(choice);
-          setChoice("");
-        }}
-      >
-        <Plus />
-        Add
-      </Button>
+          {alreadyIn ? (
+            <li className="p-2 text-sm text-muted-foreground">{alreadyIn} is already in this episode.</li>
+          ) : !exists ? (
+            <li className="p-2">
+              <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setCreating(true)}>
+                <Plus />
+                Create &ldquo;{name}&rdquo; as a new {singular}
+              </Button>
+            </li>
+          ) : null}
+          {!results.length && exists && !alreadyIn && (
+            <li className="p-2 text-sm text-muted-foreground">No match.</li>
+          )}
+        </ul>
+      )}
+
+      {creating && (
+        <div className="space-y-3 rounded-md border border-border p-3">
+          <p className="text-sm font-medium text-foreground">New {singular}: {name}</p>
+          <Textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder={type === "location"
+              ? "What this place looks like: setting, time of day, mood, details that should stay the same"
+              : type === "object"
+              ? "What it looks like: shape, colors, materials, size"
+              : "What they look like: age, build, skin, hair, clothing, colors"}
+            aria-label={`Description of ${name}`}
+            className="min-h-20"
+          />
+          {type === "object" && (
+            <div className="flex items-center gap-2 text-sm">
+              <span id={kindLabel} className="text-muted-foreground">Kind</span>
+              <Select value={kind} onValueChange={(value) => setKind(value === "permanent" ? "permanent" : "episode")} items={PROP_KINDS.map(({ value, label }) => ({ value, label }))}>
+                <SelectTrigger size="sm" aria-labelledby={kindLabel} className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="start" alignItemWithTrigger={false}>
+                  {PROP_KINDS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            It is added to the {singular} library and to this episode. Generate its sheet from its card.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={disabled || !description.trim()}
+              onClick={() => {
+                onCreate({ name, description, ...(type === "object" ? { kind } : {}) });
+                reset();
+              }}
+            >
+              <Plus />
+              Create and attach
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -206,6 +324,14 @@ export function AssetsStep({ storyId, assets }: { storyId: string; assets: Episo
     const result = await addEpisodeAssetAction(storyId, type, id);
     if (!result.ok) throw new Error(result.error);
     return `${name} was added to this episode.`;
+  });
+
+  const create = (type: AssetType, input: { name: string; description: string; kind?: "permanent" | "episode" }) => act(`create-${type}`, async () => {
+    const result = await createEpisodeAssetAction(storyId, type, input);
+    if (!result.ok) throw new Error(result.error);
+    return result.existed
+      ? `${result.name} was already in the library, so it was attached instead of created.`
+      : `${result.name} was created and added to this episode. Generate its sheet from its card.`;
   });
 
   const findObjects = () => act("find-objects", async () => {
@@ -277,17 +403,20 @@ export function AssetsStep({ storyId, assets }: { storyId: string; assets: Episo
                     Generate {plural(withoutSheet.length, "missing sheet")}
                   </ConfirmButton>
                 )}
-                <AddFromLibrary
-                  options={assets.available[type]}
-                  singular={singular}
-                  disabled={sectionBusy}
-                  onAdd={(id) => add(type, id, assets.available[type].find((option) => option.id === id)?.name || "It")}
-                />
               </div>
             </div>
+            <AssetSearch
+              type={type}
+              singular={singular}
+              options={assets.available[type]}
+              inEpisode={items.map((asset) => asset.name)}
+              disabled={sectionBusy}
+              onAttach={(option) => add(type, option.id, option.name)}
+              onCreate={(input) => create(type, input)}
+            />
             {items.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                {type === "object" ? "No objects yet. Find them in the story, or add one from the library." : `No ${title.toLowerCase()} linked yet.`}
+                {type === "object" ? "No objects yet. Find them in the story, or search above to attach or create one." : `No ${title.toLowerCase()} linked yet. Search above to attach or create one.`}
               </p>
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

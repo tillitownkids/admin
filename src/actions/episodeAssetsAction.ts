@@ -1,6 +1,7 @@
 "use server";
 
 import { supabase } from "@/lib/supabase";
+import { normalizeCharacterName } from "@/lib/characterNames";
 
 // The Assets step: the characters, locations and objects (props) an episode uses.
 
@@ -21,12 +22,21 @@ export interface AssetCard {
   suggestPermanent?: boolean;
 }
 
+/** A library entry offered by the search. */
+export interface LibraryOption {
+  id: string;
+  name: string;
+  description: string;
+  imageUrl: string | null;
+  hasSheet: boolean;
+}
+
 export interface EpisodeAssets {
   characters: AssetCard[];
   locations: AssetCard[];
   objects: AssetCard[];
-  /** Library entries not yet in the episode, for adding. */
-  available: Record<AssetType, { id: string; name: string }[]>;
+  /** Library entries not yet in the episode, for the search to attach. */
+  available: Record<AssetType, LibraryOption[]>;
 }
 
 interface LibraryRow {
@@ -53,6 +63,16 @@ function card(row: LibraryRow, sceneCount: number): AssetCard {
 }
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+
+function option(row: LibraryRow): LibraryOption {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || "",
+    imageUrl: row.generated_image_url || row.reference_image_url || null,
+    hasSheet: Boolean(row.magnific_identifier),
+  };
+}
 
 export async function getEpisodeAssetsAction(storyId: string): Promise<{ ok: true; assets: EpisodeAssets } | { ok: false; error: string }> {
   const [cast, places, objectLinks, scenes, characters, locations, objects] = await Promise.all([
@@ -98,10 +118,10 @@ export async function getEpisodeAssetsAction(storyId: string): Promise<{ ok: tru
           suggestPermanent: row.kind === "episode" && Boolean(row.suggest_permanent),
         })).sort(byName),
       available: {
-        character: allCharacters.filter((row) => !castIds.has(row.id)).map(({ id, name }) => ({ id, name })).sort(byName),
-        location: allLocations.filter((row) => !placeByLocation.has(row.id)).map(({ id, name }) => ({ id, name })).sort(byName),
+        character: allCharacters.filter((row) => !castIds.has(row.id)).map(option).sort(byName),
+        location: allLocations.filter((row) => !placeByLocation.has(row.id)).map(option).sort(byName),
         // Another episode's own objects are not offered; permanent ones are.
-        object: allObjects.filter((row) => !objectIds.has(row.id) && row.kind !== "episode").map(({ id, name }) => ({ id, name })).sort(byName),
+        object: allObjects.filter((row) => !objectIds.has(row.id) && row.kind !== "episode").map(option).sort(byName),
       },
     },
   };
@@ -126,6 +146,44 @@ export async function addEpisodeAssetAction(storyId: string, type: AssetType, id
   }
   const { error } = await supabase.from("StoryProp").upsert([{ story_id: storyId, prop_id: id }], { onConflict: "story_id,prop_id" });
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+const TABLE: Record<AssetType, "Character" | "Location" | "Prop"> = { character: "Character", location: "Location", object: "Prop" };
+
+/**
+ * Creates a new library character, location or object and attaches it to the episode. A name the
+ * library already has (ignoring case and spacing) is attached instead, so no duplicate is made.
+ */
+export async function createEpisodeAssetAction(
+  storyId: string,
+  type: AssetType,
+  input: { name: string; description: string; kind?: "permanent" | "episode" },
+): Promise<{ ok: true; name: string; existed: boolean } | { ok: false; error: string }> {
+  const name = input.name.replace(/\s+/g, " ").trim();
+  if (!name) return { ok: false, error: "Give it a name." };
+
+  // Only objects have a kind and an owning episode.
+  const { data, error: libraryError } = await supabase.from(TABLE[type]).select(type === "object" ? "id, name, kind, story_id" : "id, name");
+  if (libraryError) return { ok: false, error: libraryError.message };
+  const library = (data || []) as unknown as { id: string; name: string; kind?: string; story_id?: string | null }[];
+  // Another episode's own object with the same name is a different object, so it does not count.
+  const same = library.find((row) => normalizeCharacterName(row.name) === normalizeCharacterName(name)
+    && !(type === "object" && row.kind === "episode" && row.story_id !== storyId));
+  if (same) {
+    const attached = await addEpisodeAssetAction(storyId, type, same.id);
+    return attached.ok ? { ok: true, name: same.name, existed: true } : attached;
+  }
+
+  const kind = type === "object" ? input.kind || "episode" : undefined;
+  const row = {
+    name,
+    description: input.description.trim(),
+    ...(type === "object" ? { kind, story_id: kind === "episode" ? storyId : null } : {}),
+  };
+  const { data: created, error } = await supabase.from(TABLE[type]).insert([row]).select("id").single();
+  if (error) return { ok: false, error: error.message };
+  const attached = await addEpisodeAssetAction(storyId, type, created.id);
+  return attached.ok ? { ok: true, name, existed: false } : attached;
 }
 
 /**
