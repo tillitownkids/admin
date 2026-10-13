@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { generateReference, type ReferenceType } from '@/lib/referenceGeneration';
 
+// Each sheet waits on the image service; a batch of several can take minutes.
+export const maxDuration = 300;
+
 interface BatchItem {
   id: string;
   type: ReferenceType;

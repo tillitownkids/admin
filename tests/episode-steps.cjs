@@ -8,12 +8,21 @@ const exported = {};
 new Function('exports', compiled)(exported);
 const { nextEpisodeStep, episodeStepStates, episodeStatusLine, episodeTitle, lockedStepReason, EPISODE_STEPS } = exported;
 
-const base = { hasScript: false, scenes: 0, scenesWithImage: 0, scenesWithClip: 0, stitchedVideos: 0, publishedVideos: 0 };
-assert.deepEqual(EPISODE_STEPS.map(s => s.key), ['story', 'script', 'storyboard', 'video', 'publish']);
+const fresh = { assets: 0, assetsWithSheet: 0, hasScript: false, scenes: 0, scenesWithImage: 0, scenesWithClip: 0, stitchedVideos: 0, publishedVideos: 0 };
+assert.deepEqual(EPISODE_STEPS.map(s => s.key), ['story', 'assets', 'script', 'storyboard', 'video', 'publish']);
 
-// A new episode: the story exists, the script is next, everything after is locked.
+// A new episode: its assets come next, the script is open, everything after is locked.
+assert.equal(nextEpisodeStep(fresh), 'assets');
+assert.deepEqual(episodeStepStates(fresh), { story: 'done', assets: 'active', script: 'todo', storyboard: 'locked', video: 'locked', publish: 'locked' });
+assert.equal(episodeStatusLine(fresh), 'No characters, locations or objects linked yet');
+const sheetsMissing = { ...fresh, assets: 6, assetsWithSheet: 4 };
+assert.equal(nextEpisodeStep(sheetsMissing), 'assets');
+assert.equal(episodeStatusLine(sheetsMissing), '2 of 6 assets need a sheet');
+
+// Every asset has its sheet: the script is next.
+const base = { ...fresh, assets: 6, assetsWithSheet: 6 };
 assert.equal(nextEpisodeStep(base), 'script');
-assert.deepEqual(episodeStepStates(base), { story: 'done', script: 'active', storyboard: 'locked', video: 'locked', publish: 'locked' });
+assert.deepEqual(episodeStepStates(base), { story: 'done', assets: 'done', script: 'active', storyboard: 'locked', video: 'locked', publish: 'locked' });
 assert.equal(episodeStatusLine(base), 'Script not written yet');
 
 const scripted = { ...base, hasScript: true };
@@ -24,7 +33,7 @@ assert.equal(episodeStepStates(scripted).video, 'locked');
 // Some storyboard images: storyboard is still the next step, but video is already open.
 const partBoards = { ...scripted, scenes: 8, scenesWithImage: 3 };
 assert.equal(nextEpisodeStep(partBoards), 'storyboard');
-assert.deepEqual(episodeStepStates(partBoards), { story: 'done', script: 'done', storyboard: 'active', video: 'todo', publish: 'locked' });
+assert.deepEqual(episodeStepStates(partBoards), { story: 'done', assets: 'done', script: 'done', storyboard: 'active', video: 'todo', publish: 'locked' });
 assert.equal(episodeStatusLine(partBoards), '3 of 8 storyboard images');
 
 const boarded = { ...scripted, scenes: 8, scenesWithImage: 8 };
@@ -34,7 +43,11 @@ assert.equal(episodeStatusLine({ ...boarded, scenesWithClip: 5 }), 'Clips for 5 
 
 const stitched = { ...boarded, scenesWithClip: 8, stitchedVideos: 1 };
 assert.equal(nextEpisodeStep(stitched), 'publish');
-assert.deepEqual(episodeStepStates(stitched), { story: 'done', script: 'done', storyboard: 'done', video: 'done', publish: 'active' });
+assert.deepEqual(episodeStepStates(stitched), { story: 'done', assets: 'done', script: 'done', storyboard: 'done', video: 'done', publish: 'active' });
+
+// A finished storyboard counts its assets as done even if a sheet is missing (an object found later).
+assert.equal(episodeStepStates({ ...stitched, assetsWithSheet: 5 }).assets, 'done');
+assert.equal(nextEpisodeStep({ ...stitched, assetsWithSheet: 5 }), 'publish');
 assert.equal(episodeStatusLine(stitched), 'Ready to publish');
 
 const published = { ...stitched, publishedVideos: 1 };
