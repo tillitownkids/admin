@@ -233,4 +233,41 @@ assert.equal(shots.storyboardIsGrid(1, 'Create a single full-frame 3D animation 
 assert.equal(shots.storyboardIsGrid(1, ''), false);
 assert.equal(shots.storyboardIsGrid(3, ''), true);
 
+// Who is where carries across batches, so a character placed long ago is still known to be there.
+const ledgerPrompt = check.buildCastCheckPrompt({
+  cast, scriptBeats: '### BEAT 30\n**[ACTION]** Wide shot of the campfire.', beatNumbers: [30],
+  whereabouts: [{ name: "Jaksh's Father - Kartik", place: 'Campsite, seated by the fire' }],
+});
+assert.match(ledgerPrompt, /WHO IS WHERE before these beats[^\n]*\n- "Jaksh's Father - Kartik": Campsite, seated by the fire\n\nBEATS TO DECIDE:/);
+assert.match(ledgerPrompt, /Start from WHO IS WHERE: a character listed there is still in that place until the script moves them\./);
+assert.match(ledgerPrompt, /"where_after": \[/);
+assert.match(ledgerPrompt, /including those kept from WHO IS WHERE and not mentioned since/);
+assert.doesNotMatch(check.buildCastCheckPrompt({ cast, scriptBeats: 'x', beatNumbers: [1] }), /WHO IS WHERE before|Start from WHO IS WHERE/);
+
+// The agent's record is read by exact name (short names too); unknown names, empty places and repeats are dropped.
+assert.deepEqual(check.parseWhereabouts({ where_after: [
+  { name: 'Kartik', place: '  Campsite,\n by the fire ' },
+  { name: 'Mailman', place: 'Gate' },
+  { name: 'Tilli', place: '' },
+  { name: "Jaksh's Father - Kartik", place: 'Tent' },
+  { name: 'jaksh', place: 'Pond edge' },
+  'nonsense',
+] }, cast), [
+  { name: "Jaksh's Father - Kartik", place: 'Campsite, by the fire' },
+  { name: 'Jaksh', place: 'Pond edge' },
+]);
+assert.deepEqual(check.parseWhereabouts({}, cast), []);
+assert.deepEqual(check.parseWhereabouts(null, cast), []);
+
+// Newer records win; anyone only an older record knew about is kept.
+assert.deepEqual(check.mergeWhereabouts(
+  [{ name: 'Jaksh', place: 'Pond edge' }],
+  [{ name: 'Jaksh', place: 'Campsite' }, { name: 'Tilli', place: 'Pond edge' }],
+  [{ name: "Jaksh's Father - Kartik", place: 'Campsite, by the fire' }, { name: 'Tilli', place: 'Tent' }],
+), [
+  { name: 'Jaksh', place: 'Pond edge' },
+  { name: 'Tilli', place: 'Pond edge' },
+  { name: "Jaksh's Father - Kartik", place: 'Campsite, by the fire' },
+]);
+
 console.log('character-continuity: ok');
