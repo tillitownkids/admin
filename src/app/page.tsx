@@ -1,37 +1,34 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { FileText, CheckSquare, Image as ImageIcon, Tv, ArrowRight, Film, Plus, Sparkles, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { ButtonLink } from '@/components/ButtonLink';
 import { PageHeader } from '@/components/PageHeader';
 import { getRecentActivityAction, type RecentActivityItem } from '@/actions/getRecentActivityAction';
-import { getDashboardStatsAction, type DashboardStats } from '@/actions/getDashboardStatsAction';
+import { getDashboardStatsAction } from '@/actions/getDashboardStatsAction';
+import { queryKeys } from '@/lib/queryKeys';
+
+const NO_ACTIVITY: RecentActivityItem[] = [];
 
 export default function Home() {
-  const [activities, setActivities] = useState<RecentActivityItem[]>([]);
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      setIsLoading(true);
-      try {
-        const [activityResult, statsResult] = await Promise.all([
-          getRecentActivityAction(),
-          getDashboardStatsAction(),
-        ]);
-        if (activityResult.success && activityResult.activities) {
-          setActivities(activityResult.activities);
-        }
-        setStats(statsResult.stats);
-      } catch (err) {
-        console.error('Failed to load recent activities:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    })();
-  }, []);
+  // Cached: the dashboard shows its last numbers at once and refreshes them in the background.
+  const query = useQuery({
+    queryKey: queryKeys.dashboard(),
+    queryFn: async () => {
+      const [activityResult, statsResult] = await Promise.all([
+        getRecentActivityAction(),
+        getDashboardStatsAction(),
+      ]);
+      return {
+        activities: activityResult.success && activityResult.activities ? activityResult.activities : NO_ACTIVITY,
+        stats: statsResult.stats,
+      };
+    },
+  });
+  const activities = query.data?.activities ?? NO_ACTIVITY;
+  const stats = query.data?.stats ?? null;
+  const isLoading = query.isPending;
 
   const getActivityIcon = (type: RecentActivityItem['type']) => {
     switch (type) {

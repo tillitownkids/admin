@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowLeft } from "lucide-react";
 import { loadEpisode } from "@/lib/episodeLoader";
 import { EpisodeReferences } from "@/components/episode/EpisodeReferences";
 import { DeleteEpisodeButton } from "@/components/episode/DeleteEpisodeButton";
+import { EpisodeCacheSync } from "@/components/episode/EpisodeCacheSync";
 import { EpisodeStepper } from "@/components/episode/EpisodeStepper";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { episodeStepStates } from "@/lib/episodeSteps";
@@ -56,6 +57,7 @@ export default async function EpisodeLayout({
         </div>
       </header>
 
+      <EpisodeCacheSync storyId={storyId} version={`${episode.updatedAt}|${JSON.stringify(episode.progress)}`} />
       <EpisodeStepper storyId={storyId} states={episodeStepStates(episode.progress)} />
 
       {children}

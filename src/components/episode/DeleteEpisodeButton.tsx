@@ -3,13 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { deleteEpisodeAction } from "@/actions/deleteEpisodeAction";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import type { EpisodeSummary } from "@/actions/episodesAction";
+import { queryKeys } from "@/lib/queryKeys";
 
 /** Deletes the episode after confirmation, then returns to the episode list. */
 export function DeleteEpisodeButton({ storyId, title }: { storyId: string; title: string }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,6 +22,10 @@ export function DeleteEpisodeButton({ storyId, title }: { storyId: string; title
     setError(null);
     const result = await deleteEpisodeAction(storyId);
     if (result.success) {
+      // The cached list must not show the deleted episode while it refreshes.
+      queryClient.setQueryData<EpisodeSummary[]>(queryKeys.episodes(), (episodes) => episodes?.filter((episode) => episode.id !== storyId));
+      queryClient.removeQueries({ queryKey: queryKeys.episode(storyId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
       router.push("/episodes");
       router.refresh();
       return;
