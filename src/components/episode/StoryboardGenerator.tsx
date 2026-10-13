@@ -551,6 +551,7 @@ Return ONLY valid JSON with this structure:
             characterReports = await runCharacterCheck(storyId, {
               fix: true,
               onReading: () => setStage("Reading the episode to see who is present in each scene…"),
+              onCompletingCast: (names) => setStage(`Adding ${names.join(", ")} to the episode's characters…`),
               onProgress: (done, total) => setStage(`Checking each scene's characters against the script (${done} of ${total})…`),
             });
           } catch (err) {

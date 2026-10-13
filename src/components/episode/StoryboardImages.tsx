@@ -88,12 +88,18 @@ export function StoryboardImages({
   scenes,
   episodeLocations,
   onChanged,
+  regenerate,
+  onRegenerateStarted,
 }: {
   storyId: string;
   scenes: SceneRow[];
   episodeLocations: EpisodeLocationRow[];
   /** Called after an image is saved, so the scenes and the episode's progress reload. */
   onChanged: () => Promise<void> | void;
+  /** Scenes whose image is outdated (after a character fix): one new image each, put in use. */
+  regenerate?: string[] | null;
+  /** Called once a regeneration request has started, so it is never run twice. */
+  onRegenerateStarted?: () => void;
 }) {
   const [working, setWorking] = useState<Record<string, boolean>>({});
   const [sceneErrors, setSceneErrors] = useState<Record<string, string>>({});
@@ -212,7 +218,7 @@ export function StoryboardImages({
   };
 
   // One round: a single request for one image per scene, each saved as a take straight away.
-  const generateRound = async (ready: SceneRow[], items: ReturnType<typeof buildPayloadItem>[]) => {
+  const generateRound = async (ready: SceneRow[], items: ReturnType<typeof buildPayloadItem>[], putInUse = false) => {
     const res = await fetch(STORYBOARD_WEBHOOK, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -250,6 +256,7 @@ export function StoryboardImages({
           imageUrl: url,
           providerIdentifier: extractMagnificIdentifier(item) || undefined,
           promptUsed: items.find((candidate) => candidate.id === scene.id)?.imagePrompt || "",
+          ...(putInUse ? { use: "always" } : {}),
         }),
       });
       const result = await save.json().catch(() => ({}));
@@ -266,8 +273,8 @@ export function StoryboardImages({
     return { saved, problems };
   };
 
-  // Generates `takesPerRun` takes for each of the given scenes.
-  const generate = async (targets: SceneRow[]) => {
+  // Generates `takesPerRun` takes for each of the given scenes. With `putInUse`, one take each, used at once.
+  const generate = async (targets: SceneRow[], putInUse = false) => {
     setNotice(null);
     setSceneErrors((previous) => {
       const next = { ...previous };
@@ -301,20 +308,23 @@ export function StoryboardImages({
       return;
     }
 
-    const expected = ready.length * takesPerRun;
+    const rounds = putInUse ? 1 : takesPerRun;
+    const expected = ready.length * rounds;
     const hadImage = ready.some((scene) => scene.storyboard_image_url);
     let saved = 0;
     setWorking(Object.fromEntries(ready.map((scene) => [scene.id, true])));
     try {
-      for (let round = 1; round <= takesPerRun; round += 1) {
-        if (takesPerRun > 1) setProgress(`Generating take ${round} of ${takesPerRun}…`);
-        const result = await generateRound(ready, items);
+      for (let round = 1; round <= rounds; round += 1) {
+        if (rounds > 1) setProgress(`Generating take ${round} of ${rounds}…`);
+        const result = await generateRound(ready, items, putInUse);
         saved += result.saved;
         if (Object.keys(result.problems).length > 0) setSceneErrors((previous) => ({ ...previous, ...result.problems }));
         // Each round shows as soon as it lands.
         await Promise.all([onChanged(), loadTakes()]);
       }
-      const chooseHint = hadImage
+      const chooseHint = putInUse
+        ? " Each is now in use; earlier images are kept as takes."
+        : hadImage
         ? " A new take is not used until you choose it."
         : takesPerRun > 1
         ? " Each scene uses its first take until you choose another."
@@ -399,6 +409,16 @@ export function StoryboardImages({
       });
     }
   };
+
+  // A regeneration asked for by the character check runs once, as soon as its scenes are loaded.
+  useEffect(() => {
+    if (!regenerate?.length) return;
+    const targets = scenes.filter((scene) => regenerate.includes(scene.id));
+    onRegenerateStarted?.();
+    if (targets.length) void Promise.resolve().then(() => generate(targets, true));
+    // generate is recreated every render; the request itself decides when this runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regenerate]);
 
   const takeWord = takesPerRun === 1 ? "take" : "takes";
 

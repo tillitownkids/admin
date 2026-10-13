@@ -34,6 +34,8 @@ export function StoryboardStep({
   const [replanning, setReplanning] = useState(false);
   // Bumped when the character check changes prompts or links, so the open view loads them again.
   const [checkVersion, setCheckVersion] = useState(0);
+  // Scenes the character check asked to regenerate, handed to the images view once.
+  const [regenerate, setRegenerate] = useState<string[] | null>(null);
   // The character check that ran right after planning, shown until the next check.
   const [planReports, setPlanReports] = useState<SceneCharacterReport[] | null>(null);
 
@@ -98,18 +100,35 @@ export function StoryboardStep({
           setCheckVersion((version) => version + 1);
           router.refresh();
         }}
+        onRegenerateImages={(sceneIds) => {
+          setView("images");
+          setRegenerate(sceneIds);
+        }}
       />
 
       {view === "prompts" ? (
         <StoryboardPromptEditor key={checkVersion} storyId={storyId} onSaved={() => router.refresh()} />
       ) : (
-        <StoryboardImagesView key={checkVersion} storyId={storyId} />
+        <StoryboardImagesView
+          key={checkVersion}
+          storyId={storyId}
+          regenerate={regenerate}
+          onRegenerateStarted={() => setRegenerate(null)}
+        />
       )}
     </div>
   );
 }
 
-function StoryboardImagesView({ storyId }: { storyId: string }) {
+function StoryboardImagesView({
+  storyId,
+  regenerate,
+  onRegenerateStarted,
+}: {
+  storyId: string;
+  regenerate: string[] | null;
+  onRegenerateStarted: () => void;
+}) {
   const router = useRouter();
   const { scenes, episodeLocations, isLoading, error, refetch } = useEpisodeScenes(storyId);
 
@@ -135,6 +154,8 @@ function StoryboardImagesView({ storyId }: { storyId: string }) {
       storyId={storyId}
       scenes={scenes}
       episodeLocations={episodeLocations}
+      regenerate={regenerate}
+      onRegenerateStarted={onRegenerateStarted}
       onChanged={async () => {
         await refetch();
         router.refresh();

@@ -65,6 +65,8 @@ export async function POST(req: NextRequest) {
     const imageUrl = typeof body?.imageUrl === 'string' ? body.imageUrl : '';
     const providerIdentifier = typeof body?.providerIdentifier === 'string' && body.providerIdentifier ? body.providerIdentifier : null;
     const promptUsed = typeof body?.promptUsed === 'string' ? body.promptUsed : null;
+    // A take made to replace an outdated image (after a character fix) goes straight into use.
+    const use = body?.use === 'always' ? 'always' : 'if-none';
 
     if (!isGeneratedImageOwnerType(ownerType) || !UUID_PATTERN.test(ownerId) || !/^https?:\/\//i.test(imageUrl)) {
       return NextResponse.json({ error: 'A valid ownerType, ownerId and imageUrl are required.' }, { status: 400 });
@@ -88,7 +90,7 @@ export async function POST(req: NextRequest) {
       storageBucket: stored.storageBucket,
       providerIdentifier,
       promptUsed,
-      use: 'if-none',
+      use,
     });
     return NextResponse.json({ asset, warning });
   } catch (error) {

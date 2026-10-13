@@ -35,6 +35,8 @@ import {
   type CastMember,
   type SceneCharacterIssues,
 } from '@/lib/characterContinuity';
+import { buildCastCompletionPrompt, parseCastDecisions, type LibraryCharacter } from '@/lib/castCompletion';
+import { generateReference } from '@/lib/referenceGeneration';
 
 export interface SceneCharacterReport {
   sceneId: string;
@@ -52,6 +54,64 @@ export interface SceneCharacterReport {
   remaining: string[];
   /** Things a person has to decide or redo: extra links, characters outside the cast, outdated images or clips. */
   warnings: string[];
+  /** The storyboard image was made before this check changed the scene's characters or prompt. */
+  imageOutdated?: boolean;
+}
+
+export interface CastCompletion {
+  /** Library characters added to the episode's cast. */
+  attached: string[];
+  /** New characters created, with a reference sheet when it could be generated. */
+  created: string[];
+  /** Names left alone: crowds, extras, scenery animals, objects. */
+  skipped: string[];
+  /** Characters created whose sheet failed; scenes with them cannot make images until it exists. */
+  sheetErrors: string[];
+}
+
+/**
+ * Brings characters the check saw on screen, but outside the episode's cast, into the cast: a library
+ * character is attached, and a genuinely new one is created with a reference sheet, since a scene
+ * cannot make images while one of its characters has none. Never creates a second copy of a library
+ * character.
+ */
+export async function completeEpisodeCastAction(storyId: string, names: string[]): Promise<CastCompletion> {
+  const result: CastCompletion = { attached: [], created: [], skipped: [], sheetErrors: [] };
+  const unique = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+  if (!unique.length) return result;
+
+  const [library, story] = await Promise.all([
+    prisma.character.findMany({ select: { id: true, name: true, description: true } }),
+    prisma.story.findUnique({ where: { id: storyId }, select: { content: true } }),
+  ]);
+  const response = await aiService.call(
+    buildCastCompletionPrompt({ names: unique, library, story: story?.content || '' }),
+    4000,
+    { temperature: 0 },
+  );
+  const decisions = parseCastDecisions(parseStoryboardJson(response.text || ''), unique, library as LibraryCharacter[]);
+
+  for (const decision of decisions) {
+    if (decision.action === 'skip') {
+      result.skipped.push(decision.name);
+      continue;
+    }
+    let character: { id: string; name: string } = decision.action === 'attach' ? decision.character : { id: '', name: decision.name };
+    if (decision.action === 'create') {
+      character = await prisma.character.create({ data: { name: decision.name, description: decision.description }, select: { id: true, name: true } });
+      library.push({ ...character, description: decision.description });
+      try {
+        await generateReference('character', character.id);
+      } catch (error) {
+        result.sheetErrors.push(error instanceof Error ? error.message : `${character.name}: the sheet could not be generated.`);
+      }
+      result.created.push(character.name);
+    } else if (!result.attached.includes(character.name)) {
+      result.attached.push(character.name);
+    }
+    await prisma.storyCharacter.createMany({ data: [{ story_id: storyId, character_id: character.id }], skipDuplicates: true });
+  }
+  return result;
 }
 
 /** The episode's scenes in order, for the client to check one at a time. */
@@ -281,6 +341,7 @@ export async function checkSceneCharactersAction(
     report.remaining = describeIssues(issues);
     report.warnings = describeWarnings(issues);
     if ((linksAdded || storyboardChanged) && scene.storyboard_image_url) {
+      report.imageOutdated = true;
       report.warnings.push('The storyboard image was made before this fix. Generate a new take in the Storyboard step.');
     }
     const clips = parseShotPlan(videoPrompt)?.shots.filter((shot) => shot.videoUrl).length || 0;
