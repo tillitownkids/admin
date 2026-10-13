@@ -4,7 +4,6 @@ import { BrainstormTask } from './tasks/BrainstormTask';
 import { ScriptGenerateTask } from './tasks/ScriptGenerateTask';
 import { MultiEpisodeTask } from './tasks/MultiEpisodeTask';
 import { AskTask } from './tasks/AskTask';
-import { LocationDetectTask } from './tasks/LocationDetectTask';
 import { StylesheetPromptTask } from './tasks/StylesheetPromptTask';
 import { SceneDetectTask } from './tasks/SceneDetectTask';
 import { StoryboardPromptTask } from './tasks/StoryboardPromptTask';
@@ -22,8 +21,6 @@ export class AITaskFactory {
         return new MultiEpisodeTask(bedrockService);
       case 'ask':
         return new AskTask(bedrockService);
-      case 'location-detect':
-        return new LocationDetectTask(bedrockService);
       case 'stylesheet-prompt':
         return new StylesheetPromptTask(bedrockService);
       case 'scene-detect':
