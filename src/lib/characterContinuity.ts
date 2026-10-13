@@ -63,6 +63,8 @@ export interface SceneCharacterIssues {
   storyboardLine: string[];
   /** Panels that leave out, or do not place, a character the beat shows. */
   storyboardPanels: PanelProblem[];
+  /** Panels, spare ones included, that call a cast member only by a short name ("Kartik"). Needs the cast. */
+  storyboardShortNames: { panel: number; names: string[] }[];
   /** Attached but left out of a shot's attachment list. */
   videoAttachments: string[];
   /** Shots that leave out, or do not place, a character the beat shows. */
@@ -413,6 +415,20 @@ export function findCharacterIssues(input: {
     })
     : [];
 
+  // Reference sheets are matched by exact name, so every panel, spare ones too, uses it.
+  const shortNamed = (text: string) => (input.cast ? castNamedIn(text, input.cast) : []).filter((name) => !mentionsName(text, name));
+  const storyboardShortNames = !prompt.trim() || !input.cast
+    ? []
+    : panels.size
+      ? Array.from(panels).flatMap(([panel, text]) => {
+        const names = shortNamed(text);
+        return names.length ? [{ panel, names }] : [];
+      })
+      : (() => {
+        const names = shortNamed(promptBody);
+        return names.length ? [{ panel: 1, names }] : [];
+      })();
+
   const plan = parseShotPlan(input.videoPrompt);
   const videoAttachments = new Set<string>();
   const videoShots: ShotProblem[] = [];
@@ -432,6 +448,7 @@ export function findCharacterIssues(input: {
     notInCast,
     storyboardLine,
     storyboardPanels: panelProblems,
+    storyboardShortNames,
     videoAttachments: Array.from(videoAttachments),
     videoShots,
   };
@@ -443,11 +460,12 @@ const problemCount = (items: { missing: string[]; unplaced: string[] }[]) =>
 /** Problems the check can fix itself. Extra links and characters outside the cast need a person. */
 export function fixableIssueCount(issues: SceneCharacterIssues): number {
   return issues.missingLinks.length + issues.storyboardLine.length + problemCount(issues.storyboardPanels) +
+    issues.storyboardShortNames.reduce((total, panel) => total + panel.names.length, 0) +
     issues.videoAttachments.length + problemCount(issues.videoShots);
 }
 
 export function storyboardNeedsFix(issues: SceneCharacterIssues): boolean {
-  return issues.storyboardLine.length > 0 || issues.storyboardPanels.length > 0;
+  return issues.storyboardLine.length > 0 || issues.storyboardPanels.length > 0 || issues.storyboardShortNames.length > 0;
 }
 
 export function videoNeedsFix(issues: SceneCharacterIssues): boolean {
@@ -472,6 +490,7 @@ export function describeIssues(issues: SceneCharacterIssues): string[] {
     ...(issues.missingLinks.length ? [`${list(issues.missingLinks)} ${issues.missingLinks.length === 1 ? 'is' : 'are'} in the script but not attached to the scene.`] : []),
     ...(issues.storyboardLine.length ? [`The storyboard prompt's Characters line leaves out ${list(issues.storyboardLine)}.`] : []),
     ...issues.storyboardPanels.map((panel) => problemSentence(`Storyboard panel ${panel.panel} (beat ${panel.beat})`, panel)),
+    ...issues.storyboardShortNames.map((panel) => `Storyboard panel ${panel.panel} calls ${list(panel.names)} by a short name.`),
     ...(issues.videoAttachments.length ? [`The video prompts do not attach the sheet of ${list(issues.videoAttachments)}.`] : []),
     ...issues.videoShots.map((shot) => problemSentence(`Video shot ${shot.shot} (beat ${shot.beat})`, shot)),
   ];
@@ -498,19 +517,20 @@ export function withExactNames(prompt: string, beats: BeatCast[], cast: CastMemb
     ? out
     : shortNames(name).reduce((current, alias) => current.replace(new RegExp(namePattern(alias), 'giu'), name), out)), text);
 
+  // Each panel: who its beat shows, plus any cast member it already names (spare panels have no beat).
   const panels = storyboardPanels(prompt);
   if (panels.size) {
     let result = prompt;
-    beats.forEach((beat, index) => {
-      const text = panels.get(index + 1);
-      if (!text) return;
-      const fixed = fix(text, beat.onScreen);
+    for (const [panel, text] of panels) {
+      const names = Array.from(new Set([...(beats[panel - 1]?.onScreen || []), ...castNamedIn(text, cast)]));
+      const fixed = fix(text, names);
       if (fixed !== text) result = result.replace(text, fixed);
-    });
+    }
     return result;
   }
   // An older single frame: everything but the Characters line.
-  const names = Array.from(new Set(beats.flatMap((beat) => beat.onScreen)));
+  const body = withoutLine(prompt, CHARACTERS_LINE);
+  const names = Array.from(new Set([...beats.flatMap((beat) => beat.onScreen), ...castNamedIn(body, cast)]));
   const line = prompt.match(CHARACTERS_LINE)?.[0] ?? '';
   const at = line ? prompt.indexOf(line) : -1;
   if (at < 0) return fix(prompt, names);

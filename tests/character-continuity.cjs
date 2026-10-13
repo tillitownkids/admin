@@ -179,7 +179,10 @@ const shortNamed = relined.replace('Panel 2: Close-up, eye level — a hammer on
 const exact = check.withExactNames(shortNamed, beats, cast);
 assert.match(exact, /Panel 2: Medium shot, eye level — Jaksh's Father - Kartik \(right, midground, standing\) hands Jaksh \(left, foreground, standing\) a hammer; Jaksh's Father - Kartik smiles\./);
 assert.equal(check.fixableIssueCount(check.findCharacterIssues({ beats, linked, storyboardPrompt: exact, videoPrompt: null })), 0);
-assert.equal(check.withExactNames(shortNamed, [beats[0], { beat: 2, onScreen: ['Jaksh'], notInCast: [] }], cast), shortNamed);
+// A panel that names a cast member by a short name gets the exact name even when its beat does not list them.
+assert.equal(check.withExactNames(shortNamed, [beats[0], { beat: 2, onScreen: ['Jaksh'], notInCast: [] }], cast), exact);
+// A text with no cast names is left alone.
+assert.equal(check.withExactNames(storyboard, beats, cast), storyboard);
 assert.match(check.withExactNames('Characters: Kartik.\n\nShot: Wide shot — Kartik (left) waves.', [{ beat: 1, onScreen: ["Jaksh's Father - Kartik"], notInCast: [] }], cast),
   /^Characters: Kartik\.\n\nShot: Wide shot — Jaksh's Father - Kartik \(left\) waves\.$/);
 
@@ -322,5 +325,26 @@ assert.deepEqual(check.findCharacterIssues({
 }).missingLinks, []);
 // The vehicle rule now keeps a travelling family together in wide shots.
 assert.match(check.buildCastCheckPrompt({ cast, scriptBeats: 'x', beatNumbers: [1] }), /travelling together in a vehicle .* are all shown whenever the vehicle is in frame and anyone in it acts or speaks, wide shots included/);
+
+// Spare panels use exact names too: a short name in any panel is flagged and swapped.
+const spareShort = jeepPrompt + "\n\nPanel 3: (spare) Medium wide shot — Kartik (left, midground, facing right) grips the wheel; Sonal (right, midground, facing left) smiles.";
+issues = check.findCharacterIssues({
+  beats: [{ beat: 1, onScreen: ["Jaksh's Father - Kartik", 'Jaksh', 'Tilli'], notInCast: [] }, { beat: 2, onScreen: ['Tilli'], notInCast: [] }],
+  linked: ["Jaksh's Father - Kartik", "Jaksh's Mother - Sonal", 'Jaksh', 'Tilli'],
+  storyboardPrompt: spareShort,
+  cast: familyCast,
+});
+assert.deepEqual(issues.storyboardShortNames, [
+  { panel: 2, names: ["Jaksh's Mother - Sonal"] },
+  { panel: 3, names: ["Jaksh's Father - Kartik", "Jaksh's Mother - Sonal"] },
+]);
+assert.equal(check.storyboardNeedsFix(issues), true);
+assert.match(check.describeIssues(issues).join('\n'), /Storyboard panel 3 calls Jaksh's Father - Kartik and Jaksh's Mother - Sonal by a short name\./);
+const exactEverywhere = check.withExactNames(spareShort, [{ beat: 1, onScreen: [], notInCast: [] }, { beat: 2, onScreen: [], notInCast: [] }], familyCast);
+assert.match(exactEverywhere, /Panel 3: \(spare\) Medium wide shot — Jaksh's Father - Kartik \(left, midground, facing right\) grips the wheel; Jaksh's Mother - Sonal \(right, midground, facing left\) smiles\./);
+assert.match(exactEverywhere, /Panel 2: Wide shot, high angle — Jaksh's Mother - Sonal \(right/);
+assert.deepEqual(check.findCharacterIssues({ beats: [], linked: [], storyboardPrompt: exactEverywhere, cast: familyCast }).storyboardShortNames, []);
+// Without the cast nothing is flagged.
+assert.deepEqual(check.findCharacterIssues({ beats: [], linked: [], storyboardPrompt: spareShort }).storyboardShortNames, []);
 
 console.log('character-continuity: ok');
