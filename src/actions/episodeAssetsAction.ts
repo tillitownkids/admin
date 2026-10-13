@@ -1,7 +1,9 @@
 "use server";
 
 import { supabase } from "@/lib/supabase";
-import { normalizeCharacterName } from "@/lib/characterNames";
+import { aiService } from "@/services/aiService";
+import { parseStoryboardJson } from "@/lib/storyboardGeneration";
+import { buildAssetDetectionPrompt, parseAssetDecisions, type AssetDecision, type DetectableAsset } from "@/lib/assetDetection";
 
 // The Assets step: the characters, locations and objects (props) an episode uses.
 
@@ -22,21 +24,12 @@ export interface AssetCard {
   suggestPermanent?: boolean;
 }
 
-/** A library entry offered by the search. */
-export interface LibraryOption {
-  id: string;
-  name: string;
-  description: string;
-  imageUrl: string | null;
-  hasSheet: boolean;
-}
-
 export interface EpisodeAssets {
   characters: AssetCard[];
   locations: AssetCard[];
   objects: AssetCard[];
-  /** Library entries not yet in the episode, for the search to attach. */
-  available: Record<AssetType, LibraryOption[]>;
+  /** Library entries not yet in the episode, for adding. */
+  available: Record<AssetType, { id: string; name: string }[]>;
 }
 
 interface LibraryRow {
@@ -63,16 +56,6 @@ function card(row: LibraryRow, sceneCount: number): AssetCard {
 }
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
-
-function option(row: LibraryRow): LibraryOption {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description || "",
-    imageUrl: row.generated_image_url || row.reference_image_url || null,
-    hasSheet: Boolean(row.magnific_identifier),
-  };
-}
 
 export async function getEpisodeAssetsAction(storyId: string): Promise<{ ok: true; assets: EpisodeAssets } | { ok: false; error: string }> {
   const [cast, places, objectLinks, scenes, characters, locations, objects] = await Promise.all([
@@ -118,10 +101,10 @@ export async function getEpisodeAssetsAction(storyId: string): Promise<{ ok: tru
           suggestPermanent: row.kind === "episode" && Boolean(row.suggest_permanent),
         })).sort(byName),
       available: {
-        character: allCharacters.filter((row) => !castIds.has(row.id)).map(option).sort(byName),
-        location: allLocations.filter((row) => !placeByLocation.has(row.id)).map(option).sort(byName),
+        character: allCharacters.filter((row) => !castIds.has(row.id)).map(({ id, name }) => ({ id, name })).sort(byName),
+        location: allLocations.filter((row) => !placeByLocation.has(row.id)).map(({ id, name }) => ({ id, name })).sort(byName),
         // Another episode's own objects are not offered; permanent ones are.
-        object: allObjects.filter((row) => !objectIds.has(row.id) && row.kind !== "episode").map(option).sort(byName),
+        object: allObjects.filter((row) => !objectIds.has(row.id) && row.kind !== "episode").map(({ id, name }) => ({ id, name })).sort(byName),
       },
     },
   };
@@ -146,44 +129,6 @@ export async function addEpisodeAssetAction(storyId: string, type: AssetType, id
   }
   const { error } = await supabase.from("StoryProp").upsert([{ story_id: storyId, prop_id: id }], { onConflict: "story_id,prop_id" });
   return error ? { ok: false, error: error.message } : { ok: true };
-}
-
-const TABLE: Record<AssetType, "Character" | "Location" | "Prop"> = { character: "Character", location: "Location", object: "Prop" };
-
-/**
- * Creates a new library character, location or object and attaches it to the episode. A name the
- * library already has (ignoring case and spacing) is attached instead, so no duplicate is made.
- */
-export async function createEpisodeAssetAction(
-  storyId: string,
-  type: AssetType,
-  input: { name: string; description: string; kind?: "permanent" | "episode" },
-): Promise<{ ok: true; name: string; existed: boolean } | { ok: false; error: string }> {
-  const name = input.name.replace(/\s+/g, " ").trim();
-  if (!name) return { ok: false, error: "Give it a name." };
-
-  // Only objects have a kind and an owning episode.
-  const { data, error: libraryError } = await supabase.from(TABLE[type]).select(type === "object" ? "id, name, kind, story_id" : "id, name");
-  if (libraryError) return { ok: false, error: libraryError.message };
-  const library = (data || []) as unknown as { id: string; name: string; kind?: string; story_id?: string | null }[];
-  // Another episode's own object with the same name is a different object, so it does not count.
-  const same = library.find((row) => normalizeCharacterName(row.name) === normalizeCharacterName(name)
-    && !(type === "object" && row.kind === "episode" && row.story_id !== storyId));
-  if (same) {
-    const attached = await addEpisodeAssetAction(storyId, type, same.id);
-    return attached.ok ? { ok: true, name: same.name, existed: true } : attached;
-  }
-
-  const kind = type === "object" ? input.kind || "episode" : undefined;
-  const row = {
-    name,
-    description: input.description.trim(),
-    ...(type === "object" ? { kind, story_id: kind === "episode" ? storyId : null } : {}),
-  };
-  const { data: created, error } = await supabase.from(TABLE[type]).insert([row]).select("id").single();
-  if (error) return { ok: false, error: error.message };
-  const attached = await addEpisodeAssetAction(storyId, type, created.id);
-  return attached.ok ? { ok: true, name, existed: false } : attached;
 }
 
 /**
@@ -226,4 +171,60 @@ export async function removeEpisodeAssetAction(storyId: string, type: AssetType,
   }
   const { error } = await supabase.from("StoryProp").delete().eq("story_id", storyId).eq("prop_id", id);
   return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * The detect button for characters or locations: an agent reads the episode's story, attaches the
+ * ones the library already has, and creates the new ones with a description (their sheets are
+ * generated from their cards). It only adds, so running it again never removes anything.
+ */
+export async function detectEpisodeAssetsAction(
+  storyId: string,
+  type: DetectableAsset,
+): Promise<{ ok: true; linked: string[]; created: string[] } | { ok: false; error: string }> {
+  try {
+    const table = type === "character" ? "Character" : "Location";
+    const [{ data: story, error: storyError }, { data: library, error: libraryError }] = await Promise.all([
+      supabase.from("Story").select("content").eq("id", storyId).maybeSingle(),
+      supabase.from(table).select("id, name, description"),
+    ]);
+    if (storyError || libraryError) throw storyError || libraryError;
+    if (!story?.content?.trim()) return { ok: false, error: "This episode has no story to read." };
+    const known = (library || []).map((row) => ({ id: row.id as string, name: row.name as string, description: (row.description as string) || "" }));
+
+    let decisions: AssetDecision[] | null = null;
+    let failure: unknown;
+    for (let attempt = 0; attempt < 2 && !decisions; attempt++) {
+      try {
+        // Search helps describe real places accurately.
+        const response = await aiService.call(buildAssetDetectionPrompt(type, story.content, known), 8000, { webSearch: type === "location", temperature: 0 });
+        decisions = parseAssetDecisions(parseStoryboardJson(response.text || ""), known);
+      } catch (error) {
+        failure = error;
+      }
+    }
+    if (!decisions) throw failure;
+
+    const linked: string[] = [];
+    const created: string[] = [];
+    for (const decision of decisions) {
+      let id: string;
+      if (decision.action === "attach") {
+        id = decision.asset.id;
+        linked.push(decision.asset.name);
+      } else {
+        const { data: row, error } = await supabase.from(table).insert([{ name: decision.name, description: decision.description }]).select("id").single();
+        if (error) throw error;
+        id = row.id;
+        created.push(decision.name);
+      }
+      const attached = await addEpisodeAssetAction(storyId, type, id);
+      if (!attached.ok) throw new Error(attached.error);
+    }
+    return { ok: true, linked, created };
+  } catch (error) {
+    console.error(`Detecting ${type}s failed:`, error);
+    const message = error && typeof error === "object" && "message" in error ? String(error.message) : "unknown error";
+    return { ok: false, error: `The ${type}s could not be found: ${message}` };
+  }
 }
