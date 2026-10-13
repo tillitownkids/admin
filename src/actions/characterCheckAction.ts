@@ -4,7 +4,7 @@
 import { supabase } from '@/lib/supabase';
 import { aiService } from '@/services/aiService';
 import { normalizeCharacterName } from '@/lib/characterNames';
-import { mapWithConcurrency, parseStoryboardJson } from '@/lib/storyboardGeneration';
+import { parseStoryboardJson } from '@/lib/storyboardGeneration';
 import {
   buildShotDirectionPrompt,
   buildShotPlan,
@@ -25,8 +25,10 @@ import {
   describeWarnings,
   findCharacterIssues,
   fixableIssueCount,
+  mergeWhereabouts,
   parseBeatCast,
   parseRevisedStoryboardPrompt,
+  parseWhereabouts,
   storyboardNeedsFix,
   videoNeedsFix,
   withCharactersLine,
@@ -34,6 +36,7 @@ import {
   type BeatCast,
   type CastMember,
   type SceneCharacterIssues,
+  type Whereabouts,
 } from '@/lib/characterContinuity';
 import { buildCastCompletionPrompt, parseCastDecisions, type LibraryCharacter } from '@/lib/castCompletion';
 import { generateReference } from '@/lib/referenceGeneration';
@@ -136,18 +139,26 @@ export async function listCharacterCheckScenesAction(storyId: string): Promise<{
   return scenes.map((scene) => ({ id: scene.id, sceneNumber: scene.scene_number }));
 }
 
+interface CastRead {
+  beats: BeatCast[];
+  /** Who is where after the last beat, for the next batch. */
+  whereabouts: Whereabouts[];
+}
+
 /** One read of who is on screen in each beat; asked once more, naming the mistake, if it answers with names outside the cast. */
-async function readBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers: number[], earlierBeats = ''): Promise<BeatCast[]> {
-  const prompt = buildCastCheckPrompt({ cast, scriptBeats, beatNumbers, earlierBeats });
+async function readBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers: number[], earlierBeats = '', whereabouts: Whereabouts[] = []): Promise<CastRead> {
+  const prompt = buildCastCheckPrompt({ cast, scriptBeats, beatNumbers, earlierBeats, whereabouts });
   let correction = '';
   let failure: unknown;
-  let best: BeatCast[] | null = null;
+  let best: CastRead | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await aiService.call(prompt + correction, 8000, { temperature: 0 });
-      const { beats, unknown } = parseBeatCast(parseStoryboardJson(response.text || ''), cast, beatNumbers);
-      if (!unknown.length) return beats;
-      best = beats;
+      const answer = parseStoryboardJson(response.text || '');
+      const { beats, unknown } = parseBeatCast(answer, cast, beatNumbers);
+      const read = { beats, whereabouts: parseWhereabouts(answer, cast) };
+      if (!unknown.length) return read;
+      best = read;
       correction = `\n\nCORRECTION: a previous answer listed ${unknown.map((name) => `"${name}"`).join(', ')} in "on_screen", which matches no cast name. Use the exact cast name of the character meant, or put a character who is not in the cast in "not_in_cast".`;
     } catch (error) {
       failure = error;
@@ -157,16 +168,24 @@ async function readBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers
   throw failure instanceof Error ? failure : new Error('The character check did not answer.');
 }
 
-/** Who is on screen in each beat by the agreement of two independent reads; one read alone if the other fails. */
-async function detectBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers: number[], earlierBeats = ''): Promise<BeatCast[]> {
+/**
+ * Who is on screen in each beat by the agreement of two independent reads (one read alone if the other
+ * fails), and who is where afterwards: both reads' records, then anyone only the earlier record knew.
+ */
+async function detectBeatCast(cast: CastMember[], scriptBeats: string, beatNumbers: number[], earlierBeats = '', whereabouts: Whereabouts[] = []): Promise<CastRead> {
   const [first, second] = await Promise.allSettled([
-    readBeatCast(cast, scriptBeats, beatNumbers, earlierBeats),
-    readBeatCast(cast, scriptBeats, beatNumbers, earlierBeats),
+    readBeatCast(cast, scriptBeats, beatNumbers, earlierBeats, whereabouts),
+    readBeatCast(cast, scriptBeats, beatNumbers, earlierBeats, whereabouts),
   ]);
-  if (first.status === 'fulfilled' && second.status === 'fulfilled') return agreedBeatCast(first.value, second.value);
-  if (first.status === 'fulfilled') return first.value;
-  if (second.status === 'fulfilled') return second.value;
-  throw first.reason;
+  if (first.status === 'fulfilled' && second.status === 'fulfilled') {
+    return {
+      beats: agreedBeatCast(first.value.beats, second.value.beats),
+      whereabouts: mergeWhereabouts(first.value.whereabouts, second.value.whereabouts, whereabouts),
+    };
+  }
+  const read = first.status === 'fulfilled' ? first.value : second.status === 'fulfilled' ? second.value : null;
+  if (!read) throw (first as PromiseRejectedResult).reason;
+  return { beats: read.beats, whereabouts: mergeWhereabouts(read.whereabouts, whereabouts) };
 }
 
 async function loadStoryCast(storyId: string | null): Promise<{ id: string; name: string; description: string | null }[]> {
@@ -196,50 +215,88 @@ async function updateScene(sceneId: string, data: Partial<Pick<SceneRecord, 'sto
   if (error) throw new Error(`The scene could not be saved: ${error.message}`);
 }
 
-export type EpisodeCastResult = {
-  /** Who each scene's beats show, by scene id. */
-  byScene: Record<string, BeatCast[]>;
-  /** Scenes the agent could not read, by scene id. */
-  errors: Record<string, string>;
-};
+/** One batch of the episode read: whole scenes in order, with the scenes just before them as context. */
+export interface CastReadBatch {
+  sceneIds: string[];
+  earlierSceneIds: string[];
+}
 
-/**
- * Reads the whole episode in order, a handful of beats per call with the beats before them as context,
- * so the agent can follow who is present from scene to scene instead of judging each beat alone.
- */
-export async function detectEpisodeCastAction(storyId: string): Promise<EpisodeCastResult> {
-  const result: EpisodeCastResult = { byScene: {}, errors: {} };
-  const cast = await loadStoryCast(storyId);
-  const records = rows<Pick<SceneRecord, 'id' | 'scene_number' | 'script_beats' | 'beat_numbers' | 'description'>[]>(
-    await supabase.from('Scene').select('id, scene_number, script_beats, beat_numbers, description').eq('story_id', storyId).order('scene_number', { ascending: true }),
-    'The episode scenes',
-  ) || [];
-  const scenes = records.map((scene) => ({
+type CastSceneRecord = Pick<SceneRecord, 'id' | 'scene_number' | 'script_beats' | 'beat_numbers' | 'description'>;
+
+function castScene(scene: CastSceneRecord) {
+  return {
     id: scene.id,
     scriptBeats: scene.script_beats || '',
     beatNumbers: checkedBeatNumbers({ scriptBeats: scene.script_beats || '', beatNumbers: scene.beat_numbers || undefined, description: scene.description || '' }),
-  }));
-  const readable = scenes.filter((scene) => scene.scriptBeats.trim());
-  for (const scene of scenes) if (!scene.scriptBeats.trim()) result.errors[scene.id] = 'The scene has no beat script to check against.';
-  if (!cast.length) {
-    for (const scene of readable) result.errors[scene.id] = 'The episode has no characters to check for.';
-    return result;
-  }
+  };
+}
 
-  const text = (group: typeof readable) => group.map((scene) => scene.scriptBeats.trim()).join('\n\n---\n\n');
-  await mapWithConcurrency(castCheckChunks(readable), 4, async (chunk) => {
-    try {
-      const beats = await detectBeatCast(cast, text(chunk.scenes), chunk.scenes.flatMap((scene) => scene.beatNumbers), text(chunk.earlier));
-      let next = 0;
-      for (const scene of chunk.scenes) {
-        result.byScene[scene.id] = beats.slice(next, next + scene.beatNumbers.length);
-        next += scene.beatNumbers.length;
-      }
-    } catch (error) {
-      for (const scene of chunk.scenes) result.errors[scene.id] = error instanceof Error ? error.message : 'The character check did not answer.';
+const beatText = (scenes: { scriptBeats: string }[]) => scenes.map((scene) => scene.scriptBeats.trim()).join('\n\n---\n\n');
+
+/**
+ * Splits the episode into batches of a handful of beats for `readEpisodeCastBatchAction`. The client
+ * reads them in order, so who is where carries from each batch to the next.
+ */
+export async function planEpisodeCastReadAction(storyId: string): Promise<{ batches: CastReadBatch[]; errors: Record<string, string> }> {
+  const errors: Record<string, string> = {};
+  const scenes = (rows<CastSceneRecord[]>(
+    await supabase.from('Scene').select('id, scene_number, script_beats, beat_numbers, description').eq('story_id', storyId).order('scene_number', { ascending: true }),
+    'The episode scenes',
+  ) || []).map(castScene);
+  const readable = scenes.filter((scene) => scene.scriptBeats.trim());
+  for (const scene of scenes) if (!scene.scriptBeats.trim()) errors[scene.id] = 'The scene has no beat script to check against.';
+  return {
+    batches: castCheckChunks(readable).map((chunk) => ({
+      sceneIds: chunk.scenes.map((scene) => scene.id),
+      earlierSceneIds: chunk.earlier.map((scene) => scene.id),
+    })),
+    errors,
+  };
+}
+
+export type CastReadBatchResult = {
+  /** Who each scene's beats show, by scene id. */
+  byScene: Record<string, BeatCast[]>;
+  /** Who is where after the batch; the record passed in when the batch could not be read. */
+  whereabouts: Whereabouts[];
+  error?: string;
+};
+
+/**
+ * Reads one batch of the episode: who each beat shows, starting from who was where after the batches
+ * before it, so a character established long ago and not mentioned since is still known to be there.
+ */
+export async function readEpisodeCastBatchAction(storyId: string, batch: CastReadBatch, whereabouts: Whereabouts[]): Promise<CastReadBatchResult> {
+  try {
+    const cast = await loadStoryCast(storyId);
+    if (!cast.length) throw new Error('The episode has no characters to check for.');
+    const ids = [...batch.earlierSceneIds, ...batch.sceneIds];
+    const records = (rows<CastSceneRecord[]>(
+      await supabase.from('Scene').select('id, scene_number, script_beats, beat_numbers, description').in('id', ids),
+      'The episode scenes',
+    ) || []).map(castScene);
+    const byId = new Map(records.map((scene) => [scene.id, scene]));
+    const pick = (list: string[]) => list.flatMap((id) => (byId.get(id) ? [byId.get(id)!] : []));
+    const scenes = pick(batch.sceneIds).filter((scene) => scene.scriptBeats.trim());
+    if (!scenes.length) return { byScene: {}, whereabouts };
+
+    const read = await detectBeatCast(
+      cast,
+      beatText(scenes),
+      scenes.flatMap((scene) => scene.beatNumbers),
+      beatText(pick(batch.earlierSceneIds)),
+      whereabouts,
+    );
+    const byScene: Record<string, BeatCast[]> = {};
+    let next = 0;
+    for (const scene of scenes) {
+      byScene[scene.id] = read.beats.slice(next, next + scene.beatNumbers.length);
+      next += scene.beatNumbers.length;
     }
-  });
-  return result;
+    return { byScene, whereabouts: read.whereabouts };
+  } catch (error) {
+    return { byScene: {}, whereabouts, error: error instanceof Error ? error.message : 'The character check did not answer.' };
+  }
 }
 
 async function loadObjectNames(sceneId: string): Promise<string[]> {
@@ -288,7 +345,7 @@ export async function checkSceneCharactersAction(
     if (!storyCast.length) throw new Error('The episode has no characters to check for.');
 
     const context = { scriptBeats, beatNumbers, description };
-    const beats = options.beats?.length ? options.beats : await detectBeatCast(storyCast, scriptBeats, checkedBeatNumbers(context));
+    const beats = options.beats?.length ? options.beats : (await detectBeatCast(storyCast, scriptBeats, checkedBeatNumbers(context))).beats;
     report.beats = beats;
 
     let linked = sceneLinks.flatMap((link) => (link.Character ? [link.Character.name] : []));

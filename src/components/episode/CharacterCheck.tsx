@@ -10,14 +10,37 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import {
   checkSceneCharactersAction,
   completeEpisodeCastAction,
-  detectEpisodeCastAction,
   listCharacterCheckScenesAction,
+  planEpisodeCastReadAction,
+  readEpisodeCastBatchAction,
   type CastCompletion,
   type SceneCharacterReport,
 } from "@/actions/characterCheckAction";
+import type { BeatCast, Whereabouts } from "@/lib/characterContinuity";
 
 /** Scenes checked at the same time. Each check makes one to a few AI calls. */
 const PARALLEL_SCENES = 2;
+
+/**
+ * Reads the whole episode in order, one batch of a handful of beats per call. Who is where after each
+ * batch is passed to the next, so a character placed long ago and not mentioned since stays known.
+ * Each batch is its own request, which keeps every call well inside the server time limit.
+ */
+async function readEpisodeCast(storyId: string, onBatch?: (done: number, total: number) => void): Promise<Record<string, BeatCast[]>> {
+  const { batches } = await planEpisodeCastReadAction(storyId);
+  const byScene: Record<string, BeatCast[]> = {};
+  let whereabouts: Whereabouts[] = [];
+  onBatch?.(0, batches.length);
+  for (const [index, batch] of batches.entries()) {
+    const read = await readEpisodeCastBatchAction(storyId, batch, whereabouts).catch(() => null);
+    if (read) {
+      Object.assign(byScene, read.byScene);
+      whereabouts = read.whereabouts;
+    }
+    onBatch?.(index + 1, batches.length);
+  }
+  return byScene;
+}
 
 /**
  * Runs the character check over every scene of the episode, a few at a time, and returns one
@@ -28,7 +51,8 @@ export async function runCharacterCheck(
   options: {
     fix: boolean;
     onProgress?: (done: number, total: number) => void;
-    onReading?: () => void;
+    /** Called as the episode is read, batch by batch. */
+    onReading?: (done: number, total: number) => void;
     /** Called before characters outside the episode's cast are attached or created. */
     onCompletingCast?: (names: string[]) => void;
     /** What completing the cast did; null when it failed. */
@@ -36,23 +60,21 @@ export async function runCharacterCheck(
   },
 ): Promise<SceneCharacterReport[]> {
   // First the agent reads the whole episode in order, so it knows who is present in every scene.
-  options.onReading?.();
   const [scenes, firstRead] = await Promise.all([
     listCharacterCheckScenesAction(storyId),
-    detectEpisodeCastAction(storyId).catch(() => null),
+    readEpisodeCast(storyId, options.onReading).catch(() => null),
   ]);
   let episodeCast = firstRead;
 
   // Characters on screen but outside the episode's cast are brought in, from the library or newly
   // created with a sheet, then the episode is read again so every scene counts them.
-  const outsideCast = Array.from(new Set(Object.values(episodeCast?.byScene || {}).flat().flatMap((beat) => beat.notInCast)));
+  const outsideCast = Array.from(new Set(Object.values(episodeCast || {}).flat().flatMap((beat) => beat.notInCast)));
   if (options.fix && outsideCast.length) {
     options.onCompletingCast?.(outsideCast);
     const completion = await completeEpisodeCastAction(storyId, outsideCast).catch(() => null);
     options.onCastCompleted?.(completion);
     if (completion && (completion.attached.length || completion.created.length)) {
-      options.onReading?.();
-      episodeCast = await detectEpisodeCastAction(storyId).catch(() => episodeCast);
+      episodeCast = await readEpisodeCast(storyId, options.onReading).catch(() => episodeCast);
     }
   }
   const reports: SceneCharacterReport[] = new Array(scenes.length);
@@ -66,7 +88,7 @@ export async function runCharacterCheck(
         // A scene the episode read missed is read on its own.
         reports[index] = await checkSceneCharactersAction(scenes[index].id, {
           fix: options.fix,
-          beats: episodeCast?.byScene[scenes[index].id],
+          beats: episodeCast?.[scenes[index].id],
         });
       } catch (error) {
         reports[index] = {
@@ -186,7 +208,7 @@ export function CharacterCheck({
     try {
       const result = await runCharacterCheck(storyId, {
         fix: true,
-        onReading: () => setProgress("Reading the episode to see who is present in each scene…"),
+        onReading: (done, total) => setProgress(`Reading the episode to see who is where (${done} of ${total} parts)…`),
         onCompletingCast: (names) => setProgress(`Adding ${names.join(", ")} to the episode's characters…`),
         onCastCompleted: (result) => {
           completion = result;

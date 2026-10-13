@@ -43,6 +43,13 @@ interface ShotProblem {
   unplaced: string[];
 }
 
+/** Where a cast member is at a point in the episode, carried from one batch of beats to the next. */
+export interface Whereabouts {
+  name: string;
+  /** The place and position, e.g. "Desert Oasis Campsite, seated by the fire". */
+  place: string;
+}
+
 export interface SceneCharacterIssues {
   /** On screen in the script but not attached to the scene. */
   missingLinks: string[];
@@ -120,6 +127,8 @@ export function buildCastCheckPrompt(input: {
   beatNumbers: number[];
   /** The beats just before, so the agent knows who is already in the place. Context only. */
   earlierBeats?: string;
+  /** Who was where at the end of the beats already read, however long ago they were last mentioned. */
+  whereabouts?: Whereabouts[];
 }): string {
   const aliases = castAliases(input.cast);
   const cast = input.cast.length
@@ -140,13 +149,20 @@ ${input.earlierBeats.trim()}
 `
     : '';
 
+  const known = input.whereabouts?.length
+    ? `WHO IS WHERE before these beats (kept from earlier in the episode, even for characters not mentioned in a long time):
+${input.whereabouts.map((entry) => `- "${entry.name}": ${entry.place}`).join('\n')}
+
+`
+    : '';
+
   return `You are the continuity supervisor for a 3D animated children's series. Each beat below is one camera shot. For every beat, decide which characters that shot shows, so exactly those characters' reference sheets are attached to its storyboard panel and video clip.
 
 EPISODE CAST (exact names):
 ${cast}
 
 HOW TO DECIDE:
-1. Track who is present. Follow the beats in order: a character is present in a place from the moment they are there until the script moves them away. Characters stay present across beats even when a beat's ACTION does not name them again.${earlier ? ' Use the EARLIER BEATS to know who is already there.' : ''}
+1. Track who is present. Follow the beats in order: a character is present in a place from the moment they are there until the script moves them away. Characters stay present across beats even when a beat's ACTION does not name them again.${known ? ' Start from WHO IS WHERE: a character listed there is still in that place until the script moves them.' : ''}${earlier ? ' Use the EARLIER BEATS to know who is already there.' : ''}
 2. Decide who the shot shows, from the ACTION, DIALOGUE and CAMERA lines:
    - The character who acts, and anyone who speaks on camera.
    - The characters they speak to, look at, touch, hand something to or react with, when those characters are present.
@@ -158,7 +174,7 @@ HOW TO DECIDE:
 4. Match short names, nicknames, roles, relations and pronouns ("Kartik", "Papa", "his mother", "she", "the children") to the cast member they mean, and answer with that member's exact name, character for character.
 5. A visible character who is not in the cast goes in "not_in_cast" by the name the script uses. Crowds, unnamed extras, animals and objects are left out.
 
-${earlier}BEATS TO DECIDE:
+${known}${earlier}BEATS TO DECIDE:
 """
 ${(input.scriptBeats || '').trim()}
 """
@@ -167,8 +183,40 @@ Return ONLY valid JSON, one entry per beat in this order ${JSON.stringify(input.
 {
   "beats": [
     { "beat_number": ${input.beatNumbers[0] ?? 1}, "present": ["Exact Cast Name"], "on_screen": ["Exact Cast Name"], "not_in_cast": [], "why": "a few words" }
+  ],
+  "where_after": [
+    { "name": "Exact Cast Name", "place": "where they are after the last beat, in a few words" }
   ]
-}`;
+}
+
+In "where_after", list every cast member whose place is known after the last beat, including those kept from WHO IS WHERE and not mentioned since. Leave out anyone whose place is unknown.`;
+}
+
+/** The agent's "where_after", by exact cast name. Unknown names and empty places are dropped. */
+export function parseWhereabouts(value: unknown, cast: CastMember[]): Whereabouts[] {
+  const entries = (value as { where_after?: unknown } | null)?.where_after;
+  if (!Array.isArray(entries)) return [];
+  const aliases = castAliases(cast);
+  const result: Whereabouts[] = [];
+  for (const entry of entries as { name?: unknown; place?: unknown }[]) {
+    if (typeof entry?.name !== 'string' || typeof entry.place !== 'string') continue;
+    const name = aliases.get(normalizeCharacterName(entry.name));
+    const place = entry.place.replace(/\s+/g, ' ').trim().slice(0, 160);
+    if (name && place && !result.some((item) => item.name === name)) result.push({ name, place });
+  }
+  return result;
+}
+
+/**
+ * The record carried to the next batch: the newer reads first, then anyone only the older record
+ * knew about. Presence is context, not a decision to show someone, so nobody known is dropped.
+ */
+export function mergeWhereabouts(...records: Whereabouts[][]): Whereabouts[] {
+  const result: Whereabouts[] = [];
+  for (const record of records) {
+    for (const entry of record) if (!result.some((item) => item.name === entry.name)) result.push(entry);
+  }
+  return result;
 }
 
 /**
