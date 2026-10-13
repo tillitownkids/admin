@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma } from '@/lib/prisma';
+// Supabase only: production has no Prisma database connection.
 import { supabase } from '@/lib/supabase';
 import { aiService } from '@/services/aiService';
 import { normalizeCharacterName } from '@/lib/characterNames';
@@ -58,6 +58,12 @@ export interface SceneCharacterReport {
   imageOutdated?: boolean;
 }
 
+/** The rows of a Supabase result, or its error as a thrown message that says what failed. */
+function rows<T>(result: { data: unknown; error: { message: string } | null }, what: string): T {
+  if (result.error) throw new Error(`${what} could not be loaded: ${result.error.message}`);
+  return result.data as T;
+}
+
 export interface CastCompletion {
   /** Library characters added to the episode's cast. */
   attached: string[];
@@ -80,10 +86,13 @@ export async function completeEpisodeCastAction(storyId: string, names: string[]
   const unique = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
   if (!unique.length) return result;
 
-  const [library, story] = await Promise.all([
-    prisma.character.findMany({ select: { id: true, name: true, description: true } }),
-    prisma.story.findUnique({ where: { id: storyId }, select: { content: true } }),
+  const [libraryResult, storyResult] = await Promise.all([
+    supabase.from('Character').select('id, name, description'),
+    supabase.from('Story').select('content').eq('id', storyId).maybeSingle(),
   ]);
+  const library = (rows<{ id: string; name: string; description: string | null }[]>(libraryResult, 'The character library') || [])
+    .map((character) => ({ ...character, description: character.description || '' }));
+  const story = rows<{ content: string | null } | null>(storyResult, 'The episode story');
   const response = await aiService.call(
     buildCastCompletionPrompt({ names: unique, library, story: story?.content || '' }),
     4000,
@@ -98,7 +107,9 @@ export async function completeEpisodeCastAction(storyId: string, names: string[]
     }
     let character: { id: string; name: string } = decision.action === 'attach' ? decision.character : { id: '', name: decision.name };
     if (decision.action === 'create') {
-      character = await prisma.character.create({ data: { name: decision.name, description: decision.description }, select: { id: true, name: true } });
+      const created = await supabase.from('Character').insert({ name: decision.name, description: decision.description }).select('id, name').single();
+      if (created.error || !created.data) throw new Error(`${decision.name} could not be created: ${created.error?.message || 'no row returned'}`);
+      character = created.data;
       library.push({ ...character, description: decision.description });
       try {
         await generateReference('character', character.id);
@@ -109,18 +120,19 @@ export async function completeEpisodeCastAction(storyId: string, names: string[]
     } else if (!result.attached.includes(character.name)) {
       result.attached.push(character.name);
     }
-    await prisma.storyCharacter.createMany({ data: [{ story_id: storyId, character_id: character.id }], skipDuplicates: true });
+    const { error: linkError } = await supabase.from('StoryCharacter')
+      .upsert([{ story_id: storyId, character_id: character.id }], { onConflict: 'story_id,character_id', ignoreDuplicates: true });
+    if (linkError) throw new Error(`${character.name} could not be added to the episode: ${linkError.message}`);
   }
   return result;
 }
 
 /** The episode's scenes in order, for the client to check one at a time. */
 export async function listCharacterCheckScenesAction(storyId: string): Promise<{ id: string; sceneNumber: number }[]> {
-  const scenes = await prisma.scene.findMany({
-    where: { story_id: storyId },
-    select: { id: true, scene_number: true },
-    orderBy: { scene_number: 'asc' },
-  });
+  const scenes = rows<{ id: string; scene_number: number }[]>(
+    await supabase.from('Scene').select('id, scene_number').eq('story_id', storyId).order('scene_number', { ascending: true }),
+    'The episode scenes',
+  ) || [];
   return scenes.map((scene) => ({ id: scene.id, sceneNumber: scene.scene_number }));
 }
 
@@ -157,10 +169,31 @@ async function detectBeatCast(cast: CastMember[], scriptBeats: string, beatNumbe
   throw first.reason;
 }
 
-async function loadStoryCast(storyId: string | null) {
+async function loadStoryCast(storyId: string | null): Promise<{ id: string; name: string; description: string | null }[]> {
   if (!storyId) return [];
-  return (await prisma.storyCharacter.findMany({ where: { story_id: storyId }, include: { Character: true } }))
-    .map((link) => link.Character);
+  const links = rows<{ Character: { id: string; name: string; description: string | null } | null }[]>(
+    await supabase.from('StoryCharacter').select('Character(id, name, description)').eq('story_id', storyId),
+    'The episode cast',
+  ) || [];
+  return links.flatMap((link) => (link.Character ? [link.Character] : []));
+}
+
+interface SceneRecord {
+  id: string;
+  story_id: string | null;
+  episode_location_id: string | null;
+  scene_number: number;
+  description: string | null;
+  script_beats: string | null;
+  beat_numbers: number[] | null;
+  storyboard_prompt: string | null;
+  storyboard_image_url: string | null;
+  video_prompt: string | null;
+}
+
+async function updateScene(sceneId: string, data: Partial<Pick<SceneRecord, 'storyboard_prompt' | 'video_prompt'>>) {
+  const { error } = await supabase.from('Scene').update({ ...data, updated_at: new Date().toISOString() }).eq('id', sceneId);
+  if (error) throw new Error(`The scene could not be saved: ${error.message}`);
 }
 
 export type EpisodeCastResult = {
@@ -177,14 +210,14 @@ export type EpisodeCastResult = {
 export async function detectEpisodeCastAction(storyId: string): Promise<EpisodeCastResult> {
   const result: EpisodeCastResult = { byScene: {}, errors: {} };
   const cast = await loadStoryCast(storyId);
-  const scenes = (await prisma.scene.findMany({
-    where: { story_id: storyId },
-    select: { id: true, scene_number: true, script_beats: true, beat_numbers: true, description: true },
-    orderBy: { scene_number: 'asc' },
-  })).map((scene) => ({
+  const records = rows<Pick<SceneRecord, 'id' | 'scene_number' | 'script_beats' | 'beat_numbers' | 'description'>[]>(
+    await supabase.from('Scene').select('id, scene_number, script_beats, beat_numbers, description').eq('story_id', storyId).order('scene_number', { ascending: true }),
+    'The episode scenes',
+  ) || [];
+  const scenes = records.map((scene) => ({
     id: scene.id,
     scriptBeats: scene.script_beats || '',
-    beatNumbers: checkedBeatNumbers({ scriptBeats: scene.script_beats || '', beatNumbers: scene.beat_numbers, description: scene.description }),
+    beatNumbers: checkedBeatNumbers({ scriptBeats: scene.script_beats || '', beatNumbers: scene.beat_numbers || undefined, description: scene.description || '' }),
   }));
   const readable = scenes.filter((scene) => scene.scriptBeats.trim());
   for (const scene of scenes) if (!scene.scriptBeats.trim()) result.errors[scene.id] = 'The scene has no beat script to check against.';
@@ -225,31 +258,40 @@ export async function checkSceneCharactersAction(
   sceneId: string,
   options: { fix: boolean; /** Who each beat shows, from `detectEpisodeCastAction`. Read from this scene alone when absent. */ beats?: BeatCast[] },
 ): Promise<SceneCharacterReport> {
-  const scene = await prisma.scene.findUnique({
-    where: { id: sceneId },
-    include: {
-      SceneCharacter: { include: { Character: true } },
-      EpisodeLocation: { include: { Location: true } },
-    },
-  });
-  if (!scene) {
-    return { sceneId, sceneNumber: 0, ok: false, error: 'The scene no longer exists.', beats: [], found: [], fixed: [], remaining: [], warnings: [] };
-  }
   const report: SceneCharacterReport = {
-    sceneId, sceneNumber: scene.scene_number, ok: true, beats: [], found: [], fixed: [], remaining: [], warnings: [],
+    sceneId, sceneNumber: 0, ok: true, beats: [], found: [], fixed: [], remaining: [], warnings: [],
   };
 
   try {
+    const scene = rows<SceneRecord | null>(
+      await supabase.from('Scene')
+        .select('id, story_id, episode_location_id, scene_number, description, script_beats, beat_numbers, storyboard_prompt, storyboard_image_url, video_prompt')
+        .eq('id', sceneId).maybeSingle(),
+      'The scene',
+    );
+    if (!scene) throw new Error('The scene no longer exists.');
+    report.sceneNumber = scene.scene_number;
+    const [linkResult, locationResult] = await Promise.all([
+      supabase.from('SceneCharacter').select('Character(id, name)').eq('scene_id', sceneId),
+      scene.episode_location_id
+        ? supabase.from('EpisodeLocation').select('Location(name)').eq('id', scene.episode_location_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+    const sceneLinks = rows<{ Character: { id: string; name: string } | null }[]>(linkResult, "The scene's characters") || [];
+    const locationName = (rows<{ Location: { name: string } | null } | null>(locationResult, "The scene's location"))?.Location?.name || '';
+    const beatNumbers = scene.beat_numbers || undefined;
+    const description = scene.description || '';
+
     const scriptBeats = scene.script_beats || '';
     if (!scriptBeats.trim()) throw new Error('The scene has no beat script to check against.');
     const storyCast = await loadStoryCast(scene.story_id);
     if (!storyCast.length) throw new Error('The episode has no characters to check for.');
 
-    const context = { scriptBeats, beatNumbers: scene.beat_numbers, description: scene.description };
+    const context = { scriptBeats, beatNumbers, description };
     const beats = options.beats?.length ? options.beats : await detectBeatCast(storyCast, scriptBeats, checkedBeatNumbers(context));
     report.beats = beats;
 
-    let linked = scene.SceneCharacter.map((link) => link.Character.name);
+    let linked = sceneLinks.flatMap((link) => (link.Character ? [link.Character.name] : []));
     let storyboardPrompt = scene.storyboard_prompt || '';
     let videoPrompt = scene.video_prompt;
     const check = () => findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt });
@@ -265,10 +307,11 @@ export async function checkSceneCharactersAction(
       if (issues.missingLinks.length) {
         const missing = new Set(issues.missingLinks.map(normalizeCharacterName));
         const characters = storyCast.filter((character) => missing.has(normalizeCharacterName(character.name)));
-        await prisma.sceneCharacter.createMany({
-          data: characters.map((character) => ({ scene_id: scene.id, character_id: character.id })),
-          skipDuplicates: true,
-        });
+        const { error: linkError } = await supabase.from('SceneCharacter').upsert(
+          characters.map((character) => ({ scene_id: scene.id, character_id: character.id })),
+          { onConflict: 'scene_id,character_id', ignoreDuplicates: true },
+        );
+        if (linkError) throw new Error(`Characters could not be attached to the scene: ${linkError.message}`);
         linked = [...linked, ...characters.map((character) => character.name)];
         linksAdded = characters.length > 0;
         report.fixed.push(`Attached ${characters.map((character) => character.name).join(', ')}.`);
@@ -299,7 +342,7 @@ export async function checkSceneCharactersAction(
           }
         }
         if (fixableIssueCount(candidateIssues) < before) {
-          await prisma.scene.update({ where: { id: scene.id }, data: { storyboard_prompt: candidate, updated_at: new Date() } });
+          await updateScene(scene.id, { storyboard_prompt: candidate });
           storyboardPrompt = candidate;
           storyboardChanged = true;
           issues = candidateIssues;
@@ -310,12 +353,12 @@ export async function checkSceneCharactersAction(
       const plan = parseShotPlan(videoPrompt);
       if (plan && videoNeedsFix(issues)) {
         const shotContext: ShotSceneContext = {
-          locationName: scene.EpisodeLocation?.Location?.name || '',
+          locationName,
           characterNames: linked,
           objectNames: await loadObjectNames(scene.id),
           scriptBeats,
-          beatNumbers: scene.beat_numbers,
-          description: scene.description,
+          beatNumbers,
+          description,
           storyboardPrompt,
           beatCast: Object.fromEntries(beats.map((beat) => [beat.beat, beat.onScreen])),
         };
@@ -325,7 +368,7 @@ export async function checkSceneCharactersAction(
           const replanned = serializeShotPlan(buildShotPlan(shotContext, direction, plan));
           const replannedIssues = findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt: replanned });
           if (fixableIssueCount(replannedIssues) < fixableIssueCount(issues)) {
-            await prisma.scene.update({ where: { id: scene.id }, data: { video_prompt: replanned, updated_at: new Date() } });
+            await updateScene(scene.id, { video_prompt: replanned });
             videoPrompt = replanned;
             videoChanged = true;
             issues = replannedIssues;
