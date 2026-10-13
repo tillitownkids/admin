@@ -14,7 +14,7 @@ import { generateStoryboardBatchAction } from "@/actions/generateStoryboardBatch
 import { estimateBeatTimingAction } from "@/actions/estimateBeatTimingAction";
 import { resetStoryboardAction } from "@/actions/resetStoryboardAction";
 import type { SceneCharacterReport } from "@/actions/characterCheckAction";
-import { runCharacterCheck } from "@/components/episode/CharacterCheck";
+import { runCharacterCheck } from "@/lib/runCharacterCheck";
 import { getEpisodeObjectsAction, type EpisodeObject } from "@/actions/propsAction";
 import { MAX_SCENE_OBJECTS } from "@/lib/propSheet";
 import {

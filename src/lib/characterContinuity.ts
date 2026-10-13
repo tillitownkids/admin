@@ -25,6 +25,8 @@ export interface BeatCast {
   onScreen: string[];
   /** Characters the shot shows who are not in the episode cast, so nothing can be attached. */
   notInCast: string[];
+  /** Cast members in the place at this beat, shown or not. Used to settle borderline calls. */
+  present?: string[];
 }
 
 interface PanelProblem {
@@ -167,7 +169,8 @@ HOW TO DECIDE:
    - The character who acts, and anyone who speaks on camera.
    - The characters they speak to, look at, touch, hand something to or react with, when those characters are present.
    - A character the ACTION says arrives, enters, returns, or is looked at, gasped at or reacted to: the shot shows them, unless the CAMERA line names only someone else ("push-in on Sonal's face").
-   - Characters inside a vehicle, behind a wall or far off in a landscape shot are shown only when the CAMERA framing is close enough to see them.
+   - Characters travelling together in a vehicle (a family in a jeep or car) are all shown whenever the vehicle is in frame and anyone in it acts or speaks, wide shots included.
+   - Characters behind a wall, in another room or far off and alone in a landscape shot are shown only when the CAMERA framing can see them.
    - Everyone present for a group moment ("the family gathers", "they all", "the children") and in wide or medium wide shots of the group.
    - In a close-up, extreme close-up, POV or insert, only the character or object the camera isolates.
 3. Leave out characters who are somewhere else, have left, are only mentioned or remembered, or are heard off-screen (O.S. or V.O.). Never add a cast member only because they are in the episode: keep each list as small as the shot allows.
@@ -225,7 +228,7 @@ export function mergeWhereabouts(...records: Whereabouts[][]): Whereabouts[] {
  * never attached.
  */
 export function parseBeatCast(value: unknown, cast: CastMember[], beatNumbers: number[]): { beats: BeatCast[]; unknown: string[] } {
-  const answer = value as { beats?: { beat_number?: unknown; on_screen?: unknown; not_in_cast?: unknown }[] } | null;
+  const answer = value as { beats?: { beat_number?: unknown; on_screen?: unknown; not_in_cast?: unknown; present?: unknown }[] } | null;
   if (!answer || !Array.isArray(answer.beats) || answer.beats.length !== beatNumbers.length) {
     throw new Error(`The character check must answer for exactly ${beatNumbers.length} beat(s).`);
   }
@@ -252,7 +255,10 @@ export function parseBeatCast(value: unknown, cast: CastMember[], beatNumbers: n
       if (exact) add(exact);
       else if (!notInCast.includes(name.trim())) notInCast.push(name.trim());
     }
-    return { beat: beatNumbers[index], onScreen, notInCast };
+    const present = Array.from(new Set(names(entry.present)
+      .flatMap((name) => { const exact = aliases.get(normalizeCharacterName(name)); return exact ? [exact] : []; })));
+    for (const name of onScreen) if (!present.includes(name)) present.push(name);
+    return { beat: beatNumbers[index], onScreen, notInCast, present };
   });
   return { beats, unknown: Array.from(unknown) };
 }
@@ -265,13 +271,62 @@ export function parseBeatCast(value: unknown, cast: CastMember[], beatNumbers: n
 export function agreedBeatCast(first: BeatCast[], second: BeatCast[]): BeatCast[] {
   return first.map((beat, index) => {
     const other = second[index];
-    if (!other || other.beat !== beat.beat) return { ...beat, onScreen: [], notInCast: [] };
-    const both = (a: string[], b: string[]) => {
-      const keys = new Set(b.map(normalizeCharacterName));
-      return a.filter((name) => keys.has(normalizeCharacterName(name)));
-    };
-    return { beat: beat.beat, onScreen: both(beat.onScreen, other.onScreen), notInCast: both(beat.notInCast, other.notInCast) };
+    if (!other || other.beat !== beat.beat) return { ...beat, onScreen: [], notInCast: [], present: [] };
+    const has = (list: string[] | undefined, name: string) => (list || []).some((item) => normalizeCharacterName(item) === normalizeCharacterName(name));
+    // Shown when both reads show them, or when one shows them and both agree they are in the place:
+    // the reads then differ only on framing, and leaving a present character out is the worse mistake.
+    const present = (beat.present || beat.onScreen).filter((name) => has(other.present || other.onScreen, name));
+    const candidates = [...beat.onScreen, ...other.onScreen.filter((name) => !has(beat.onScreen, name))];
+    const onScreen = candidates.filter((name) => (has(beat.onScreen, name) && has(other.onScreen, name)) || has(present, name));
+    return { beat: beat.beat, onScreen, notInCast: beat.notInCast.filter((name) => has(other.notInCast, name)), present };
   });
+}
+
+const OFF_SCREEN = /\(\s*(?:O\.?\s*S\.?|V\.?\s*O\.?|off[- ]?screen)\s*\)/i;
+
+/**
+ * Cast members who speak in a beat's dialogue ("Tilli: "Oasis!""), unless their line is marked
+ * off-screen with (O.S.) or (V.O.). A character who speaks is in the shot.
+ */
+export function dialogueSpeakers(dialogue: string, cast: CastMember[]): string[] {
+  const aliases = castAliases(cast);
+  const speakers: string[] = [];
+  const label = /(?:^|["”>)\]\s])([\p{L}][\p{L}\p{N}' .\-–—]{0,48}?)\s*(\([^)]*\))?\s*:\s*(?=["“])/gu;
+  for (const match of (dialogue || '').matchAll(label)) {
+    if (match[2] && OFF_SCREEN.test(match[2])) continue;
+    const exact = aliases.get(normalizeCharacterName(match[1]));
+    if (exact && !speakers.includes(exact)) speakers.push(exact);
+  }
+  return speakers;
+}
+
+/** Adds each beat's on-screen speakers to who the beat shows. Beats are matched to the scene's beat script in order. */
+export function withSpeakers(beats: BeatCast[], scene: { scriptBeats: string; beatNumbers?: number[]; description: string }, cast: CastMember[]): BeatCast[] {
+  const scripted = sceneBeats(scene);
+  return beats.map((beat, index) => {
+    const source = scripted.find((item) => item.number === beat.beat) ?? scripted[index];
+    const speakers = source ? dialogueSpeakers(source.dialogue, cast) : [];
+    const added = speakers.filter((name) => !beat.onScreen.includes(name));
+    if (!added.length) return beat;
+    return { ...beat, onScreen: [...beat.onScreen, ...added], present: Array.from(new Set([...(beat.present || []), ...added])) };
+  });
+}
+
+/**
+ * Cast members a text names, by exact name: full names first, then short names ("Kartik"), so
+ * "Jaksh's Father - Kartik" does not also count as "Jaksh".
+ */
+export function castNamedIn(text: string, cast: CastMember[]): string[] {
+  const aliases = Array.from(castAliases(cast)).sort((a, b) => b[0].length - a[0].length);
+  let rest = text || '';
+  const named: string[] = [];
+  for (const [alias, exact] of aliases) {
+    const pattern = new RegExp(namePattern(alias), 'giu');
+    if (!pattern.test(rest)) continue;
+    if (!named.includes(exact)) named.push(exact);
+    rest = rest.replace(pattern, ' ');
+  }
+  return named;
 }
 
 /**
@@ -322,9 +377,17 @@ export function findCharacterIssues(input: {
   linked: string[];
   storyboardPrompt: string;
   videoPrompt?: string | null;
+  /** The episode cast. When given, a cast member the storyboard panels draw must also be attached. */
+  cast?: CastMember[];
 }): SceneCharacterIssues {
   const isLinked = (name: string) => input.linked.some((linked) => normalizeCharacterName(linked) === normalizeCharacterName(name));
-  const onScreen = Array.from(new Set(input.beats.flatMap((beat) => beat.onScreen)));
+  // The image model draws everyone a panel names; without their sheet it invents their looks.
+  const drawnPanels = storyboardPanels(input.storyboardPrompt || '');
+  const drawnText = drawnPanels.size
+    ? Array.from(drawnPanels.values()).join('\n')
+    : withoutLine(input.storyboardPrompt || '', CHARACTERS_LINE);
+  const drawn = input.cast ? castNamedIn(drawnText, input.cast) : [];
+  const onScreen = Array.from(new Set([...input.beats.flatMap((beat) => beat.onScreen), ...drawn]));
   const shown = new Set(onScreen.map(normalizeCharacterName));
 
   const missingLinks = onScreen.filter((name) => !isLinked(name));

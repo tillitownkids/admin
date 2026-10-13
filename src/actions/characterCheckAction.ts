@@ -33,6 +33,7 @@ import {
   videoNeedsFix,
   withCharactersLine,
   withExactNames,
+  withSpeakers,
   type BeatCast,
   type CastMember,
   type SceneCharacterIssues,
@@ -345,13 +346,15 @@ export async function checkSceneCharactersAction(
     if (!storyCast.length) throw new Error('The episode has no characters to check for.');
 
     const context = { scriptBeats, beatNumbers, description };
-    const beats = options.beats?.length ? options.beats : (await detectBeatCast(storyCast, scriptBeats, checkedBeatNumbers(context))).beats;
+    const read = options.beats?.length ? options.beats : (await detectBeatCast(storyCast, scriptBeats, checkedBeatNumbers(context))).beats;
+    // Anyone who speaks on camera is in the shot, whatever the reads decided.
+    const beats = withSpeakers(read, context, storyCast);
     report.beats = beats;
 
     let linked = sceneLinks.flatMap((link) => (link.Character ? [link.Character.name] : []));
     let storyboardPrompt = scene.storyboard_prompt || '';
     let videoPrompt = scene.video_prompt;
-    const check = () => findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt });
+    const check = () => findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt, cast: storyCast });
 
     let issues: SceneCharacterIssues = check();
     report.found = describeIssues(issues);
@@ -380,7 +383,7 @@ export async function checkSceneCharactersAction(
         const before = fixableIssueCount(issues);
         // Short names are swapped for exact names in code; only what is still missing goes to the agent.
         let candidate = withExactNames(withCharactersLine(storyboardPrompt, linked), beats, storyCast);
-        let candidateIssues = findCharacterIssues({ beats, linked, storyboardPrompt: candidate, videoPrompt });
+        let candidateIssues = findCharacterIssues({ beats, linked, storyboardPrompt: candidate, videoPrompt, cast: storyCast });
         if (candidateIssues.storyboardPanels.length) {
           try {
             const response = await aiService.call(buildStoryboardRevisionPrompt({
@@ -389,7 +392,7 @@ export async function checkSceneCharactersAction(
               panels: candidateIssues.storyboardPanels,
             }), 4000, { temperature: 0 });
             const revised = withExactNames(withCharactersLine(parseRevisedStoryboardPrompt(parseStoryboardJson(response.text || ''), candidate), linked), beats, storyCast);
-            const revisedIssues = findCharacterIssues({ beats, linked, storyboardPrompt: revised, videoPrompt });
+            const revisedIssues = findCharacterIssues({ beats, linked, storyboardPrompt: revised, videoPrompt, cast: storyCast });
             if (fixableIssueCount(revisedIssues) < fixableIssueCount(candidateIssues)) {
               candidate = revised;
               candidateIssues = revisedIssues;
@@ -423,7 +426,7 @@ export async function checkSceneCharactersAction(
           const response = await aiService.call(buildShotDirectionPrompt(shotContext), 4000, { temperature: 0 });
           const direction = validateShotDirection(parseStoryboardJson(response.text || ''), sceneBeats(shotContext));
           const replanned = serializeShotPlan(buildShotPlan(shotContext, direction, plan));
-          const replannedIssues = findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt: replanned });
+          const replannedIssues = findCharacterIssues({ beats, linked, storyboardPrompt, videoPrompt: replanned, cast: storyCast });
           if (fixableIssueCount(replannedIssues) < fixableIssueCount(issues)) {
             await updateScene(scene.id, { video_prompt: replanned });
             videoPrompt = replanned;
