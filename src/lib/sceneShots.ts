@@ -1,6 +1,6 @@
-// One beat = one storyboard panel = one shot = one video generation.
-// A scene's shots (prompt, duration, generated clip) are stored together as JSON
-// in Scene.video_prompt so no schema change is needed.
+// One beat = one storyboard panel = one shot. A scene is one video generation: its shots play in
+// order inside a single clip, each timed by its beat's planned length. The plan (prompt, duration,
+// generated clips) is stored as JSON in Scene.video_prompt so no schema change is needed.
 
 export interface ScriptBeat {
   number: number | null;
@@ -228,7 +228,7 @@ export function buildShotDirectionPrompt(scene: ShotSceneContext): string {
     ? `\n\nSTORYBOARD OPENING FRAMES (each clip starts on its beat's frame; copy where each character is):\n${frameLines.join('\n')}`
     : '';
 
-  return `You are a film director preparing shot directions for a 3D animated children's series. Each beat below becomes ONE separate short video clip: one shot, one action.
+  return `You are a film director preparing shot directions for a 3D animated children's series. Each beat below is ONE shot: one framing, one action, opening on its own storyboard panel. The scene's shots play in order inside a single video clip, cutting from one to the next.
 
 For every beat write:
 
@@ -300,25 +300,55 @@ export function storyboardIsGrid(beatCount: number, storyboardPrompt?: string | 
   return beatCount > 1;
 }
 
-export function buildShotPrompt(input: {
+/** One shot inside a scene's clip: a storyboard panel and the stretch of the clip it fills. */
+export interface ClipShotInput {
+  /** Storyboard panel the shot opens on. */
   panel: number;
-  /** False when the storyboard is a single full-frame image rather than a grid. */
-  isGrid: boolean;
-  seconds: number;
-  lighting: string;
+  /** Seconds into the clip where the shot starts and ends. */
+  start: number;
+  end: number;
   camera: string;
   action: string;
   dialogue: string;
   dialogueWords: number;
+  /** Where each character is at the shot's first frame; "none" or empty when no one is placed. */
+  placement?: string;
+}
+
+function timestamp(seconds: number): string {
+  return `0:${String(seconds).padStart(2, '0')}`;
+}
+
+function shotSpeech(dialogue: string, words: number): string {
+  const spoken = dialogueForVideo(dialogue);
+  if (!spoken) return 'No one speaks.';
+  const pauses = spoken.includes('(pause)') ? 'with a clear pause at each (pause) and at punctuation' : 'with a clear pause at punctuation';
+  return `${spoken} — ${words} word${words === 1 ? '' : 's'}, spoken slowly at about 2 words per second, ${pauses}.`;
+}
+
+function shotPlacement(placement: string | undefined): string {
+  const text = (placement || '').replace(/\s+/g, ' ').trim().replace(/[.;]+$/, '');
+  return /^none$/i.test(text) ? '' : text;
+}
+
+/**
+ * The prompt for a scene's single clip: a timestamped shot list, one shot per storyboard panel,
+ * each with a job for every attached reference.
+ */
+export function buildShotPrompt(input: {
+  /** False when the storyboard is a single full-frame image rather than a grid. */
+  isGrid: boolean;
+  seconds: number;
+  lighting: string;
+  shots: ClipShotInput[];
   characterNames: string[];
   /** Objects whose sheets are attached. */
   objectNames?: string[];
   locationName: string;
-  /** Where each character is at the first frame; "none" or empty when no one is placed. */
-  placement?: string;
 }): string {
   const hasCast = input.characterNames.length > 0;
   const objectNames = input.objectNames || [];
+  const multiShot = input.shots.length > 1;
   const attachments = [
     input.isGrid ? 'storyboard grid' : 'storyboard frame',
     hasCast ? `character sheets (${input.characterNames.join(', ')})` : '',
@@ -326,9 +356,11 @@ export function buildShotPrompt(input: {
     input.locationName ? `location sheet (${input.locationName})` : 'location sheet',
   ].filter(Boolean).join(', ');
 
-  const opening = input.isGrid
-    ? `Use the panel numbered ${input.panel} in the attached storyboard grid as the opening composition — match its framing and character positions exactly, filling the whole frame. Never show the grid, other panels, panel borders or panel numbers.`
-    : 'Use the attached storyboard frame as the opening composition — match its framing and character positions exactly.';
+  const opening = !input.isGrid
+    ? 'Use the attached storyboard frame as the opening composition — match its framing and character positions exactly.'
+    : multiShot
+      ? 'Open each shot on its numbered panel in the attached storyboard grid — match that panel\'s framing and character positions exactly, filling the whole frame. Never show the grid, other panels, panel borders or panel numbers.'
+      : `Use the panel numbered ${input.shots[0]?.panel ?? 1} in the attached storyboard grid as the opening composition — match its framing and character positions exactly, filling the whole frame. Never show the grid, other panels, panel borders or panel numbers.`;
   const roles = [
     opening,
     hasCast ? 'Use the character sheets for character appearance only.' : '',
@@ -336,26 +368,36 @@ export function buildShotPrompt(input: {
     'Use the location sheet for the environment only.',
   ].filter(Boolean).join(' ');
 
-  const spoken = dialogueForVideo(input.dialogue);
-  const pauses = spoken.includes('(pause)') ? 'with a clear pause at each (pause) and at punctuation' : 'with a clear pause at punctuation';
-  const speech = spoken
-    ? `${spoken} — ${input.dialogueWords} word${input.dialogueWords === 1 ? '' : 's'}, spoken slowly at about 2 words per second, ${pauses}.`
-    : 'No one speaks.';
-  const end = `0:${String(input.seconds).padStart(2, '0')}`;
+  const cuts = multiShot
+    ? `${input.shots.length} shots in one clip, cutting at each timestamp; same location and lighting throughout.`
+    : 'One continuous shot, no cuts.';
   // Stated positions keep characters from drifting, morphing into each other or popping up elsewhere.
-  const placement = (input.placement || '').replace(/\s+/g, ' ').trim().replace(/[.;]+$/, '');
-  const positions = placement && !/^none$/i.test(placement)
-    ? `Positions at 0:00 — ${placement}. Each character keeps one body with fixed proportions, stays in this place unless the action moves them, and never appears, vanishes, duplicates or swaps places.`
-    : '';
+  const anyPlaced = input.shots.some((shot) => shotPlacement(shot.placement));
+  const shotBlocks = input.shots.map((shot, index) => {
+    const placement = shotPlacement(shot.placement);
+    const panel = multiShot && input.isGrid ? `Panel ${shot.panel}. ` : '';
+    return [
+      `Shot ${index + 1} [${timestamp(shot.start)}–${timestamp(shot.end)}] — ${panel}${sentence(shot.camera)} ${sentence(shot.action)} ${shotSpeech(shot.dialogue, shot.dialogueWords)}`,
+      placement ? `Positions at ${timestamp(shot.start)} — ${placement}.` : '',
+    ].filter(Boolean).join('\n');
+  });
 
   return [
     `Attachments: ${attachments}.`,
     roles,
-    `3D animated video, Pixar/DreamWorks style, full color, ${input.seconds} seconds total, landscape 16:9. ${sentence(input.lighting)} One continuous shot, no cuts.`,
-    positions,
-    `Shot 1 [0:00–${end}] — ${sentence(input.camera)} ${sentence(input.action)} ${speech}`,
+    `3D animated video, Pixar/DreamWorks style, full color, ${input.seconds} seconds total, landscape 16:9. ${sentence(input.lighting)} ${cuts}`,
+    ...shotBlocks,
+    anyPlaced ? `Each character keeps one body with fixed proportions, stays in place unless the action moves them, and never appears, vanishes, duplicates or swaps places${multiShot ? ' within a shot' : ''}.` : '',
     `Consistent character design and lighting throughout, matching the attached sheets. No morphing, warping, or distorted geometry. Avoid jitter and bent limbs.${hasCast ? ' No extra characters.' : ''}`,
   ].filter(Boolean).join('\n\n');
+}
+
+/** Each "Shot N [..]" block of a clip prompt, in order. A prompt without shot headers is one block. */
+export function clipPromptShots(prompt: string): string[] {
+  const text = (prompt || '').replaceAll('\r\n', '\n');
+  const starts = Array.from(text.matchAll(/^Shot \d+ \[/gm)).map((match) => match.index!);
+  if (starts.length < 2) return [text];
+  return starts.map((start, index) => text.slice(start, starts[index + 1] ?? text.length));
 }
 
 export const SHOT_PLAN_FORMAT = 'tillitown-shots-v1';
@@ -367,15 +409,34 @@ export interface ShotTake {
   createdAt?: string | null;
 }
 
+/** A beat's stretch of a scene clip. */
+export interface ClipSegment {
+  /** Storyboard panel the shot opens on. */
+  panel: number;
+  beat: number | null;
+  title: string;
+  start: number;
+  end: number;
+  neededSeconds: number;
+  dialogueWords: number;
+}
+
+/**
+ * A planned clip. A scene planned now has one, holding every beat as a timed shot (`segments`);
+ * scenes planned earlier have one clip per beat, numbered by panel.
+ */
 export interface SceneShot {
-  /** 1-based position in the scene; also the storyboard panel number. */
+  /** 1-based clip number in the scene. */
   shot: number;
+  /** The clip's only beat; null when it holds several. */
   beat: number | null;
   title: string;
   seconds: number;
   neededSeconds: number;
   dialogueWords: number;
   prompt: string;
+  /** The beats inside the clip, in order. Missing on clips planned one per beat. */
+  segments?: ClipSegment[];
   /** The clip in use: the one that is stitched into the episode. */
   videoUrl?: string | null;
   magnificId?: string | null;
@@ -435,39 +496,94 @@ export function removeShotTake(shot: SceneShot, url: string): SceneShot | null {
   return { ...shot, takes: takes.filter((item) => item.url !== url) };
 }
 
+/** The beats a planned clip covers, in order. */
+export function clipBeats(shot: Pick<SceneShot, 'beat' | 'segments'>): (number | null)[] {
+  return shot.segments?.length ? shot.segments.map((segment) => segment.beat) : [shot.beat];
+}
+
+/** Whether the plan is one clip holding exactly these beats, as planning makes it now. */
+export function planMatchesBeats(plan: SceneShotPlan, beatNumbers: (number | null)[]): boolean {
+  if (plan.shots.length !== 1) return false;
+  const covered = clipBeats(plan.shots[0]);
+  return covered.length === beatNumbers.length && covered.every((beat, index) => beat === beatNumbers[index]);
+}
+
+/**
+ * Where each beat's shot starts and ends inside one clip. Each shot gets its beat's planned length;
+ * the clip is the shortest accepted length that holds them all, and the last shot fills any slack.
+ * Beats longer than the longest clip together are scaled down to fit it (`overMax`).
+ */
+export function planClipTiming(beats: ScriptBeat[]): {
+  seconds: number;
+  neededSeconds: number;
+  overMax: boolean;
+  shots: { start: number; end: number; timing: ShotTiming }[];
+} {
+  const timings = beats.map((beat) => planShotTiming(beat));
+  const total = timings.reduce((sum, timing) => sum + timing.seconds, 0);
+  const seconds = snapShotSeconds(total);
+  const scale = total > seconds ? seconds / total : 1;
+  let elapsed = 0;
+  const shots = timings.map((timing, index) => {
+    const start = Math.round(elapsed * scale);
+    elapsed += timing.seconds;
+    const end = index === timings.length - 1 ? seconds : Math.round(elapsed * scale);
+    return { start, end, timing };
+  });
+  return {
+    seconds,
+    neededSeconds: Math.round(timings.reduce((sum, timing) => sum + timing.neededSeconds, 0) * 10) / 10,
+    overMax: total > seconds,
+    shots,
+  };
+}
+
+/** One clip for the whole scene: every beat is a timed shot that opens on its storyboard panel. */
 export function buildShotPlan(scene: ShotSceneContext, direction: ShotDirection, previous?: SceneShotPlan | null): SceneShotPlan {
   const beats = sceneBeats(scene);
-  const shots = beats.map((beat, index): SceneShot => {
-    const timing = planShotTiming(beat);
-    // Clips already generated for the same beat stay with it.
-    const existing = previous?.shots.find((shot) => shot.shot === index + 1 && shot.beat === beat.number);
-    return {
-      shot: index + 1,
-      beat: beat.number,
-      title: beat.title,
-      seconds: timing.seconds,
-      neededSeconds: timing.neededSeconds,
-      dialogueWords: timing.dialogueWords,
-      prompt: buildShotPrompt({
+  const clip = planClipTiming(beats);
+  // A clip already generated for the same beats stays with the plan.
+  const existing = previous && planMatchesBeats(previous, beats.map((beat) => beat.number)) ? previous.shots[0] : null;
+  const segments = beats.map((beat, index): ClipSegment => ({
+    panel: index + 1,
+    beat: beat.number,
+    title: beat.title,
+    start: clip.shots[index].start,
+    end: clip.shots[index].end,
+    neededSeconds: clip.shots[index].timing.neededSeconds,
+    dialogueWords: clip.shots[index].timing.dialogueWords,
+  }));
+  const shot: SceneShot = {
+    shot: 1,
+    beat: beats.length === 1 ? beats[0].number : null,
+    title: beats.length === 1 ? beats[0].title : '',
+    seconds: clip.seconds,
+    neededSeconds: clip.neededSeconds,
+    dialogueWords: segments.reduce((sum, segment) => sum + segment.dialogueWords, 0),
+    prompt: buildShotPrompt({
+      isGrid: storyboardIsGrid(beats.length, scene.storyboardPrompt),
+      seconds: clip.seconds,
+      lighting: direction.lighting,
+      shots: beats.map((beat, index) => ({
         panel: index + 1,
-        isGrid: storyboardIsGrid(beats.length, scene.storyboardPrompt),
-        seconds: timing.seconds,
-        lighting: direction.lighting,
+        start: segments[index].start,
+        end: segments[index].end,
         camera: direction.shots[index].camera,
         action: direction.shots[index].action,
         dialogue: beat.dialogue,
-        dialogueWords: timing.dialogueWords,
-        characterNames: scene.characterNames,
-        objectNames: scene.objectNames,
-        locationName: scene.locationName,
+        dialogueWords: segments[index].dialogueWords,
         placement: direction.shots[index].placement,
-      }),
-      videoUrl: existing?.videoUrl ?? null,
-      magnificId: existing?.magnificId ?? null,
-      ...(existing?.takes?.length ? { takes: existing.takes } : {}),
-    };
-  });
-  return { format: SHOT_PLAN_FORMAT, shots };
+      })),
+      characterNames: scene.characterNames,
+      objectNames: scene.objectNames,
+      locationName: scene.locationName,
+    }),
+    segments,
+    videoUrl: existing?.videoUrl ?? null,
+    magnificId: existing?.magnificId ?? null,
+    ...(existing?.takes?.length ? { takes: existing.takes } : {}),
+  };
+  return { format: SHOT_PLAN_FORMAT, shots: [shot] };
 }
 
 /**

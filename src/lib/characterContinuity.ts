@@ -5,7 +5,7 @@
 // from drifting, morphing or turning up somewhere odd. Nobody else is added: a close-up shows one face.
 
 import { normalizeCharacterName } from '@/lib/characterNames';
-import { parseShotPlan, sceneBeats, storyboardPanels } from '@/lib/sceneShots';
+import { clipBeats, clipPromptShots, parseShotPlan, sceneBeats, storyboardPanels } from '@/lib/sceneShots';
 
 export { storyboardPanels };
 
@@ -97,9 +97,9 @@ export function placesInPanel(text: string, name: string): boolean {
   return Array.from((text || '').matchAll(placed)).some((match) => SIDE_OF_FRAME.test(match[1]));
 }
 
-/** Whether a video shot's "Positions at 0:00" line places the character. */
+/** Whether a video shot's "Positions at 0:00" line (the time its shot starts) places the character. */
 export function placesInShot(prompt: string, name: string): boolean {
-  const line = (prompt || '').match(/^Positions at 0:00 — (.*)$/m)?.[1] ?? '';
+  const line = (prompt || '').match(/^Positions at \d+:\d{2} — (.*)$/m)?.[1] ?? '';
   const entry = line.split(';').find((part) => mentionsName(part, name));
   return Boolean(entry && SIDE_OF_FRAME.test(entry));
 }
@@ -435,11 +435,17 @@ export function findCharacterIssues(input: {
   for (const shot of plan?.shots || []) {
     const attachments = shot.prompt.match(/^Attachments:.*$/m)?.[0] ?? '';
     for (const name of expected) if (!mentionsName(attachments, name)) videoAttachments.add(name);
-    const beat = input.beats.find((item) => item.beat === shot.beat);
-    const body = withoutLine(shot.prompt, /^Attachments:.*$/m);
-    const missing = (beat?.onScreen || []).filter((name) => !mentionsName(body, name));
-    const unplaced = (beat?.onScreen || []).filter((name) => mentionsName(body, name) && !placesInShot(shot.prompt, name));
-    if (missing.length || unplaced.length) videoShots.push({ shot: shot.shot, beat: shot.beat ?? shot.shot, missing, unplaced });
+    // A scene clip holds one shot per beat; each "Shot N" block must name and place who its beat shows.
+    const beatNumbers = clipBeats(shot);
+    const blocks = beatNumbers.length > 1 ? clipPromptShots(shot.prompt) : [withoutLine(shot.prompt, /^Attachments:.*$/m)];
+    beatNumbers.forEach((beatNumber, index) => {
+      const beat = input.beats.find((item) => item.beat === beatNumber);
+      const body = blocks[index] ?? '';
+      const missing = (beat?.onScreen || []).filter((name) => !mentionsName(body, name));
+      const unplaced = (beat?.onScreen || []).filter((name) => mentionsName(body, name) && !placesInShot(body, name));
+      const number = beatNumbers.length > 1 ? index + 1 : shot.shot;
+      if (missing.length || unplaced.length) videoShots.push({ shot: number, beat: beatNumber ?? number, missing, unplaced });
+    });
   }
 
   return {

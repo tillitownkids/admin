@@ -60,8 +60,8 @@ assert.equal(props.parseDetectedObjects(many).length, props.MAX_EPISODE_OBJECTS)
 
 // Video: object sheets are attached and given their role; without objects the prompt is unchanged.
 const base = {
-  panel: 1, isGrid: false, seconds: 6, lighting: 'Warm light', camera: 'Medium shot, eye level, static (locked-off)',
-  action: 'Jaksh opens the car door', dialogue: '', dialogueWords: 0, characterNames: ['Jaksh'], locationName: 'Driveway',
+  isGrid: false, seconds: 6, lighting: 'Warm light', characterNames: ['Jaksh'], locationName: 'Driveway',
+  shots: [{ panel: 1, start: 0, end: 6, camera: 'Medium shot, eye level, static (locked-off)', action: 'Jaksh opens the car door', dialogue: '', dialogueWords: 0 }],
 };
 const withObjects = shots.buildShotPrompt({ ...base, objectNames: ['Family Car', 'Blue Backpack'] });
 assert.match(withObjects, /object sheets \(Family Car, Blue Backpack\)/);

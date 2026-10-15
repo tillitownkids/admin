@@ -146,23 +146,41 @@ assert.throws(() => validateShotDirection({ ...direction, lighting: ' ' }, beats
 assert.throws(() => validateShotDirection({ ...direction, shots: [{ ...direction.shots[0], camera: '' }, ...direction.shots.slice(1)] }, beats));
 assert.throws(() => validateShotDirection(null, beats));
 
-const plan = buildShotPlan(scene, direction);
-assert.deepEqual(plan.shots.map(s => [s.shot, s.beat, s.seconds, s.dialogueWords]), [[1, 22, 6, 7], [2, 23, 5, 0], [3, 24, 4, 1]]);
-const first = plan.shots[0].prompt;
+// The whole scene is one clip: each beat is a timed shot opening on its own panel.
+const clipPlan = buildShotPlan(scene, direction);
+assert.equal(clipPlan.shots.length, 1);
+const clip = clipPlan.shots[0];
+assert.deepEqual([clip.shot, clip.beat, clip.seconds, clip.dialogueWords], [1, null, 15, 8]);
+assert.deepEqual(clip.segments.map(s => [s.panel, s.beat, s.start, s.end, s.dialogueWords]), [[1, 22, 0, 6, 7], [2, 23, 6, 11, 0], [3, 24, 11, 15, 1]]);
+const first = clip.prompt;
 assert.match(first, /^Attachments: storyboard grid, character sheets \(Nimo the Bellbird, Tilli\), location sheet \(Echo Pebble Garden\)\./);
-assert.match(first, /Use the panel numbered 1 in the attached storyboard grid as the opening composition/);
+assert.match(first, /Open each shot on its numbered panel in the attached storyboard grid/);
 assert.match(first, /character sheets for character appearance only\. Use the location sheet for the environment only\./);
-assert.match(first, /full color, 6 seconds total, landscape 16:9\. Warm late-afternoon light across the pebbles\. One continuous shot, no cuts\./);
-assert.match(first, /Shot 1 \[0:00–0:06\] — Close-up, eye level, static \(locked-off\)\. Nimo the Bellbird dips his head\. Nimo: "Oh," \(pause\) "I'm sorry, Tilli\. I really thought\.\.\." — 7 words, spoken slowly/);
-assert.match(first, /No morphing, warping, or distorted geometry\./);
+assert.match(first, /full color, 15 seconds total, landscape 16:9\. Warm late-afternoon light across the pebbles\. 3 shots in one clip, cutting at each timestamp; same location and lighting throughout\./);
+assert.match(first, /\n\nShot 1 \[0:00–0:06\] — Panel 1\. Close-up, eye level, static \(locked-off\)\. Nimo the Bellbird dips his head\. Nimo: "Oh," \(pause\) "I'm sorry, Tilli\. I really thought\.\.\." — 7 words, spoken slowly/);
 assert.match(first, /with a clear pause at each \(pause\) and at punctuation\./);
-assert.match(plan.shots[2].prompt, /Tilli: "Goodbye!" — 1 word, spoken slowly at about 2 words per second, with a clear pause at punctuation\./);
-assert.match(plan.shots[1].prompt, /panel numbered 2/);
-assert.match(plan.shots[1].prompt, /Jaksh turns to the window\. No one speaks\./);
-assert.ok(first.split(/\s+/).length < 190, 'shot prompt stays lean');
+assert.match(first, /\n\nShot 2 \[0:06–0:11\] — Panel 2\. Medium shot, eye level, slow push-in\. Jaksh turns to the window\. No one speaks\./);
+assert.match(first, /\n\nShot 3 \[0:11–0:15\] — Panel 3\. [^\n]*Tilli: "Goodbye!" — 1 word, spoken slowly at about 2 words per second, with a clear pause at punctuation\./);
+assert.match(first, /No morphing, warping, or distorted geometry\./);
+assert.doesNotMatch(first, /One continuous shot|Positions at/);
+assert.deepEqual(exported.clipPromptShots(first).map(block => block.slice(0, 7)), ['Shot 1 ', 'Shot 2 ', 'Shot 3 ']);
+assert.ok(first.split(/\s+/).length < 260, 'clip prompt stays lean');
 
-// A single-beat scene uses its storyboard frame, not a grid panel.
-const single = buildShotPrompt({ panel: 1, isGrid: false, seconds: 5, lighting: 'Soft dawn light', camera: 'Wide shot, eye level, static (locked-off)', action: 'The lantern flickers on.', dialogue: '', dialogueWords: 0, characterNames: [], locationName: '' });
+// A clip is the shortest accepted length that holds its shots; the last shot takes the slack.
+const twoBeats = exported.planClipTiming(beats.slice(0, 2));
+assert.deepEqual([twoBeats.seconds, twoBeats.overMax, twoBeats.shots.map(s => [s.start, s.end])], [12, false, [[0, 6], [6, 12]]]);
+// Beats longer than the longest clip together are squeezed into it and flagged.
+const overlong = exported.planClipTiming([{ dialogue: words(22), wpm: null }, { dialogue: words(14), wpm: null }]);
+assert.deepEqual([overlong.seconds, overlong.overMax, overlong.shots.map(s => [s.start, s.end])], [15, true, [[0, 9], [9, 15]]]);
+
+// A single-beat scene is one continuous shot.
+const singleBeat = buildShotPlan({ ...scene, scriptBeats: script.split('---')[0], storyboardPrompt: 'A 2x2 grid.' }, { lighting: 'Dusk', shots: [direction.shots[0]] });
+assert.deepEqual([singleBeat.shots[0].beat, singleBeat.shots[0].seconds, singleBeat.shots[0].title], [22, 6, 'Nimo Apologizes']);
+assert.match(singleBeat.shots[0].prompt, /Use the panel numbered 1 in the attached storyboard grid as the opening composition/);
+assert.match(singleBeat.shots[0].prompt, /One continuous shot, no cuts\.\n\nShot 1 \[0:00–0:06\] — Close-up/);
+// A single full frame is not a grid.
+const single = buildShotPrompt({ isGrid: false, seconds: 5, lighting: 'Soft dawn light', characterNames: [], locationName: '',
+  shots: [{ panel: 1, start: 0, end: 5, camera: 'Wide shot, eye level, static (locked-off)', action: 'The lantern flickers on.', dialogue: '', dialogueWords: 0 }] });
 assert.match(single, /^Attachments: storyboard frame, location sheet\./);
 assert.match(single, /Use the attached storyboard frame as the opening composition/);
 assert.doesNotMatch(single, /character sheets|No extra characters/);
@@ -173,19 +191,30 @@ const loose = buildShotPlan({ locationName: 'Square', characterNames: [], script
 assert.equal(loose.shots.length, 1);
 assert.equal(loose.shots[0].beat, null);
 
+// Plans made earlier hold one clip per beat; they still parse, play and stitch.
+const plan = {
+  format: exported.SHOT_PLAN_FORMAT,
+  shots: clip.segments.map((s) => ({ shot: s.panel, beat: s.beat, title: s.title, seconds: s.end - s.start, neededSeconds: s.neededSeconds, dialogueWords: s.dialogueWords, prompt: `Shot 1 [0:00] panel ${s.panel}` })),
+};
+assert.equal(exported.planMatchesBeats(plan, [22, 23, 24]), false, 'a per-beat plan is re-planned as one clip');
+assert.equal(exported.planMatchesBeats(clipPlan, [22, 23, 24]), true);
+assert.equal(exported.planMatchesBeats(clipPlan, [22, 23]), false);
+
 // Storage round trip; older plain-text prompts are not plans.
 const withClips = { ...plan, shots: plan.shots.map((s, i) => (i === 1 ? s : { ...s, videoUrl: `https://x/${s.shot}.mp4`, magnificId: `m${s.shot}` })) };
 assert.deepEqual(parseShotPlan(serializeShotPlan(withClips)), withClips);
+assert.deepEqual(parseShotPlan(serializeShotPlan(clipPlan)), clipPlan);
 assert.equal(parseShotPlan('## SCRIPT\nold prompt'), null);
 assert.equal(parseShotPlan('{"format":"other","shots":[]}'), null);
 assert.equal(parseShotPlan('{broken'), null);
 assert.equal(parseShotPlan(null), null);
 
-// Re-planning keeps a clip only when the same beat is still in the same position.
-const replanned = buildShotPlan(scene, direction, withClips);
-assert.deepEqual(replanned.shots.map(s => s.videoUrl), ['https://x/1.mp4', null, 'https://x/3.mp4']);
-const shifted = buildShotPlan({ ...scene, scriptBeats: script.split('---')[1] }, { lighting: 'Night', shots: direction.shots.slice(1) }, withClips);
-assert.deepEqual(shifted.shots.map(s => s.videoUrl), [null, null]);
+// Re-planning keeps the clip only when it holds the same beats; per-beat clips are not carried into a scene clip.
+const clipWithVideo = { ...clipPlan, shots: [{ ...clip, videoUrl: 'https://x/scene.mp4', magnificId: 'ms' }] };
+assert.equal(buildShotPlan(scene, direction, clipWithVideo).shots[0].videoUrl, 'https://x/scene.mp4');
+assert.equal(buildShotPlan(scene, direction, withClips).shots[0].videoUrl, null);
+const shifted = buildShotPlan({ ...scene, scriptBeats: script.split('---')[1] }, { lighting: 'Night', shots: direction.shots.slice(1) }, clipWithVideo);
+assert.equal(shifted.shots[0].videoUrl, null);
 
 // Takes: every generated clip is kept, and the shot's videoUrl names the one in use.
 const emptyShot = plan.shots[1];
@@ -214,13 +243,15 @@ const olderPlusNew = addShotTake(olderShot, { url: 'https://x/1b.mp4', magnificI
 assert.equal(olderPlusNew.videoUrl, 'https://x/1.mp4');
 assert.deepEqual(shotTakes(olderPlusNew).map(t => t.url), ['https://x/1.mp4', 'https://x/1b.mp4']);
 
-// Re-planning keeps a beat's takes along with its clip in use; stitching reads only the clip in use.
-const withTakes = { ...withClips, shots: withClips.shots.map((s, i) => (i === 0 ? selectShotTake(olderPlusNew, 'https://x/1b.mp4') : s)) };
-const replannedTakes = buildShotPlan(scene, direction, withTakes);
-assert.equal(replannedTakes.shots[0].videoUrl, 'https://x/1b.mp4');
+// Re-planning keeps the scene clip's takes along with its clip in use; stitching reads only the clip in use.
+const sceneTakes = selectShotTake(addShotTake(clipWithVideo.shots[0], { url: 'https://x/scene-b.mp4', createdAt: 't4' }), 'https://x/scene-b.mp4');
+const replannedTakes = buildShotPlan(scene, direction, { ...clipPlan, shots: [sceneTakes] });
+assert.equal(replannedTakes.shots[0].videoUrl, 'https://x/scene-b.mp4');
 assert.equal(replannedTakes.shots[0].takes.length, 2);
-assert.equal('takes' in replannedTakes.shots[1], false);
+assert.equal('takes' in clipPlan.shots[0], false);
+const withTakes = { ...withClips, shots: withClips.shots.map((s, i) => (i === 0 ? selectShotTake(olderPlusNew, 'https://x/1b.mp4') : s)) };
 assert.deepEqual(sceneClips({ video_prompt: serializeShotPlan(withTakes) }).clips[0], { url: 'https://x/1b.mp4', shot: 1 });
+assert.deepEqual(sceneClips({ video_prompt: serializeShotPlan({ ...clipPlan, shots: [sceneTakes] }) }), { clips: [{ url: 'https://x/scene-b.mp4', shot: 1 }], missingShots: 0 });
 
 // Shot clips play in shot order; a scene with no shot clips falls back to its older single clip.
 const legacy = { clips: [{ url: 'https://x/legacy.mp4', shot: null }], missingShots: 0 };

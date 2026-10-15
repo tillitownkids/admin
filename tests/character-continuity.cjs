@@ -198,8 +198,8 @@ assert.match(revision, /"Jaksh \(left, foreground, kneeling, facing right\)"/);
 
 // Video shots: each shot names and places who its beat shows, and attaches every linked sheet.
 const shotPrompt = (attached, action, placement) => shots.buildShotPrompt({
-  panel: 1, isGrid: true, seconds: 5, lighting: 'Warm light', camera: 'Medium shot, eye level, static (locked-off)',
-  action, dialogue: '', dialogueWords: 0, characterNames: attached, locationName: 'Workshop', placement,
+  isGrid: true, seconds: 5, lighting: 'Warm light', characterNames: attached, locationName: 'Workshop',
+  shots: [{ panel: 1, start: 0, end: 5, camera: 'Medium shot, eye level, static (locked-off)', action, dialogue: '', dialogueWords: 0, placement }],
 });
 const plan = (prompts) => shots.serializeShotPlan({ format: shots.SHOT_PLAN_FORMAT, shots: prompts.map((prompt, index) => ({
   shot: index + 1, beat: index + 1, title: '', seconds: 5, neededSeconds: 5, dialogueWords: 0, prompt,
@@ -219,6 +219,31 @@ const placedPlan = plan([
   shotPrompt(linked, "Jaksh's Father - Kartik hands Jaksh the hammer.", "Jaksh's Father - Kartik: right, midground, standing, facing left; Jaksh: left, foreground, standing, facing right."),
 ]);
 issues = check.findCharacterIssues({ beats, linked, storyboardPrompt: fixedPanels, videoPrompt: placedPlan });
+assert.equal(check.fixableIssueCount(issues), 0);
+
+// A scene clip holds both beats; each "Shot N" block is checked against its own beat.
+const sceneClip = (secondShot) => shots.serializeShotPlan({ format: shots.SHOT_PLAN_FORMAT, shots: [{
+  shot: 1, beat: null, title: '', seconds: 10, neededSeconds: 10, dialogueWords: 0,
+  segments: [
+    { panel: 1, beat: 1, title: '', start: 0, end: 5, neededSeconds: 5, dialogueWords: 0 },
+    { panel: 2, beat: 2, title: '', start: 5, end: 10, neededSeconds: 5, dialogueWords: 0 },
+  ],
+  prompt: shots.buildShotPrompt({
+    isGrid: true, seconds: 10, lighting: 'Warm light', characterNames: linked, locationName: 'Workshop',
+    shots: [
+      { panel: 1, start: 0, end: 5, camera: 'Medium shot, eye level, static (locked-off)', action: 'Jaksh opens the door.', dialogue: '', dialogueWords: 0, placement: 'Jaksh: left, midground, standing, facing right' },
+      { panel: 2, start: 5, end: 10, camera: 'Close-up, eye level, slow push-in', dialogue: '', dialogueWords: 0, ...secondShot },
+    ],
+  }),
+}] });
+issues = check.findCharacterIssues({ beats, linked, storyboardPrompt: fixedPanels, videoPrompt: sceneClip({
+  action: 'Jaksh takes the hammer.', placement: 'Jaksh: left, foreground, standing, facing right',
+}) });
+assert.deepEqual(issues.videoShots, [{ shot: 2, beat: 2, missing: ["Jaksh's Father - Kartik"], unplaced: [] }]);
+issues = check.findCharacterIssues({ beats, linked, storyboardPrompt: fixedPanels, videoPrompt: sceneClip({
+  action: "Jaksh's Father - Kartik hands Jaksh the hammer.",
+  placement: "Jaksh's Father - Kartik: right, midground, standing, facing left; Jaksh: left, foreground, standing, facing right",
+}) });
 assert.equal(check.fixableIssueCount(issues), 0);
 
 // A revision keeps the panel layout: no panels added to a single frame, none dropped from a grid.
@@ -245,7 +270,7 @@ assert.match(shots.buildShotDirectionPrompt({ locationName: '', characterNames: 
 
 // The placement becomes the clip's "Positions at 0:00" line; "none" or nothing leaves it out.
 const placed = shotPrompt(linked, 'Jaksh waves.', 'Jaksh: left, foreground, standing, facing right;');
-assert.match(placed, /\n\nPositions at 0:00 — Jaksh: left, foreground, standing, facing right\. Each character keeps one body with fixed proportions, stays in this place unless the action moves them, and never appears, vanishes, duplicates or swaps places\.\n\nShot 1 \[0:00/);
+assert.match(placed, /\n\nShot 1 \[0:00–0:05\] — [^\n]*\nPositions at 0:00 — Jaksh: left, foreground, standing, facing right\.\n\nEach character keeps one body with fixed proportions, stays in place unless the action moves them, and never appears, vanishes, duplicates or swaps places\.\n\n/);
 assert.doesNotMatch(shotPrompt(linked, 'The door opens.', 'none'), /Positions/);
 assert.doesNotMatch(shotPrompt(linked, 'The door opens.'), /Positions|\n\n\n/);
 const directed = shots.buildShotPlan(
