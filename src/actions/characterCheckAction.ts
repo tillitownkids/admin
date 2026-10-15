@@ -440,7 +440,7 @@ export async function checkSceneCharactersAction(
     }
 
     if (storyboardChanged) report.fixed.push('Named and placed every on-screen character in the storyboard prompt.');
-    if (videoChanged) report.fixed.push('Planned the video shots again so each names and places the characters its beat shows.');
+    if (videoChanged) report.fixed.push('Planned the video clip again so each shot names and places the characters its beat shows.');
     report.remaining = describeIssues(issues);
     report.warnings = describeWarnings(issues);
     if ((linksAdded || storyboardChanged) && scene.storyboard_image_url) {

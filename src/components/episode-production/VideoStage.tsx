@@ -16,6 +16,7 @@ import {
   SHOT_CAP_SECONDS,
   SHOT_DURATIONS,
   parseShotPlan,
+  planMatchesBeats,
   sceneBeats,
   serializeShotPlan,
   shotTakes,
@@ -161,7 +162,7 @@ function shotContext(scene: SceneRow): ShotSceneContext {
   };
 }
 
-// One request per shot. `shot` and `duration` are additions to the scene payload the webhook already accepts.
+// One request per clip. `shot` and `duration` are additions to the scene payload the webhook already accepts.
 function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: EpisodeLocationRow[]) {
   if (!scene.magnific_identifier) {
     throw new Error(`Scene ${scene.scene_number}'s storyboard image has no generator reference (it was uploaded, or saved without one), so the video generator cannot open a clip on it. In the Storyboard step, put a generated take in use for this scene, then try again.`);
@@ -273,7 +274,7 @@ export function VideoStage({
     const planned: Record<string, SceneShotPlan> = {};
     targets.forEach((scene) => {
       setSceneError(scene.id, null);
-      setSceneActivity(scene.id, 'Planning shots…');
+      setSceneActivity(scene.id, 'Planning the clip…');
     });
     try {
       const results = await planSceneShotsAction(
@@ -286,11 +287,11 @@ export function VideoStage({
           await savePlan(scene, result.plan);
           planned[scene.id] = result.plan;
         } catch (error) {
-          setSceneError(scene.id, `Shot planning failed: ${errorText(error)}`);
+          setSceneError(scene.id, `Clip planning failed: ${errorText(error)}`);
         }
       }
     } catch (error) {
-      targets.forEach((scene) => setSceneError(scene.id, `Shot planning failed: ${errorText(error)}`));
+      targets.forEach((scene) => setSceneError(scene.id, `Clip planning failed: ${errorText(error)}`));
     } finally {
       targets.forEach((scene) => setSceneActivity(scene.id, null));
     }
@@ -299,7 +300,7 @@ export function VideoStage({
 
   const generateShot = async (scene: SceneRow, shotNumber: number) => {
     const shot = currentPlan(scene)?.shots.find((item) => item.shot === shotNumber);
-    if (!shot) throw new Error(`Scene ${scene.scene_number} has no planned shot ${shotNumber}. Plan its shots first.`);
+    if (!shot) throw new Error(`Scene ${scene.scene_number} has no planned clip ${shotNumber}. Plan its clip first.`);
 
     const res = await sendVideoWebhook(buildShotPayload(scene, shot, episodeLocations));
     const responseBody = await res.text();
@@ -344,7 +345,7 @@ export function VideoStage({
 
   const takeProgress = (take: number) => (takesPerRun > 1 ? `, take ${take} of ${takesPerRun}` : '');
 
-  // Plans the scene if needed, then generates `takesPerRun` takes for every shot that has no clip yet. Returns clips generated.
+  // Plans the scene if needed, then generates `takesPerRun` takes for every planned clip not generated yet. Returns clips generated.
   const generateRemaining = async (scene: SceneRow): Promise<number> => {
     const plan = currentPlan(scene) ?? (await planScenes([scene]))[scene.id];
     if (!plan) return 0;
@@ -356,7 +357,7 @@ export function VideoStage({
         if (currentPlan(scene)?.shots.find((item) => item.shot === shot)?.videoUrl) continue;
         for (let take = 1; take <= takesPerRun; take += 1) {
           if (stopRequested.current) return;
-          setSceneActivity(scene.id, `Generating shot ${shot} of ${total}${takeProgress(take)}…`);
+          setSceneActivity(scene.id, `Generating ${total === 1 ? 'the clip' : `clip ${shot} of ${total}`}${takeProgress(take)}…`);
           await generateShot(scene, shot);
           generated += 1;
         }
@@ -373,7 +374,7 @@ export function VideoStage({
   const handleGenerateShot = async (scene: SceneRow, shotNumber: number) => {
     await runForScene(scene, async () => {
       for (let take = 1; take <= takesPerRun; take += 1) {
-        setSceneActivity(scene.id, `Generating shot ${shotNumber}${takeProgress(take)}…`);
+        setSceneActivity(scene.id, `Generating clip ${shotNumber}${takeProgress(take)}…`);
         await generateShot(scene, shotNumber);
       }
     });
@@ -440,7 +441,7 @@ export function VideoStage({
   const sceneViews = storyboardScenes.map((scene) => {
     const plan = savedPlans[scene.id] ?? parseShotPlan(scene.video_prompt);
     const beats = sceneBeats(shotContext(scene));
-    const remaining = plan ? plan.shots.filter((shot) => !shot.videoUrl).length : beats.length;
+    const remaining = plan ? plan.shots.filter((shot) => !shot.videoUrl).length : 1;
     return { scene, plan, beats, remaining };
   });
   const remainingShots = sceneViews.reduce((total, view) => total + view.remaining, 0);
@@ -452,7 +453,7 @@ export function VideoStage({
         <div>
           <h2 className="text-lg font-semibold text-foreground">Shot clips</h2>
           <p className="text-sm text-muted-foreground">
-            Each beat is one shot and one short clip. Generate as many takes of a shot as you need, then choose the one to use.
+            Each scene is one clip: its storyboard panels play in order as timed shots. Generate as many takes of a clip as you need, then choose the one to use.
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
@@ -466,7 +467,7 @@ export function VideoStage({
           <ConfirmButton
             disabled={isRunningAll || remainingClips === 0}
             title={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}?`}
-            description={`${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each of the ${remainingShots} shot${remainingShots === 1 ? '' : 's'} that ${remainingShots === 1 ? 'has' : 'have'} none yet, generated one after another across all scenes. Each clip spends video credits and takes a few minutes. You can stop after the current clip.`}
+            description={`${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each of the ${remainingShots} scene clip${remainingShots === 1 ? '' : 's'} not generated yet, one after another across all scenes. Each clip spends video credits and takes a few minutes. You can stop after the current clip.`}
             confirmLabel={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}`}
             onConfirm={handleGenerateAll}
           >
@@ -552,13 +553,12 @@ function SceneShotsCard({
   const characters = sceneCharacters(scene);
   const expectedBeats = Array.isArray(scene.beat_numbers) ? scene.beat_numbers.length : 0;
   const scriptIncomplete = expectedBeats > parsedBeatNumbers.length;
-  const planOutdated = Boolean(plan) && (
-    plan!.shots.length !== parsedBeatNumbers.length ||
-    plan!.shots.some((shot, index) => shot.beat !== parsedBeatNumbers[index])
-  );
+  const planOutdated = Boolean(plan) && !planMatchesBeats(plan!, parsedBeatNumbers);
+  // Planned earlier as one clip per beat; those clips still play and stitch until the scene is re-planned.
+  const perPanelPlan = Boolean(plan) && plan!.shots.length > 1;
   const clipCount = plan ? plan.shots.filter((shot) => shot.videoUrl).length : 0;
-  const shotCount = plan ? plan.shots.length : parsedBeatNumbers.length;
-  const isGrid = storyboardIsGrid(shotCount, scene.storyboard_prompt);
+  const shotCount = plan ? plan.shots.length : 1;
+  const isGrid = storyboardIsGrid(parsedBeatNumbers.length, scene.storyboard_prompt);
   const clipsToGenerate = (shotCount - clipCount) * takesPerRun;
 
   return (
@@ -582,14 +582,14 @@ function SceneShotsCard({
         <CardAction className="flex flex-wrap items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onPlan} disabled={disabled}>
             <ListVideo />
-            {plan ? 'Re-plan shots' : 'Plan shots'}
+            {plan ? 'Re-plan clip' : 'Plan clip'}
           </Button>
           <ConfirmButton
             size="sm"
             variant="outline"
             disabled={disabled || (Boolean(plan) && clipCount === shotCount)}
             title={`Generate ${clipsToGenerate} clip${clipsToGenerate === 1 ? '' : 's'} for scene ${sceneNumber}?`}
-            description={`${plan ? '' : 'The shots are planned first. '}${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each shot that has none yet. Each clip spends video credits and takes a few minutes.`}
+            description={`${plan ? '' : 'The clip is planned first. '}${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each planned clip not generated yet. Each clip spends video credits and takes a few minutes.`}
             confirmLabel="Generate clips"
             onConfirm={onGenerateRemaining}
           >
@@ -624,7 +624,11 @@ function SceneShotsCard({
         {planOutdated && (
           <Alert>
             <AlertTriangle />
-            <AlertDescription>The shot plan no longer matches this scene&apos;s beats. Re-plan the shots before generating.</AlertDescription>
+            <AlertDescription>
+              {perPanelPlan
+                ? 'This scene was planned as one clip per panel. Re-plan it to generate the whole scene as a single clip; the per-panel clips are kept for the episode until then.'
+                : 'The clip plan no longer matches this scene’s beats. Re-plan the clip before generating.'}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -657,7 +661,7 @@ function SceneShotsCard({
           <div className="space-y-4 md:col-span-2">
             {!plan && (
               <p className="text-sm text-muted-foreground">
-                No shots planned yet. Planning writes one short prompt per beat ({shotCount} shot{shotCount === 1 ? '' : 's'}); no video is generated until you ask for it.
+                No clip planned yet. Planning writes one prompt for the scene&apos;s clip, with each of its {parsedBeatNumbers.length} beat{parsedBeatNumbers.length === 1 ? '' : 's'} as a timed shot on its storyboard panel; no video is generated until you ask for it.
               </p>
             )}
             {plan?.shots.map((shot) => (
@@ -729,8 +733,12 @@ function ShotRow({
   if (draft.source !== shot.prompt) setDraft({ source: shot.prompt, text: shot.prompt });
 
   const longestClip = SHOT_DURATIONS[SHOT_DURATIONS.length - 1];
-  const overCap = shot.seconds > SHOT_CAP_SECONDS;
+  const segments = shot.segments || [];
+  // A scene clip is as long as its shots need; an older one-beat clip is held to the 8-second cap.
+  const overCap = !segments.length && shot.seconds > SHOT_CAP_SECONDS;
+  const squeezed = segments.length > 0 && shot.neededSeconds > shot.seconds;
   const takes = shotTakes(shot);
+  const clock = (seconds: number) => `0:${String(seconds).padStart(2, '0')}`;
 
   return (
     <div className="space-y-2.5 border-t border-border pt-4 first:border-t-0 first:pt-0">
@@ -738,15 +746,17 @@ function ShotRow({
         <div className="min-w-0 space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-foreground">
-              Shot {shot.shot}{shot.title ? `: ${shot.title}` : ''}
+              {segments.length ? 'Scene clip' : `Shot ${shot.shot}`}{shot.title ? `: ${shot.title}` : ''}
             </span>
             {overCap && <Badge variant="destructive">Over {SHOT_CAP_SECONDS} s cap</Badge>}
+            {squeezed && <Badge variant="destructive">Over {longestClip} s</Badge>}
           </div>
           <p className="text-xs text-muted-foreground tabular-nums">
             {[
-              isGrid ? `Panel ${shot.shot}` : null,
-              shot.beat !== null ? `Beat ${shot.beat}` : null,
+              !segments.length && isGrid ? `Panel ${shot.shot}` : null,
+              !segments.length && shot.beat !== null ? `Beat ${shot.beat}` : null,
               `${shot.seconds} s clip`,
+              segments.length > 1 ? `${segments.length} shots` : null,
               shot.dialogueWords > 0 ? `${shot.dialogueWords} spoken words` : 'no dialogue',
               takes.length > 1 ? `${takes.length} takes` : null,
             ].filter(Boolean).join(' · ')}
@@ -767,11 +777,35 @@ function ShotRow({
             : `This dialogue needs about ${shot.neededSeconds} s at an unhurried pace. To stay within ${SHOT_CAP_SECONDS} s, split it across two beats in the script.`}
         </p>
       )}
+      {squeezed && (
+        <p className="text-xs text-destructive">
+          This scene&apos;s beats need about {shot.neededSeconds} s, more than the longest {longestClip} s clip, so its shots are squeezed and the dialogue may be rushed. Split the scene in the Storyboard step.
+        </p>
+      )}
+
+      {segments.length > 1 && (
+        <ol className="space-y-1 text-xs text-muted-foreground tabular-nums">
+          {segments.map((segment, index) => (
+            <li key={segment.panel} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-medium text-foreground">{clock(segment.start)}–{clock(segment.end)}</span>
+              <span>
+                {[
+                  `Shot ${index + 1}`,
+                  isGrid ? `panel ${segment.panel}` : null,
+                  segment.beat !== null ? `beat ${segment.beat}${segment.title ? `: ${segment.title}` : ''}` : segment.title || null,
+                  segment.dialogueWords > 0 ? `${segment.dialogueWords} words` : 'no dialogue',
+                ].filter(Boolean).join(' · ')}
+              </span>
+              {segment.end - segment.start > SHOT_CAP_SECONDS && <Badge variant="destructive">Over {SHOT_CAP_SECONDS} s cap</Badge>}
+            </li>
+          ))}
+        </ol>
+      )}
 
       {takes.length > 1 ? (
         <TakePicker
           kind="video"
-          subject={`clip for shot ${shot.shot}`}
+          subject={segments.length ? 'scene clip' : `clip for shot ${shot.shot}`}
           takes={takes.map((take) => ({ key: take.url, url: take.url, createdAt: take.createdAt, inUse: take.url === shot.videoUrl }))}
           busyKey={takeBusy}
           disabled={disabled}
@@ -787,7 +821,7 @@ function ShotRow({
         <CollapsibleTrigger
           render={
             <Button variant="ghost" size="sm" className="group/trigger -ml-2 text-muted-foreground">
-              Shot prompt
+              Clip prompt
               <ChevronDown className="transition-transform group-data-[panel-open]/trigger:rotate-180" />
             </Button>
           }
@@ -798,7 +832,7 @@ function ShotRow({
               value={draft.text}
               onChange={(event) => setDraft({ source: shot.prompt, text: event.target.value })}
               disabled={disabled}
-              aria-label={`Prompt for shot ${shot.shot}`}
+              aria-label={segments.length ? 'Prompt for the scene clip' : `Prompt for shot ${shot.shot}`}
               className="font-mono text-xs md:text-xs"
             />
             {draft.text !== shot.prompt && (
