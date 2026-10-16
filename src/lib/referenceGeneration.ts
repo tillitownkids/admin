@@ -134,6 +134,10 @@ export async function generateReference(type: ReferenceType, id: string) {
         // An object's description is wrapped into a multi-view sheet prompt.
         prompt: type === 'prop' ? propSheetPrompt(record.description) : record.description,
         reference_url: record.reference_image_url || '',
+        // location and prop share this webhook; n8n needs this to pick the right sheet template
+        // (a prop's prompt above is already a complete multi-view object sheet on its own, not a
+        // description to wrap in the location grid template).
+        type,
       }),
       cache: 'no-store',
     });
