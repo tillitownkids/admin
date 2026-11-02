@@ -79,7 +79,7 @@ export function EpisodeStitcher({
     const incomplete: string[] = [];
     const list = ordered.flatMap((scene) => {
       const { clips: sceneClipList, missingShots } = sceneClips(scene);
-      if (missingShots > 0) incomplete.push(`scene ${scene.scene_number} (${missingShots} missing)`);
+      if (missingShots > 0) incomplete.push(`sequence ${scene.scene_number} (${missingShots} missing)`);
       return sceneClipList.map((clip) => ({ sceneId: scene.id, sceneNumber: scene.scene_number, shot: clip.shot, url: clip.url }));
     });
     return { clips: list as Clip[] | null, incompleteScenes: incomplete };
@@ -111,7 +111,7 @@ export function EpisodeStitcher({
         title: title.trim() || `${episodeTitle} - Full Episode`,
         videoUrls: clips.map((clip) => clip.url),
         sceneIds: Array.from(new Set(clips.map((clip) => clip.sceneId))),
-        clipLabels: clips.map((clip) => `scene ${clip.sceneNumber}${clip.shot !== null ? ` shot ${clip.shot}` : ""}`),
+        clipLabels: clips.map((clip) => `sequence ${clip.sceneNumber}${clip.shot !== null ? ` shot ${clip.shot}` : ""}`),
       });
       if (!result.success || !result.video) throw new Error(result.error || "The episode was not stitched.");
       setVideos((previous) => [result.video as unknown as StitchedVideo, ...previous]);
@@ -169,8 +169,8 @@ export function EpisodeStitcher({
           {clips === null
             ? "Loading clips…"
             : clipCount === 0
-            ? "Generate clips above first. Stitching joins them, in scene and shot order, into one video."
-            : `Joins ${clipCount} clip${clipCount === 1 ? "" : "s"}, in scene and shot order, into one video. This can take a few minutes.`}
+            ? "Make a clip for each sequence first. Stitching joins them, in sequence order, into one video."
+            : `Joins ${clipCount} clip${clipCount === 1 ? "" : "s"}, in sequence order, into one video. This can take a few minutes.`}
         </p>
       </div>
 

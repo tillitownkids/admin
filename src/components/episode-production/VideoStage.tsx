@@ -38,7 +38,7 @@ async function saveSceneUpdate(url: string, options: RequestInit): Promise<Respo
   const response = await fetch(url, options);
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`Could not save scene (HTTP ${response.status}): ${detail.slice(0, 500)}`);
+    throw new Error(`Could not save the sequence (HTTP ${response.status}): ${detail.slice(0, 500)}`);
   }
   return response;
 }
@@ -165,7 +165,7 @@ function shotContext(scene: SceneRow): ShotSceneContext {
 // One request per clip. `shot` and `duration` are additions to the scene payload the webhook already accepts.
 function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: EpisodeLocationRow[]) {
   if (!scene.magnific_identifier) {
-    throw new Error(`Scene ${scene.scene_number}'s storyboard image has no generator reference (it was uploaded, or saved without one), so the video generator cannot open a clip on it. In the Storyboard step, put a generated take in use for this scene, then try again.`);
+    throw new Error(`Sequence ${scene.scene_number}'s storyboard image has no generator reference (it was uploaded, or saved without one), so the video generator cannot open a clip on it. Put a generated storyboard take in use for this sequence, then try again.`);
   }
 
   // SceneCharacter is the authoritative character list for this scene.
@@ -176,7 +176,7 @@ function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: Ep
     else missingCharacters.push(character.name);
   }
   if (missingCharacters.length > 0) {
-    throw new Error(`Scene ${scene.scene_number}: ${missingCharacters.join(', ')} ${missingCharacters.length === 1 ? 'has' : 'have'} no reference sheet yet. Generate ${missingCharacters.length === 1 ? 'it' : 'them'} in Characters, then try again.`);
+    throw new Error(`Sequence ${scene.scene_number}: ${missingCharacters.join(', ')} ${missingCharacters.length === 1 ? 'has' : 'have'} no reference sheet yet. Generate ${missingCharacters.length === 1 ? 'it' : 'them'} in Characters, then try again.`);
   }
 
   const objectRefs: Record<string, string> = {};
@@ -186,17 +186,17 @@ function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: Ep
     else objectsWithoutSheet.push(object.name);
   }
   if (objectsWithoutSheet.length > 0) {
-    throw new Error(`Scene ${scene.scene_number}: ${objectsWithoutSheet.join(', ')} ${objectsWithoutSheet.length === 1 ? 'has' : 'have'} no object sheet yet. Generate ${objectsWithoutSheet.length === 1 ? 'it' : 'them'} in Objects, then try again.`);
+    throw new Error(`Sequence ${scene.scene_number}: ${objectsWithoutSheet.join(', ')} ${objectsWithoutSheet.length === 1 ? 'has' : 'have'} no object sheet yet. Generate ${objectsWithoutSheet.length === 1 ? 'it' : 'them'} in Objects, then try again.`);
   }
 
   const matchedEpLoc = episodeLocations.find(
     (el) => el.id === scene.episode_location_id || el.Location.name.toLowerCase() === scene.locationName.toLowerCase()
   );
   if (!matchedEpLoc) {
-    throw new Error(`Scene ${scene.scene_number}: the location "${scene.locationName || 'unknown'}" is not linked to this episode.`);
+    throw new Error(`Sequence ${scene.scene_number}: the location "${scene.locationName || 'unknown'}" is not linked to this episode.`);
   }
   if (!matchedEpLoc.Location.magnific_identifier) {
-    throw new Error(`Scene ${scene.scene_number}: the location "${matchedEpLoc.Location.name}" has no reference sheet yet. Generate it in Locations, then try again.`);
+    throw new Error(`Sequence ${scene.scene_number}: the location "${matchedEpLoc.Location.name}" has no reference sheet yet. Generate it in Locations, then try again.`);
   }
 
   return {
@@ -224,7 +224,11 @@ export function VideoStage({
   scenes,
   episodeLocations,
   onRefetchScenes,
-}: VideoStageProps) {
+  single = false,
+}: VideoStageProps & {
+  /** Shown inside one sequence's page: no episode-wide heading or "generate all" button. */
+  single?: boolean;
+}) {
   // Plans saved in this session. The ref is what long-running generation reads; the state is what renders.
   const plansRef = useRef<Record<string, SceneShotPlan>>({});
   const [savedPlans, setSavedPlans] = useState<Record<string, SceneShotPlan>>({});
@@ -260,11 +264,12 @@ export function VideoStage({
       return next;
     });
 
-  const savePlan = async (scene: SceneRow, plan: SceneShotPlan) => {
+  // `author` is recorded in the sequence's prompt history: "ai" for a planned clip, "admin" for an edit.
+  const savePlan = async (scene: SceneRow, plan: SceneShotPlan, author: 'ai' | 'admin' = 'admin') => {
     await saveSceneUpdate(`/api/scenes/${scene.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_prompt: serializeShotPlan(plan) }),
+      body: JSON.stringify({ video_prompt: serializeShotPlan(plan), author }),
     });
     rememberPlan(scene.id, plan);
   };
@@ -284,7 +289,7 @@ export function VideoStage({
         const scene = targets[index];
         try {
           if (!result.ok) throw new Error(result.error);
-          await savePlan(scene, result.plan);
+          await savePlan(scene, result.plan, 'ai');
           planned[scene.id] = result.plan;
         } catch (error) {
           setSceneError(scene.id, `Clip planning failed: ${errorText(error)}`);
@@ -300,7 +305,7 @@ export function VideoStage({
 
   const generateShot = async (scene: SceneRow, shotNumber: number) => {
     const shot = currentPlan(scene)?.shots.find((item) => item.shot === shotNumber);
-    if (!shot) throw new Error(`Scene ${scene.scene_number} has no planned clip ${shotNumber}. Plan its clip first.`);
+    if (!shot) throw new Error(`Sequence ${scene.scene_number} has no planned clip ${shotNumber}. Plan its clip first.`);
 
     const res = await sendVideoWebhook(buildShotPayload(scene, shot, episodeLocations));
     const responseBody = await res.text();
@@ -429,7 +434,7 @@ export function VideoStage({
         type: 'success',
         text: stopRequested.current
           ? `Stopped. ${generated} clip${generated === 1 ? '' : 's'} generated and saved.`
-          : `${generated} clip${generated === 1 ? '' : 's'} generated and saved. Scenes with problems show their own message.`,
+          : `${generated} clip${generated === 1 ? '' : 's'} generated and saved. Sequences with problems show their own message.`,
       });
     } catch (error) {
       setNotice({ type: 'error', text: errorText(error) });
@@ -450,30 +455,32 @@ export function VideoStage({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Shot clips</h2>
-          <p className="text-sm text-muted-foreground">
-            Each scene is one clip: its storyboard panels play in order as timed shots. Generate as many takes of a clip as you need, then choose the one to use.
-          </p>
-        </div>
+        {!single && (
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Clips</h2>
+            <p className="text-sm text-muted-foreground">
+              Each sequence is one clip: its storyboard panels play in order as timed shots. Generate as many takes of a clip as you need, then choose the one to use.
+            </p>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
           <TakeCountSelect value={takesPerRun} onChange={setTakesPerRun} disabled={isRunningAll || Object.keys(activity).length > 0} />
-          {isRunningAll && (
+          {!single && isRunningAll && (
             <Button variant="outline" onClick={() => { stopRequested.current = true; }}>
               <Square />
               Stop after current clip
             </Button>
           )}
-          <ConfirmButton
+          {!single && <ConfirmButton
             disabled={isRunningAll || remainingClips === 0}
             title={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}?`}
-            description={`${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each of the ${remainingShots} scene clip${remainingShots === 1 ? '' : 's'} not generated yet, one after another across all scenes. Each clip spends video credits and takes a few minutes. You can stop after the current clip.`}
+            description={`${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each of the ${remainingShots} sequence clip${remainingShots === 1 ? '' : 's'} not generated yet, one after another across all sequences. Each clip spends video credits and takes a few minutes. You can stop after the current clip.`}
             confirmLabel={`Generate ${remainingClips} clip${remainingClips === 1 ? '' : 's'}`}
             onConfirm={handleGenerateAll}
           >
             {isRunningAll ? <Loader2 className="animate-spin" /> : <Video />}
             Generate remaining clips ({remainingClips})
-          </ConfirmButton>
+          </ConfirmButton>}
         </div>
       </div>
 
@@ -487,8 +494,8 @@ export function VideoStage({
       {sceneViews.length === 0 ? (
         <Alert>
           <Film />
-          <AlertTitle>No storyboard images yet</AlertTitle>
-          <AlertDescription>A scene needs its storyboard image before its clips can be generated. Generate images in the Storyboard step.</AlertDescription>
+          <AlertTitle>No storyboard image yet</AlertTitle>
+          <AlertDescription>A clip opens on its sequence&apos;s storyboard image, so generate or upload the storyboard first.</AlertDescription>
         </Alert>
       ) : (
         <div className="space-y-4">
@@ -565,7 +572,7 @@ function SceneShotsCard({
     <Card>
       <CardHeader className="border-b">
         <CardTitle className="line-clamp-1">
-          Scene {sceneNumber}: {scene.description || 'Untitled'}
+          Sequence {sceneNumber}: {scene.description || 'Untitled'}
         </CardTitle>
         <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {scene.locationName && (
@@ -588,7 +595,7 @@ function SceneShotsCard({
             size="sm"
             variant="outline"
             disabled={disabled || (Boolean(plan) && clipCount === shotCount)}
-            title={`Generate ${clipsToGenerate} clip${clipsToGenerate === 1 ? '' : 's'} for scene ${sceneNumber}?`}
+            title={`Generate ${clipsToGenerate} clip${clipsToGenerate === 1 ? '' : 's'} for sequence ${sceneNumber}?`}
             description={`${plan ? '' : 'The clip is planned first. '}${takesPerRun === 1 ? 'One clip' : `${takesPerRun} takes`} for each planned clip not generated yet. Each clip spends video credits and takes a few minutes.`}
             confirmLabel="Generate clips"
             onConfirm={onGenerateRemaining}
@@ -617,7 +624,7 @@ function SceneShotsCard({
             <AlertTriangle />
             <AlertTitle>Saved script text is incomplete</AlertTitle>
             <AlertDescription>
-              Only {parsedBeatNumbers.length} of this scene&apos;s {expectedBeats} beats are in its saved script, so the other beats get no shot. Regenerate this episode&apos;s storyboard to restore them.
+              Only {parsedBeatNumbers.length} of this sequence&apos;s {expectedBeats} beats are in its saved script, so the other beats get no shot. Edit the sequence&apos;s beats, or plan the sequences again, to restore them.
             </AlertDescription>
           </Alert>
         )}
@@ -626,8 +633,8 @@ function SceneShotsCard({
             <AlertTriangle />
             <AlertDescription>
               {perPanelPlan
-                ? 'This scene was planned as one clip per panel. Re-plan it to generate the whole scene as a single clip; the per-panel clips are kept for the episode until then.'
-                : 'The clip plan no longer matches this scene’s beats. Re-plan the clip before generating.'}
+                ? 'This sequence was planned as one clip per panel. Re-plan it to generate the whole sequence as a single clip; the per-panel clips are kept for the episode until then.'
+                : 'The clip plan no longer matches this sequence’s beats. Re-plan the clip before generating.'}
             </AlertDescription>
           </Alert>
         )}
@@ -643,7 +650,7 @@ function SceneShotsCard({
                 className="block overflow-hidden rounded-lg border"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={scene.storyboard_image_url} alt={`Storyboard for scene ${sceneNumber}`} className="max-h-[220px] w-full object-cover" />
+                <img src={scene.storyboard_image_url} alt={`Storyboard for sequence ${sceneNumber}`} className="max-h-[220px] w-full object-cover" />
               </a>
             )}
             {characters.length > 0 && (
@@ -661,7 +668,7 @@ function SceneShotsCard({
           <div className="space-y-4 md:col-span-2">
             {!plan && (
               <p className="text-sm text-muted-foreground">
-                No clip planned yet. Planning writes one prompt for the scene&apos;s clip, with each of its {parsedBeatNumbers.length} beat{parsedBeatNumbers.length === 1 ? '' : 's'} as a timed shot on its storyboard panel; no video is generated until you ask for it.
+                No clip planned yet. Planning writes one prompt for the sequence&apos;s clip, with each of its {parsedBeatNumbers.length} beat{parsedBeatNumbers.length === 1 ? '' : 's'} as a timed shot on its storyboard panel; no video is generated until you ask for it.
               </p>
             )}
             {plan?.shots.map((shot) => (
@@ -679,7 +686,7 @@ function SceneShotsCard({
             ))}
             {clipCount === 0 && scene.video_url && (
               <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">Earlier full-scene clip. It is replaced once this scene has shot clips.</p>
+                <p className="text-xs text-muted-foreground">Earlier full-sequence clip. It is replaced once this sequence has shot clips.</p>
                 <video controls preload="metadata" src={scene.video_url} className="aspect-video w-full max-w-md rounded-lg border bg-black object-contain" />
               </div>
             )}
@@ -746,7 +753,7 @@ function ShotRow({
         <div className="min-w-0 space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-foreground">
-              {segments.length ? 'Scene clip' : `Shot ${shot.shot}`}{shot.title ? `: ${shot.title}` : ''}
+              {segments.length ? 'Sequence clip' : `Shot ${shot.shot}`}{shot.title ? `: ${shot.title}` : ''}
             </span>
             {overCap && <Badge variant="destructive">Over {SHOT_CAP_SECONDS} s cap</Badge>}
             {squeezed && <Badge variant="destructive">Over {longestClip} s</Badge>}
@@ -779,7 +786,7 @@ function ShotRow({
       )}
       {squeezed && (
         <p className="text-xs text-destructive">
-          This scene&apos;s beats need about {shot.neededSeconds} s, more than the longest {longestClip} s clip, so its shots are squeezed and the dialogue may be rushed. Split the scene in the Storyboard step.
+          This sequence&apos;s beats need about {shot.neededSeconds} s, more than the longest {longestClip} s clip, so its shots are squeezed and the dialogue may be rushed. Split it into two sequences.
         </p>
       )}
 
@@ -805,7 +812,7 @@ function ShotRow({
       {takes.length > 1 ? (
         <TakePicker
           kind="video"
-          subject={segments.length ? 'scene clip' : `clip for shot ${shot.shot}`}
+          subject={segments.length ? 'sequence clip' : `clip for shot ${shot.shot}`}
           takes={takes.map((take) => ({ key: take.url, url: take.url, createdAt: take.createdAt, inUse: take.url === shot.videoUrl }))}
           busyKey={takeBusy}
           disabled={disabled}
@@ -832,7 +839,7 @@ function ShotRow({
               value={draft.text}
               onChange={(event) => setDraft({ source: shot.prompt, text: event.target.value })}
               disabled={disabled}
-              aria-label={segments.length ? 'Prompt for the scene clip' : `Prompt for shot ${shot.shot}`}
+              aria-label={segments.length ? 'Prompt for the sequence clip' : `Prompt for shot ${shot.shot}`}
               className="font-mono text-xs md:text-xs"
             />
             {draft.text !== shot.prompt && (

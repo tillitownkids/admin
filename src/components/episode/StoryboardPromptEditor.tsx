@@ -200,11 +200,11 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
       const res = await saveStoryboardScenesAction(payload);
 
       if (res.success) {
-        setSuccessBanner(`Scene ${sceneToSave.scene_number || index + 1} prompt saved.`);
+        setSuccessBanner(`Sequence ${sceneToSave.scene_number || index + 1} prompt saved.`);
         afterSave();
         setTimeout(() => setSuccessBanner(null), 5000);
       } else {
-        setError(res.error || "Failed to confirm scene prompt.");
+        setError(res.error || "The sequence prompt could not be saved.");
       }
     } catch (err: any) {
       setError(err?.message || "Failed to save confirmed prompt.");
@@ -241,7 +241,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
         afterSave();
         setTimeout(() => setSuccessBanner(null), 5000);
       } else {
-        setError(res.error || "Failed to confirm all scene prompts.");
+        setError(res.error || "The sequence prompts could not be saved.");
       }
     } catch (err: any) {
       setError(err?.message || "Failed to save confirmed prompts.");
@@ -273,7 +273,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
           ...prev,
           {
             role: 'ai',
-            content: res.summary || "Updated scenes according to your request.",
+            content: res.summary || "Updated the sequences as you asked.",
             updatedScenes: res.updatedScenes
           }
         ]);
@@ -343,7 +343,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
             <p className="text-sm text-muted-foreground tabular-nums">
               {(() => {
                 const total = generatedScenes.reduce((sum, scene) => sum + runtimeOf(scene), 0);
-                const count = `${generatedScenes.length} ${generatedScenes.length === 1 ? "scene" : "scenes"}`;
+                const count = `${generatedScenes.length} ${generatedScenes.length === 1 ? "sequence" : "sequences"}`;
                 return total > 0 ? `${count} · ${formatRuntime(total)} of video` : count;
               })()}
             </p>
@@ -417,7 +417,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
                     {/* Storyboard Prompt Editor */}
                     <div className="space-y-2">
                       <textarea
-                        aria-label={`Image prompt for scene ${sceneNum}`}
+                        aria-label={`Image prompt for sequence ${sceneNum}`}
                         ref={(el) => {
                           if (el) {
                             el.style.height = "auto";
@@ -430,7 +430,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
                           e.target.style.height = `${e.target.scrollHeight}px`;
                           handlePromptChange(idx, e.target.value);
                         }}
-                        placeholder="The image prompt for this scene"
+                        placeholder="The image prompt for this sequence"
                         className={`${fieldClass} resize-none overflow-hidden leading-relaxed`}
                       />
                     </div>
@@ -471,7 +471,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
                 {chatHistory.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-center p-4 text-muted-foreground gap-2">
                     <MessageSquareText className="w-8 h-8 text-primary/40" />
-                    <p className="text-xs">Describe a change, for example "make scene 3 a low-angle shot". Suggested edits appear here for you to accept.</p>
+                    <p className="text-xs">Describe a change, for example "make sequence 3 a low-angle shot". Suggested edits appear here for you to accept.</p>
                   </div>
                 ) : (
                   chatHistory.map((msg, idx) => (
@@ -492,7 +492,7 @@ export function StoryboardPromptEditor({ storyId: id, onSaved }: { storyId: stri
                                   type="button"
                                   onClick={() => handleMergeChanges(msg.updatedScenes)}
                                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold transition-all shadow-sm cursor-pointer active:scale-95"
-                                  title="Merge AI updated scene prompts onto the storyboard editor"
+                                  title="Put the suggested prompts into the editor"
                                 >
                                   <Check className="w-3.5 h-3.5" />
                                   Apply to prompts

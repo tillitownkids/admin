@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { supabase } from "@/lib/supabase";
 import { matchCharactersByName } from "@/lib/characterNames";
+import { recordPromptVersion } from "@/lib/promptHistory";
 
 export interface ConfirmSceneInput {
   scriptId: string;
@@ -305,6 +306,13 @@ export async function saveStoryboardScenesAction(scenes: ConfirmSceneInput[]) {
             updated_at: new Date()
           }
         });
+        // A single sequence saved from the prompt editor is an edit; it goes into that sequence's history.
+        if (scenes.length === 1) {
+          await recordPromptVersion(updatedScene.id, "storyboard_prompt", updatedScene.storyboard_prompt, "admin", existingScene.storyboard_prompt);
+          if (sceneInput.sceneScriptBeats) {
+            await recordPromptVersion(updatedScene.id, "beats", updatedScene.script_beats, "admin", existingScene.script_beats);
+          }
+        }
       } else {
         updatedScene = await prisma.scene.create({
           data: {

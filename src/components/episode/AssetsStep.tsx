@@ -51,10 +51,10 @@ function AssetTile({
   onRemove: () => void;
 }) {
   const removeNote = type === "location"
-    ? (asset.sceneCount ? `${plural(asset.sceneCount, "scene")} ${asset.sceneCount === 1 ? "is" : "are"} set here, so it cannot be removed until the storyboard is planned without it.` : "It stays in the Locations library.")
+    ? (asset.sceneCount ? `${plural(asset.sceneCount, "sequence")} ${asset.sceneCount === 1 ? "is" : "are"} set here, so it cannot be removed until the storyboard is planned without it.` : "It stays in the Locations library.")
     : type === "object" && asset.kind === "episode"
     ? "This object belongs only to this episode, so it is deleted with its sheet."
-    : `It is also taken out of ${asset.sceneCount ? plural(asset.sceneCount, "scene") : "this episode's scenes"}, and stays in the library.`;
+    : `It is also taken out of ${asset.sceneCount ? plural(asset.sceneCount, "sequence") : "this episode's sequences"}, and stays in the library.`;
 
   return (
     <Card size="sm" className="overflow-hidden pt-0">
@@ -77,7 +77,7 @@ function AssetTile({
             )}
             {asset.kind && <Badge variant="secondary">{asset.kind === "episode" ? "This episode only" : "Permanent"}</Badge>}
             {asset.suggestPermanent && <Badge variant="outline" title="Likely to return; make it permanent in Objects">Recurring?</Badge>}
-            <Badge variant="outline">{asset.sceneCount ? plural(asset.sceneCount, "scene") : "No scenes yet"}</Badge>
+            <Badge variant="outline">{asset.sceneCount ? plural(asset.sceneCount, "sequence") : "No sequences yet"}</Badge>
           </div>
         </div>
         {asset.description && <p className="line-clamp-3 text-sm text-muted-foreground">{asset.description}</p>}

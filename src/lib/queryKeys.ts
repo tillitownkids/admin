@@ -18,6 +18,10 @@ export const queryKeys = {
   episodeObjects: (storyId: string) => ['episode', storyId, 'objects'] as const,
   episodeScript: (scriptId: string) => ['script', scriptId] as const,
   episodeVideos: (storyId: string) => ['episode', storyId, 'videos'] as const,
+  /** Issues and notes of an episode's sequences. */
+  sequenceNotes: (storyId: string) => ['episode', storyId, 'sequence-notes'] as const,
+  /** The history of one sequence's beats and prompts. */
+  promptVersions: (sceneId: string) => ['prompt-versions', sceneId] as const,
   /** Generated image takes of some owners (scenes, characters, locations, objects). */
   imageTakes: (ownerType: string, ownerIds: string) => ['image-takes', ownerType, ownerIds] as const,
 };

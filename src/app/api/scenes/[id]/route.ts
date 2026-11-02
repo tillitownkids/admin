@@ -3,10 +3,9 @@ import { supabase } from '@/lib/supabase';
 import { prisma } from '@/lib/prisma';
 
 import { processAndUploadStoryboardImage, processAndUploadSceneVideo, deleteSceneVideoFromStorage } from '@/lib/storage';
-import { addShotTake, parseShotPlan, removeShotTake, selectShotTake, serializeShotPlan } from '@/lib/sceneShots';
-
-// The generator's own link is temporary. A clip left on it disappears later and breaks stitching.
-const TEMPORARY_CLIP_WARNING = 'The clip was saved, but copying it to permanent storage failed, so it is on a temporary link that will stop working. Regenerate this clip to store it properly.';
+import { parseShotPlan, removeShotTake, selectShotTake, serializeShotPlan } from '@/lib/sceneShots';
+import { ClipTakeError, TEMPORARY_CLIP_WARNING, planWithClipTake } from '@/lib/sceneClips';
+import { PROMPT_AUTHORS, clipPromptOf, recordPromptVersion, type PromptAuthor } from '@/lib/promptHistory';
 
 async function loadVideoPrompt(id: string): Promise<string | null> {
   const { data, error } = await supabase.from('Scene').select('video_prompt').eq('id', id).maybeSingle();
@@ -19,6 +18,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
+    // Who wrote the prompts saved here, for their history: the admin unless a planner says "ai".
+    const author: PromptAuthor = PROMPT_AUTHORS.includes(body.author) && body.author !== 'original' ? body.author : 'admin';
+    const tracksHistory = body.storyboard_prompt !== undefined || body.script_beats !== undefined || body.video_prompt !== undefined;
+    const before = tracksHistory
+      ? (await supabase.from('Scene').select('storyboard_prompt, script_beats, video_prompt').eq('id', id).maybeSingle()).data
+      : null;
     const {
       storyboard_prompt,
       storyboard_image_url,
@@ -79,27 +84,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // One generated shot clip. It is added to the shot's takes here, on the server, so each
     // save starts from the stored plan rather than a client copy.
     if (shot_clip !== undefined) {
-      const clipUrl = shot_clip?.video_url;
-      if (typeof clipUrl !== 'string' || !clipUrl.startsWith('http')) {
-        return NextResponse.json({ error: 'shot_clip.video_url must be a video URL.' }, { status: 400 });
-      }
-      const plan = parseShotPlan(await loadVideoPrompt(id));
-      const shot = plan?.shots.find((item) => item.shot === Number(shot_clip.shot));
-      if (!plan || !shot) {
-        return NextResponse.json({ error: `Scene has no planned shot ${shot_clip?.shot}.` }, { status: 400 });
-      }
-
-      const clipIdentifier = shot_clip.video_magnific_identifier || null;
-      let permanentClipUrl = clipUrl;
+      let plan;
       try {
-        // A new file name per generation, so a regenerated clip never reuses a cached URL.
-        permanentClipUrl = await processAndUploadSceneVideo(clipUrl, `shot${shot.shot}_${clipIdentifier || Date.now()}`, id);
-      } catch (err) {
-        console.warn('Failed to upload shot clip to permanent storage, using original URL:', err);
-        warning = TEMPORARY_CLIP_WARNING;
+        const result = await planWithClipTake({
+          sceneId: id,
+          videoPrompt: await loadVideoPrompt(id),
+          shot: Number(shot_clip?.shot),
+          url: shot_clip?.video_url,
+          identifier: shot_clip?.video_magnific_identifier,
+        });
+        plan = result.plan;
+        if (result.warning) warning = result.warning;
+      } catch (error) {
+        if (error instanceof ClipTakeError) return NextResponse.json({ error: error.message }, { status: error.status });
+        throw error;
       }
-      const take = { url: permanentClipUrl, magnificId: clipIdentifier, createdAt: new Date().toISOString() };
-      plan.shots = plan.shots.map((item) => (item === shot ? addShotTake(item, take) : item));
       updatePayload.video_prompt = serializeShotPlan(plan);
       // video_url keeps meaning "this scene has video" for readers that predate shots.
       updatePayload.video_url = plan.shots.find((item) => item.videoUrl)?.videoUrl ?? null;
@@ -171,6 +170,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // The file goes only after the plan that pointed at it has been saved without it.
     if (clipToRemove) await deleteSceneVideoFromStorage(clipToRemove);
+
+    // Each saved prompt is kept in the sequence's history (a missing history table is skipped).
+    if (storyboard_prompt !== undefined) {
+      await recordPromptVersion(id, 'storyboard_prompt', storyboard_prompt, author, before?.storyboard_prompt);
+    }
+    if (script_beats !== undefined) {
+      await recordPromptVersion(id, 'beats', script_beats, author, before?.script_beats);
+    }
+    if (video_prompt !== undefined) {
+      const previous = clipPromptOf(before?.video_prompt);
+      const next = clipPromptOf(video_prompt);
+      if (next !== null && next !== previous) await recordPromptVersion(id, 'clip_prompt', next, author, previous);
+    }
 
     return NextResponse.json({ scene, warning });
   } catch (error: any) {
