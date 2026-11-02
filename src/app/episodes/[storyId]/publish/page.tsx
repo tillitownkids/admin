@@ -1,6 +1,7 @@
 import { AlertTriangle, ArrowRight, ExternalLink } from "lucide-react";
 
 import { ButtonLink } from "@/components/ButtonLink";
+import { EpisodeStitcher } from "@/components/episode/EpisodeStitcher";
 import { StepStart } from "@/components/episode/StepStart";
 import { YouTubePublishControls } from "@/components/youtube/YouTubePublishControls";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,7 +10,7 @@ import { loadEpisode } from "@/lib/episodeLoader";
 import { lockedStepReason } from "@/lib/episodeSteps";
 import { supabase } from "@/lib/supabase";
 
-// Uploading to YouTube streams the whole video and can take minutes.
+// Stitching waits on the external stitcher, and uploading to YouTube streams the whole video; both can take minutes.
 export const maxDuration = 300;
 
 type PrivacyStatus = "private" | "unlisted" | "public";
@@ -44,20 +45,30 @@ export default async function EpisodePublishPage({ params }: { params: Promise<{
   const result = await loadEpisode(storyId);
   if (!result.success) return null;
 
-  if (result.episode.progress.stitchedVideos === 0) {
+  const { episode } = result;
+  if (episode.progress.scenesWithClip === 0 && episode.progress.stitchedVideos === 0) {
     return (
       <StepStart
-        title="Nothing to publish yet"
-        description={`Publishing uploads the stitched episode video to YouTube. ${lockedStepReason("publish")}`}
+        title="Nothing to stitch yet"
+        description={`The episode is stitched from each sequence's clip in use, then uploaded to YouTube. ${lockedStepReason("publish")}`}
         action={
-          <ButtonLink href={`/episodes/${storyId}/video`}>
-            Go to Video
+          <ButtonLink href={`/episodes/${storyId}/sequences`}>
+            Go to Sequences
             <ArrowRight />
           </ButtonLink>
         }
       />
     );
   }
+
+  // Stitching comes first: it makes the videos published below.
+  const stitcher = (
+    <section className="space-y-3">
+      <h2 className="text-base font-semibold text-foreground">Assemble the episode</h2>
+      <EpisodeStitcher storyId={storyId} episodeTitle={episode.title} />
+    </section>
+  );
+  if (episode.progress.stitchedVideos === 0) return stitcher;
 
   const [videosResult, connectionResult] = await Promise.all([
     supabase.from("Video").select("id,title,video_url,created_at,YouTubeUpload(*)").eq("story_id", storyId).order("created_at", { ascending: false }),
@@ -84,7 +95,10 @@ export default async function EpisodePublishPage({ params }: { params: Promise<{
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
+      {stitcher}
+      <section className="space-y-6 border-t border-border pt-8">
+      <h2 className="text-base font-semibold text-foreground">Publish to YouTube</h2>
       {!connection && (
         <Alert>
           <AlertTriangle />
@@ -149,6 +163,7 @@ export default async function EpisodePublishPage({ params }: { params: Promise<{
           );
         })}
       </ul>
+      </section>
     </div>
   );
 }

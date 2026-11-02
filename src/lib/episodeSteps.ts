@@ -1,12 +1,13 @@
-// An episode moves through six steps in order. Everything that shows where an
+// An episode moves through five steps in order. Everything that shows where an
 // episode stands (the Episodes list, the stepper) derives it from these counts.
 
 export const EPISODE_STEPS = [
   { key: 'story', label: 'Story' },
   { key: 'assets', label: 'Assets' },
   { key: 'script', label: 'Script' },
-  { key: 'storyboard', label: 'Storyboard' },
-  { key: 'video', label: 'Video' },
+  // One place per sequence: its beats, storyboard, clip, issues and history.
+  { key: 'sequences', label: 'Sequences' },
+  // Stitch the clips into the episode, then upload it.
   { key: 'publish', label: 'Publish' },
 ] as const;
 
@@ -14,14 +15,14 @@ export type EpisodeStepKey = (typeof EPISODE_STEPS)[number]['key'];
 export type EpisodeStepState = 'done' | 'active' | 'todo' | 'locked';
 
 export interface EpisodeProgress {
-  /** Assets: characters, locations and objects linked to the episode. */
+  /** Assets: characters, locations and objects linked to the episode. "scenes" counts sequences. */
   assets: number;
   /** Assets with a reference sheet, which image and clip generation need. */
   assetsWithSheet: number;
   hasScript: boolean;
   scenes: number;
   scenesWithImage: number;
-  /** Scenes that have at least one generated clip. */
+  /** Sequences that have at least one generated clip. */
   scenesWithClip: number;
   stitchedVideos: number;
   publishedVideos: number;
@@ -35,8 +36,8 @@ function isDone(step: EpisodeStepKey, progress: EpisodeProgress): boolean {
       return (progress.assets > 0 && progress.assetsWithSheet === progress.assets)
         || (progress.scenes > 0 && progress.scenesWithImage === progress.scenes);
     case 'script': return progress.hasScript;
-    case 'storyboard': return progress.scenes > 0 && progress.scenesWithImage === progress.scenes;
-    case 'video': return progress.stitchedVideos > 0;
+    // Every sequence has its clip, or the episode has already been stitched.
+    case 'sequences': return (progress.scenes > 0 && progress.scenesWithClip === progress.scenes) || progress.stitchedVideos > 0;
     case 'publish': return progress.publishedVideos > 0;
   }
 }
@@ -47,9 +48,8 @@ function isAvailable(step: EpisodeStepKey, progress: EpisodeProgress): boolean {
     case 'story': return true;
     case 'assets': return true;
     case 'script': return true;
-    case 'storyboard': return progress.hasScript;
-    case 'video': return progress.scenesWithImage > 0;
-    case 'publish': return progress.stitchedVideos > 0;
+    case 'sequences': return progress.hasScript;
+    case 'publish': return progress.scenesWithClip > 0 || progress.stitchedVideos > 0;
   }
 }
 
@@ -71,9 +71,8 @@ export function episodeStepStates(progress: EpisodeProgress): Record<EpisodeStep
 /** What a locked step is waiting for, in the user's words. */
 export function lockedStepReason(step: EpisodeStepKey): string {
   switch (step) {
-    case 'storyboard': return 'Generate the script first.';
-    case 'video': return 'Generate at least one storyboard image first.';
-    case 'publish': return 'Stitch the episode video first.';
+    case 'sequences': return 'Write the script first.';
+    case 'publish': return 'Make at least one clip first.';
     default: return '';
   }
 }
@@ -88,16 +87,12 @@ export function episodeStatusLine(progress: EpisodeProgress): string {
       return `${missing} of ${progress.assets} assets need a sheet`;
     }
     case 'script': return 'Script not written yet';
-    case 'storyboard':
-      return progress.scenes === 0
-        ? 'Storyboard not started'
-        : `${progress.scenesWithImage} of ${progress.scenes} storyboard images`;
-    case 'video':
-      return progress.scenesWithClip === 0
-        ? 'No clips yet'
-        : `Clips for ${progress.scenesWithClip} of ${progress.scenes} scenes, not stitched`;
+    case 'sequences':
+      if (progress.scenes === 0) return 'Sequences not planned yet';
+      if (progress.scenesWithImage < progress.scenes) return `${progress.scenesWithImage} of ${progress.scenes} storyboards`;
+      return `Clips for ${progress.scenesWithClip} of ${progress.scenes} sequences`;
     case 'publish':
-      return progress.publishedVideos > 0 ? 'Published' : 'Ready to publish';
+      return progress.publishedVideos > 0 ? 'Published' : progress.stitchedVideos > 0 ? 'Ready to publish' : 'Ready to stitch';
   }
 }
 

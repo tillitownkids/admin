@@ -27,6 +27,7 @@ model Story {
   Video             Video[]
   Prop              Prop[]
   StoryProp         StoryProp[]
+  SequenceNote      SequenceNote[]
 }
 
 model Script {
@@ -124,8 +125,42 @@ model Scene {
   Story                     Story?           @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   SceneCharacter            SceneCharacter[]
   SceneProp                 SceneProp[]
+  SequenceNote              SequenceNote[]
+  PromptVersion             PromptVersion[]
 
   @@unique([episode_location_id, scene_number])
+}
+
+/// An issue or note on a sequence (a Scene row). Written from the admin or by Claude over MCP.
+model SequenceNote {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scene_id    String    @db.Uuid
+  story_id    String    @db.Uuid
+  kind        String    @default("issue")
+  body        String
+  media_url   String?
+  status      String    @default("open")
+  author      String    @default("admin")
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  resolved_at DateTime? @db.Timestamptz(6)
+  Scene       Scene     @relation(fields: [scene_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Story       Story     @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([story_id], map: "idx_sequence_note_story")
+  @@index([scene_id, created_at(sort: Desc)], map: "idx_sequence_note_scene")
+}
+
+/// A saved version of a sequence's beats, storyboard prompt or clip prompt.
+model PromptVersion {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scene_id   String   @db.Uuid
+  field      String
+  value      String
+  author     String   @default("admin")
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  Scene      Scene    @relation(fields: [scene_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([scene_id, field, created_at(sort: Desc)], map: "idx_prompt_version_scene")
 }
 
 model SceneCharacter {

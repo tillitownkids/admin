@@ -107,21 +107,21 @@ export async function getRecentActivityAction(): Promise<{ success: boolean; act
         activities.push({
           id: `video_${sc.id}`,
           type: 'video',
-          title: `Scene #${sc.scene_number} video generated`,
-          subtitle: sc.Story?.topic ? `Episode: ${sc.Story.topic.slice(0, 25)}...` : 'Scene video ready',
+          title: `Sequence ${sc.scene_number} clip generated`,
+          subtitle: sc.Story?.topic ? `Episode: ${sc.Story.topic.slice(0, 25)}...` : 'Sequence clip ready',
           timeAgo: getTimeAgo(date),
           timestamp: date.toISOString(),
-          href: sc.story_id ? `/episodes/${sc.story_id}/video` : '/episodes',
+          href: sc.story_id ? `/episodes/${sc.story_id}/sequences/${sc.scene_number}` : '/episodes',
         });
       } else if (sc.storyboard_image_url) {
         activities.push({
           id: `sb_${sc.id}`,
           type: 'storyboard',
-          title: `Scene #${sc.scene_number} storyboard created`,
+          title: `Sequence ${sc.scene_number} storyboard created`,
           subtitle: sc.Story?.topic ? `Episode: ${sc.Story.topic.slice(0, 25)}...` : 'Storyboard frame ready',
           timeAgo: getTimeAgo(date),
           timestamp: date.toISOString(),
-          href: sc.story_id ? `/episodes/${sc.story_id}/storyboard` : '/episodes',
+          href: sc.story_id ? `/episodes/${sc.story_id}/sequences/${sc.scene_number}` : '/episodes',
         });
       }
     }

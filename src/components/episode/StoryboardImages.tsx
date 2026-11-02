@@ -94,9 +94,12 @@ export function StoryboardImages({
   onChanged,
   regenerate,
   onRegenerateStarted,
+  single = false,
 }: {
   storyId: string;
   scenes: SceneRow[];
+  /** Shown inside one sequence's page: no episode-wide summary, batch buttons or step link. */
+  single?: boolean;
   episodeLocations: EpisodeLocationRow[];
   /** Called after an image is saved, so the scenes and the episode's progress reload. */
   onChanged: () => Promise<void> | void;
@@ -271,7 +274,7 @@ export function StoryboardImages({
       }
     }
     for (const scene of ready) {
-      if (!matched.has(scene.id)) problems[scene.id] = "The image service returned no image for this scene. Try again.";
+      if (!matched.has(scene.id)) problems[scene.id] = "The image service returned no image for this sequence. Try again.";
     }
     return { saved, problems };
   };
@@ -302,7 +305,7 @@ export function StoryboardImages({
         items.push(item);
         ready.push(scene);
       } catch (error) {
-        blocked[scene.id] = error instanceof Error ? error.message : "This scene could not be prepared.";
+        blocked[scene.id] = error instanceof Error ? error.message : "This sequence could not be prepared.";
       }
     }
     if (Object.keys(blocked).length > 0) setSceneErrors((previous) => ({ ...previous, ...blocked }));
@@ -330,12 +333,12 @@ export function StoryboardImages({
         : hadImage
         ? " A new take is not used until you choose it."
         : takesPerRun > 1
-        ? " Each scene uses its first take until you choose another."
+        ? " Each sequence uses its first take until you choose another."
         : "";
       setNotice(
         saved === expected
           ? { type: "success", text: `${plural(saved, "image")} generated and saved.${chooseHint}` }
-          : { type: "error", text: `${saved} of ${plural(expected, "image")} generated and saved. The scenes that failed say why.` }
+          : { type: "error", text: `${saved} of ${plural(expected, "image")} generated and saved. The sequences that failed say why.` }
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : "The images could not be generated.";
@@ -357,8 +360,8 @@ export function StoryboardImages({
       setNotice({
         type: "success",
         text: scene.video_url
-          ? `Scene ${scene.scene_number} now uses the chosen image. Its clips were made from another take and may no longer match.`
-          : `Scene ${scene.scene_number} now uses the chosen image.`,
+          ? `Sequence ${scene.scene_number} now uses the chosen image. Its clips were made from another take and may no longer match.`
+          : `Sequence ${scene.scene_number} now uses the chosen image.`,
       });
     } catch (error) {
       setSceneErrors((previous) => ({ ...previous, [scene.id]: error instanceof Error ? error.message : "The take could not be put in use." }));
@@ -399,7 +402,7 @@ export function StoryboardImages({
       await Promise.all([onChanged(), loadTakes()]);
       setNotice({
         type: "success",
-        text: `Scene ${scene.scene_number} now uses the uploaded image. Earlier takes are kept, so you can switch back at any time.`,
+        text: `Sequence ${scene.scene_number} now uses the uploaded image. Earlier takes are kept, so you can switch back at any time.`,
       });
     } catch (error) {
       setSceneErrors((previous) => ({ ...previous, [scene.id]: error instanceof Error ? error.message : "The image could not be uploaded." }));
@@ -440,16 +443,18 @@ export function StoryboardImages({
       />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <p className="text-sm text-muted-foreground">
-            {imageCount} of {plural(sortedScenes.length, "scene")} {imageCount === 1 ? "has" : "have"} an image.
-          </p>
+          {!single && (
+            <p className="text-sm text-muted-foreground">
+              {imageCount} of {plural(sortedScenes.length, "sequence")} {imageCount === 1 ? "has" : "have"} an image.
+            </p>
+          )}
           <TakeCountSelect value={takesPerRun} onChange={setTakesPerRun} disabled={isWorking} />
         </div>
-        {pendingScenes.length > 0 ? (
+        {single ? null : pendingScenes.length > 0 ? (
           <ConfirmButton
             disabled={isWorking}
             title={`Generate ${plural(pendingScenes.length * takesPerRun, "storyboard image")}?`}
-            description={`${takesPerRun === 1 ? "One image" : `${takesPerRun} takes`} for each of the ${plural(pendingScenes.length, "scene")} that ${pendingScenes.length === 1 ? "has" : "have"} none yet. Each image spends image credits, and the whole run can take several minutes.`}
+            description={`${takesPerRun === 1 ? "One image" : `${takesPerRun} takes`} for each of the ${plural(pendingScenes.length, "sequence")} that ${pendingScenes.length === 1 ? "has" : "have"} none yet. Each image spends image credits, and the whole run can take several minutes.`}
             confirmLabel={`Generate ${plural(pendingScenes.length * takesPerRun, "image")}`}
             onConfirm={() => generate(pendingScenes)}
           >
@@ -461,12 +466,12 @@ export function StoryboardImages({
             variant="outline"
             disabled={isWorking || sortedScenes.length === 0}
             title={`Generate ${plural(sortedScenes.length * takesPerRun, "new take")}?`}
-            description={`${takesPerRun === 1 ? "One more take" : `${takesPerRun} more takes`} for each of the ${plural(sortedScenes.length, "scene")}. The images in use stay in use until you choose a different take. Each image spends image credits.`}
+            description={`${takesPerRun === 1 ? "One more take" : `${takesPerRun} more takes`} for each of the ${plural(sortedScenes.length, "sequence")}. The images in use stay in use until you choose a different take. Each image spends image credits.`}
             confirmLabel={`Generate ${plural(sortedScenes.length * takesPerRun, "take")}`}
             onConfirm={() => generate(sortedScenes)}
           >
             {isWorking ? <Loader2 className="animate-spin" /> : <Plus />}
-            New {takeWord} for every scene
+            New {takeWord} for every sequence
           </ConfirmButton>
         )}
       </div>
@@ -502,7 +507,7 @@ export function StoryboardImages({
                   className="block self-start overflow-hidden rounded-lg border border-border"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={scene.storyboard_image_url} alt={`Storyboard for scene ${scene.scene_number}`} className="aspect-video w-full object-cover" />
+                  <img src={scene.storyboard_image_url} alt={`Storyboard for sequence ${scene.scene_number}`} className="aspect-video w-full object-cover" />
                 </a>
               ) : (
                 <div className="flex aspect-video items-center justify-center self-start rounded-lg border border-dashed border-border text-xs text-muted-foreground">
@@ -514,7 +519,7 @@ export function StoryboardImages({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 space-y-1">
                     <h3 className="text-sm font-medium text-foreground">
-                      Scene {scene.scene_number}: {scene.description || "Untitled"}
+                      Sequence {scene.scene_number}: {scene.description || "Untitled"}
                     </h3>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       {scene.locationName && (
@@ -534,7 +539,7 @@ export function StoryboardImages({
                       variant="ghost"
                       size="sm"
                       disabled={isWorking}
-                      title="Use a storyboard image made outside the app as a take of this scene"
+                      title="Use a storyboard image made outside the app as a take of this sequence"
                       onClick={() => {
                         setUploadScene(scene);
                         fileInputRef.current?.click();
@@ -596,8 +601,8 @@ export function StoryboardImages({
                         value={draft ?? savedPrompt(scene)}
                         onChange={(event) => setDrafts((previous) => ({ ...previous, [scene.id]: { source: savedPrompt(scene), text: event.target.value } }))}
                         disabled={isWorking || savingPrompt === scene.id}
-                        aria-label={`Image prompt for scene ${scene.scene_number}`}
-                        placeholder="Describe the storyboard image for this scene"
+                        aria-label={`Image prompt for sequence ${scene.scene_number}`}
+                        placeholder="Describe the storyboard image for this sequence"
                         className="max-h-96 leading-relaxed"
                       />
                       {draft !== null ? (
@@ -626,7 +631,7 @@ export function StoryboardImages({
                         <p className="text-xs text-muted-foreground">
                           {savedPrompt(scene)
                             ? "Change the prompt, then generate a new take to see the result. Takes already made are kept."
-                            : "No prompt is saved for this scene, so its title is used. Write one to control the image."}
+                            : "No prompt is saved for this sequence, so its title is used. Write one to control the image."}
                         </p>
                       )}
                     </div>
@@ -641,7 +646,7 @@ export function StoryboardImages({
                   </p>
                   <TakePicker
                     kind="image"
-                    subject={`storyboard image for scene ${scene.scene_number}`}
+                    subject={`storyboard image for sequence ${scene.scene_number}`}
                     takes={takes}
                     busyKey={takeBusy}
                     disabled={isWorking}
@@ -655,10 +660,10 @@ export function StoryboardImages({
         })}
       </ul>
 
-      {imageCount > 0 && (
+      {!single && imageCount > 0 && (
         <div className="flex justify-end">
-          <ButtonLink href={`/episodes/${storyId}/video`} variant={pendingScenes.length === 0 ? "default" : "outline"}>
-            Continue to Video
+          <ButtonLink href={`/episodes/${storyId}/sequences?tab=clips`} variant={pendingScenes.length === 0 ? "default" : "outline"}>
+            Continue to clips
             <ArrowRight />
           </ButtonLink>
         </div>

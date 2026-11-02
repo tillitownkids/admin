@@ -28,6 +28,7 @@ import {
   withBeatDurations,
 } from "@/lib/sceneTiming";
 import { matchCharactersByName, normalizeCharacterName } from "@/lib/characterNames";
+import { stripHtmlToMarkdown } from "@/lib/scriptText";
 
 
 interface StoryboardScene {
@@ -40,35 +41,6 @@ interface StoryboardScene {
   location_name?: string;
   character_names?: string[];
   episodeLocationId?: string;
-}
-
-function stripHtmlToMarkdown(text: string): string {
-  if (!text) return "";
-  if (!/<[a-z][\s\S]*>/i.test(text)) return text;
-
-  let cleaned = text;
-  cleaned = cleaned.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, "\n# $1\n");
-  cleaned = cleaned.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, "\n## $1\n");
-  cleaned = cleaned.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, "\n### $1\n");
-  cleaned = cleaned.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, "**$1**");
-  cleaned = cleaned.replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, "**$1**");
-  cleaned = cleaned.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, "*$1*");
-  cleaned = cleaned.replace(/<u[^>]*>([\s\S]*?)<\/u>/gi, "$1");
-  cleaned = cleaned.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, "$1\n\n");
-  cleaned = cleaned.replace(/<br\s*\/?>/gi, "\n");
-  cleaned = cleaned.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
-  cleaned = cleaned.replace(/<\/?ul[^>]*>/gi, "\n");
-  cleaned = cleaned.replace(/<\/?ol[^>]*>/gi, "\n");
-  cleaned = cleaned.replace(/<[^>]+>/g, "");
-  cleaned = cleaned
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-  return cleaned.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function splitScriptIntoBeatChunks(fullScriptText: string, chunkSize = 10): string[] {
@@ -146,8 +118,8 @@ ${timings.map((t) => `- Beat ${t.beat}: ${t.seconds} s`).join("\n")}`
     setStage([
       episodeTiming.agentError ? "The timing agent did not answer, so beats are timed by their dialogue." : "",
       timings.length > 0
-        ? `Splitting ${timings.length} beats (${runtime} in total) into scenes…`
-        : "Splitting the script into scenes…",
+        ? `Splitting ${timings.length} beats (${runtime} in total) into sequences…`
+        : "Splitting the script into sequences…",
     ].filter(Boolean).join(" "));
 
     const locationPromptSection = storyLocations.length > 0
@@ -293,7 +265,7 @@ ${prompt}`;
           .slice(0, MAX_SCENE_OBJECTS),
       }));
       timings = lengthenShortScenes(detectedScenes, timings);
-      setStage(`Writing image prompts for ${detectedScenes.length} scenes…`);
+      setStage(`Writing image prompts for ${detectedScenes.length} sequences…`);
 
       // PASS 2: Extract each scene's original beats and produce its image prompt.
       const sceneRequests = detectedScenes.map((scene, idx) => {
@@ -472,7 +444,7 @@ Return ONLY valid JSON with this structure:
               fix: true,
               onReading: (done, total) => setStage(`Reading the episode to see who is where (${done} of ${total} parts)…`),
               onCompletingCast: (names) => setStage(`Adding ${names.join(", ")} to the episode's characters…`),
-              onProgress: (done, total) => setStage(`Checking each scene's characters against the script (${done} of ${total})…`),
+              onProgress: (done, total) => setStage(`Checking each sequence's characters against the script (${done} of ${total})…`),
             });
           } catch (err) {
             console.error("The character check did not run after planning:", err);
@@ -480,10 +452,10 @@ Return ONLY valid JSON with this structure:
           onPlanned?.(characterReports);
           router.refresh();
         } else {
-          setError(saveRes.error || "Failed to save initial storyboard scenes.");
+          setError(saveRes.error || "The new sequences could not be saved.");
         }
       } else {
-        setError("Could not parse storyboard scenes from the AI response.");
+        setError("The AI answer held no sequences that could be read. Try again.");
       }
     } catch (err: any) {
       setError(err?.message || "An error occurred while generating storyboard prompts.");
@@ -505,12 +477,12 @@ Return ONLY valid JSON with this structure:
         </Alert>
       )}
       <StepStart
-        title="Plan the storyboard"
-        description={`Times every beat, then groups the beats into scenes of ${SCENE_MIN_SECONDS} to ${SCENE_MAX_SECONDS} seconds in one location, and writes an image prompt for each scene. No images are generated yet; you review the prompts first.`}
+        title="Plan the sequences"
+        description={`Times every beat, then groups the beats into sequences of ${SCENE_MIN_SECONDS} to ${SCENE_MAX_SECONDS} seconds in one location, and writes a storyboard prompt for each. No images are generated yet; you review the prompts first.`}
         action={
           <Button onClick={handleGenerateStoryboard} disabled={isLoading || !hasScript}>
             {isLoading ? <Loader2 className="animate-spin" /> : <Sparkles />}
-            {isLoading ? "Planning the storyboard…" : "Generate storyboard prompts"}
+            {isLoading ? "Planning the sequences…" : "Plan the sequences"}
           </Button>
         }
         note={

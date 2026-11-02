@@ -23,7 +23,8 @@ export function EpisodeStepper({
         {EPISODE_STEPS.map((step, index) => {
           const state = states[step.key];
           const href = `/episodes/${storyId}/${step.key}`;
-          const current = pathname === href;
+          // A sequence's own page (/sequences/18) sits under the Sequences step.
+          const current = pathname === href || Boolean(pathname?.startsWith(`${href}/`));
           const marker = (
             <span
               className={cn(
