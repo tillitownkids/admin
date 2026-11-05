@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { GeneratedImageTake } from "@/lib/generatedImageHistory";
 import { sceneRuntime } from "@/lib/sceneTiming";
 import { finishStoryboardUploadAction, startStoryboardUploadAction } from "@/actions/uploadStoryboardTakeAction";
+import { resolveGenerationAttachmentsAction } from "@/actions/sequenceAction";
 import { createClient } from "@/lib/supabase/client";
 import { queryKeys } from "@/lib/queryKeys";
 
@@ -90,7 +91,6 @@ function plural(count: number, word: string) {
 export function StoryboardImages({
   storyId,
   scenes,
-  episodeLocations,
   onChanged,
   regenerate,
   onRegenerateStarted,
@@ -185,46 +185,26 @@ export function StoryboardImages({
     }
   };
 
-  // The image request: the scene's prompt plus the reference sheet of every character and of its location.
-  const buildPayloadItem = (scene: SceneRow, prompt: string) => {
-    const characters: Record<string, string> = {};
-    const withoutSheet = sceneCharacters(scene).filter((character) => !character.magnific_identifier).map((character) => character.name);
-    if (withoutSheet.length > 0) {
-      throw new Error(`${withoutSheet.join(", ")} ${withoutSheet.length === 1 ? "has" : "have"} no reference sheet yet. Generate ${withoutSheet.length === 1 ? "it" : "them"} in Characters, then try again.`);
-    }
-    for (const character of sceneCharacters(scene)) characters[character.name] = character.magnific_identifier!;
-
-    const location = episodeLocations.find(
-      (item) => item.id === scene.episode_location_id || item.Location.name.toLowerCase() === scene.locationName.toLowerCase()
-    );
-    if (!location && scene.locationName) {
-      throw new Error(`The location "${scene.locationName}" is not linked to this episode.`);
-    }
-    if (location && !location.Location.magnific_identifier) {
-      throw new Error(`The location "${location.Location.name}" has no reference sheet yet. Generate it in Locations, then try again.`);
-    }
-
-    const objects: Record<string, string> = {};
-    const objectsWithoutSheet = sceneObjects(scene).filter((object) => !object.magnific_identifier).map((object) => object.name);
-    if (objectsWithoutSheet.length > 0) {
-      throw new Error(`${objectsWithoutSheet.join(", ")} ${objectsWithoutSheet.length === 1 ? "has" : "have"} no object sheet yet. Generate ${objectsWithoutSheet.length === 1 ? "it" : "them"} in Objects, then try again.`);
-    }
-    for (const object of sceneObjects(scene)) objects[object.name] = object.magnific_identifier!;
-
+  // The image request: the sequence's prompt plus its attachments in order (Image 1, 2, ...), as Claude
+  // chose them, or automatically its cast, location and objects. Resolved on the server, which knows
+  // every sheet version and storyboard.
+  const buildPayloadItem = async (scene: SceneRow, prompt: string) => {
+    const result = await resolveGenerationAttachmentsAction([scene.id], "storyboard");
+    if (!result.ok) throw new Error(result.error);
+    const prepared = result.bySequence[scene.id];
+    if (!prepared) throw new Error("The attachments could not be prepared.");
+    if (prepared.problems.length > 0) throw new Error(`Not attached yet: ${prepared.problems.join(" ")}`);
     return {
       id: scene.id,
       imagePrompt: prompt || scene.description || "",
-      references: {
-        characters,
-        locations: location ? { [location.Location.name]: location.Location.magnific_identifier! } : {},
-        // Object sheets: the image workflow passes them to the generator with the other references.
-        objects,
-      },
+      // The older maps stay for the webhook's validation; `attachments` carries the order.
+      references: prepared.references,
+      attachments: prepared.attachments,
     };
   };
 
   // One round: a single request for one image per scene, each saved as a take straight away.
-  const generateRound = async (ready: SceneRow[], items: ReturnType<typeof buildPayloadItem>[], putInUse = false) => {
+  const generateRound = async (ready: SceneRow[], items: Awaited<ReturnType<typeof buildPayloadItem>>[], putInUse = false) => {
     const res = await fetch(STORYBOARD_WEBHOOK, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -291,12 +271,12 @@ export function StoryboardImages({
     // A scene that cannot be prepared is reported on its own row; the rest still run.
     setWorking(Object.fromEntries(targets.map((scene) => [scene.id, true])));
     const ready: SceneRow[] = [];
-    const items: ReturnType<typeof buildPayloadItem>[] = [];
+    const items: Awaited<ReturnType<typeof buildPayloadItem>>[] = [];
     const blocked: Record<string, string> = {};
     for (const scene of targets) {
       try {
         const draft = draftOf(scene);
-        const item = buildPayloadItem(scene, draft ?? savedPrompt(scene));
+        const item = await buildPayloadItem(scene, draft ?? savedPrompt(scene));
         if (draft !== null) {
           if (!draft.trim()) throw new Error("The image prompt is empty. Write a prompt, or discard the edit.");
           // An edited prompt is saved before it is used, so the image and the saved prompt always match.
@@ -586,7 +566,7 @@ export function StoryboardImages({
                   </p>
                 )}
 
-                <Collapsible>
+                <Collapsible defaultOpen={single}>
                   <CollapsibleTrigger
                     render={
                       <Button variant="ghost" size="sm" className="group/trigger -ml-2 text-muted-foreground">

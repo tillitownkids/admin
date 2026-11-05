@@ -6,6 +6,14 @@ import { ClipTakeError, addClipTake } from "@/lib/sceneClips";
 import { listPromptVersions, type PromptVersion } from "@/lib/promptHistory";
 import { SequenceWriteError, restorePromptVersion, updateSequenceBeats } from "@/lib/sequenceWrites";
 import {
+  AttachmentError,
+  resolveSequenceAttachments,
+  saveSequenceAttachments,
+  webhookReferences,
+  type AttachmentSet,
+  type AttachmentTarget,
+} from "@/lib/sequenceAttachments";
+import {
   SequenceNoteError,
   addSequenceNote,
   listSequenceNotes,
@@ -22,7 +30,7 @@ type Result<T> = ({ ok: true } & T) | { ok: false; error: string };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function failure(error: unknown, fallback: string): { ok: false; error: string } {
-  if (error instanceof SequenceWriteError || error instanceof SequenceNoteError || error instanceof ClipTakeError) {
+  if (error instanceof SequenceWriteError || error instanceof SequenceNoteError || error instanceof ClipTakeError || error instanceof AttachmentError) {
     return { ok: false, error: error.message };
   }
   console.error(fallback, error);
@@ -113,5 +121,45 @@ export async function finishClipUploadAction(sceneId: string, path: string): Pro
     return { ok: true, inUse: result.inUse === data.publicUrl };
   } catch (error) {
     return failure(error, "The clip was uploaded but could not be saved as a take.");
+  }
+}
+
+/** A sequence's storyboard and clip attachments, in order, for its page. */
+export async function getSequenceAttachmentsAction(sceneId: string): Promise<Result<{ storyboard: AttachmentSet; clip: AttachmentSet }>> {
+  try {
+    if (!UUID_PATTERN.test(sceneId)) return { ok: false, error: "The sequence could not be identified." };
+    const [storyboard, clip] = await Promise.all([resolveSequenceAttachments(sceneId, "storyboard"), resolveSequenceAttachments(sceneId, "clip")]);
+    return { ok: true, storyboard, clip };
+  } catch (error) {
+    return failure(error, "The attachments could not be loaded.");
+  }
+}
+
+export type GenerationAttachments = ReturnType<typeof webhookReferences> & { problems: string[] };
+
+/** What each sequence's generation request attaches, in order, ready for the webhook. */
+export async function resolveGenerationAttachmentsAction(sceneIds: string[], target: AttachmentTarget): Promise<Result<{ bySequence: Record<string, GenerationAttachments> }>> {
+  try {
+    const ids = sceneIds.filter((id) => UUID_PATTERN.test(id)).slice(0, 200);
+    const bySequence: Record<string, GenerationAttachments> = {};
+    // A few at a time: each sequence takes a handful of small queries.
+    for (let start = 0; start < ids.length; start += 6) {
+      const sets = await Promise.all(ids.slice(start, start + 6).map((id) => resolveSequenceAttachments(id, target === "clip" ? "clip" : "storyboard")));
+      sets.forEach((set, index) => { bySequence[ids[start + index]] = { ...webhookReferences(set), problems: set.problems }; });
+    }
+    return { ok: true, bySequence };
+  } catch (error) {
+    return failure(error, "The attachments could not be prepared.");
+  }
+}
+
+/** Goes back to the automatic attachments for one request. */
+export async function resetSequenceAttachmentsAction(sceneId: string, target: AttachmentTarget): Promise<Result<object>> {
+  try {
+    if (!UUID_PATTERN.test(sceneId)) return { ok: false, error: "The sequence could not be identified." };
+    await saveSequenceAttachments(sceneId, target === "clip" ? "clip" : "storyboard", null);
+    return { ok: true };
+  } catch (error) {
+    return failure(error, "The attachments could not be reset.");
   }
 }

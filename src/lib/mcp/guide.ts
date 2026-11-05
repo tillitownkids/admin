@@ -11,7 +11,7 @@ export const SERVER_INSTRUCTIONS = `TilliTown Admin is the production tool and t
 
 Before writing any story, script, storyboard prompt or video direction, call get_production_guide once and follow it exactly: the admin parses the saved text, so the format matters.
 
-Typical flow: list_episodes or get_episode to see where things stand; list_library for exact character, location and object names; create_episode (or update_story); save_script; save_storyboard (the sequences); save_video_plan per sequence. Then review: get_sequence shows one sequence's prompts, takes, issues and history; add_sequence_note records a problem seen in a storyboard or clip; update_sequence or save_video_plan fixes it; resolve_sequence_note closes it; restore_prompt_version undoes a change. Storyboards and clips made with the Magnific connector are saved with record_storyboard_take / record_clip_take (pass the Magnific identifier). Character and location looks come from reference sheets, never from prompt text.
+Typical flow: list_episodes or get_episode to see where things stand; list_library for exact character, location and object names; create_episode (or update_story); save_script; save_storyboard (the sequences); set_attachments for each sequence's storyboard and clip (get_attachable_assets lists sheets, their versions and other storyboards); save_video_plan per sequence. Then review: get_sequence shows one sequence's prompts, takes, issues and history; add_sequence_note records a problem seen in a storyboard or clip; update_sequence or save_video_plan fixes it; resolve_sequence_note closes it; restore_prompt_version undoes a change. Storyboards and clips made with the Magnific connector are saved with record_storyboard_take / record_clip_take (pass the Magnific identifier). Character and location looks come from reference sheets, never from prompt text.
 
 Writes go to the production database. Show the user what you will save and get a yes before replacing an existing script or the sequences, and before spending generation credits.`;
 
@@ -76,7 +76,7 @@ Group consecutive beats into sequences. Each sequence is one storyboard image (a
 - Name whose hand, boot or face a close-up shows; never an anonymous "a boot lands on sand".
 - You do not copy beat text: the server takes each sequence's beats from the saved script.
 
-storyboard_prompt template (under 300 words, plain, no decorative adjectives):
+storyboard_prompt template (under 300 words, plain, no decorative adjectives). When the attachments are chosen with set_attachments, start with its prompt_line ("Attach 3 images in this order: (1) Jaksh sheet, ...") and name every image by number in the text ("Jaksh (Image 1)", "Setting matches Image 2's bottom-middle panel").
 
 Full-color 3D CGI animation frame, Disney Pixar and DreamWorks feature film quality, Octane 3D render, smooth digital CGI models, cinematic volumetric lighting, zero line art.
 
@@ -101,6 +101,16 @@ Panel rules:
 - Keep characters apart and on the same side of frame across panels unless the action moves them.
 - A sequence with fewer than 4 beats fills its spare panels with alternate framings or detail inserts of its own beats, each starting "(spare)".
 - Never use "hand-drawn", "sketch", "line art", "drawing" or "illustration". Never describe looks; the Characters line is the only place characters are listed.
+
+## 3b. Attachments (get_attachable_assets, set_attachments)
+
+You choose each sequence's reference images, for its storyboard and for its clip, in order. Without a choice the admin attaches the sequence's cast, location and objects (and for a clip its own storyboard first). Rules learned on Episode 4:
+- Only what the shot needs: the characters actually in frame, the one location sheet, at most ${MAX_SCENE_OBJECTS} objects. A sheet of someone not in the shot puts them in the shot.
+- Pick the right version of a sheet: the night location sheet for night sequences, the golden-hour one for sunset (get_attachable_assets lists every version with version_id).
+- Continuity: when a sequence carries straight on from the one before, attach that sequence's approved storyboard LAST (so the other image numbers stay put) and add this paragraph to the storyboard prompt: "CONTINUITY REFERENCE — Image N is the approved storyboard of Sequence P, which plays just before this one. Look only at its panel labeled "…" and continue from it: same environment layout and lighting, same character positions, same clothes and props. Do not copy its grid, its other panels, its labels or its actions; draw only the new panels described below. If Image N and this text disagree, follow this text." Name ONE panel; models copy whole grids.
+- Never attach a sheet that is several pictures in a row (a power or effect sheet such as Scan & Explain) to a clip: the video copies the layout and splits the frame. Describe the effect in words instead.
+- A clip's Image 1 is always its own storyboard. The storyboard must be a 2x2 grid: a two-panel (side by side) storyboard is twice as wide as the video and makes a split-screen clip.
+- After set_attachments, write or update the prompt so it refers to the images by the numbers returned.
 
 ## 4. Video shot directions (save_video_plan)
 

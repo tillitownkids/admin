@@ -64,3 +64,12 @@ rejected because storyboards and clips need it.
    characters and its one location. If the limit is lower, tell the app team to lower that constant;
    if it is higher, it can be raised.
 3. If references must be dropped to fit, drop objects before characters and the location.
+
+## Ordered attachments (2026-11-05)
+
+Storyboard and video requests now also carry `scenes[].attachments`: the reference images in the
+order the prompt numbers them (Image 1, Image 2, ...), as Claude chose them through the MCP server
+(or automatically: cast, location, objects; a clip's own storyboard first). Each item is
+`{ image, kind, name, identifier }`. The "Tillitown Main" workflow sends them to Magnific in that
+order when present, and falls back to the maps otherwise. The same change fixed two older gaps:
+storyboards now get object sheets, and clips now get their storyboard (`magnific_identifier`).
