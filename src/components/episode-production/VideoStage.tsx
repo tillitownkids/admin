@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { AlertTriangle, BookOpen, Check, ChevronDown, Film, ListVideo, Loader2, MapPin, Plus, Square, User, Video } from 'lucide-react';
 
+import { resolveGenerationAttachmentsAction } from '@/actions/sequenceAction';
 import { planSceneShotsAction } from '@/actions/planSceneShotsAction';
 import { ConfirmButton } from '@/components/ConfirmButton';
 import { TakeCountSelect, TakePicker } from '@/components/TakePicker';
@@ -163,41 +164,17 @@ function shotContext(scene: SceneRow): ShotSceneContext {
 }
 
 // One request per clip. `shot` and `duration` are additions to the scene payload the webhook already accepts.
-function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: EpisodeLocationRow[]) {
+// The clip's attachments come in order (Image 1 is the sequence's own storyboard), as Claude chose them
+// or automatically; they are resolved on the server, which knows every sheet version and storyboard.
+async function buildShotPayload(scene: SceneRow, shot: SceneShot) {
   if (!scene.magnific_identifier) {
     throw new Error(`Sequence ${scene.scene_number}'s storyboard image has no generator reference (it was uploaded, or saved without one), so the video generator cannot open a clip on it. Put a generated storyboard take in use for this sequence, then try again.`);
   }
-
-  // SceneCharacter is the authoritative character list for this scene.
-  const charRefs: Record<string, string> = {};
-  const missingCharacters: string[] = [];
-  for (const character of sceneCharacters(scene)) {
-    if (character.magnific_identifier) charRefs[character.name] = character.magnific_identifier;
-    else missingCharacters.push(character.name);
-  }
-  if (missingCharacters.length > 0) {
-    throw new Error(`Sequence ${scene.scene_number}: ${missingCharacters.join(', ')} ${missingCharacters.length === 1 ? 'has' : 'have'} no reference sheet yet. Generate ${missingCharacters.length === 1 ? 'it' : 'them'} in Characters, then try again.`);
-  }
-
-  const objectRefs: Record<string, string> = {};
-  const objectsWithoutSheet: string[] = [];
-  for (const object of sceneObjects(scene)) {
-    if (object.magnific_identifier) objectRefs[object.name] = object.magnific_identifier;
-    else objectsWithoutSheet.push(object.name);
-  }
-  if (objectsWithoutSheet.length > 0) {
-    throw new Error(`Sequence ${scene.scene_number}: ${objectsWithoutSheet.join(', ')} ${objectsWithoutSheet.length === 1 ? 'has' : 'have'} no object sheet yet. Generate ${objectsWithoutSheet.length === 1 ? 'it' : 'them'} in Objects, then try again.`);
-  }
-
-  const matchedEpLoc = episodeLocations.find(
-    (el) => el.id === scene.episode_location_id || el.Location.name.toLowerCase() === scene.locationName.toLowerCase()
-  );
-  if (!matchedEpLoc) {
-    throw new Error(`Sequence ${scene.scene_number}: the location "${scene.locationName || 'unknown'}" is not linked to this episode.`);
-  }
-  if (!matchedEpLoc.Location.magnific_identifier) {
-    throw new Error(`Sequence ${scene.scene_number}: the location "${matchedEpLoc.Location.name}" has no reference sheet yet. Generate it in Locations, then try again.`);
-  }
+  const result = await resolveGenerationAttachmentsAction([scene.id], 'clip');
+  if (!result.ok) throw new Error(result.error);
+  const prepared = result.bySequence[scene.id];
+  if (!prepared) throw new Error(`Sequence ${scene.scene_number}: the attachments could not be prepared.`);
+  if (prepared.problems.length > 0) throw new Error(`Sequence ${scene.scene_number}: not attached yet: ${prepared.problems.join(' ')}`);
 
   return {
     scenes: [{
@@ -206,12 +183,9 @@ function buildShotPayload(scene: SceneRow, shot: SceneShot, episodeLocations: Ep
       duration: shot.seconds,
       videoPrompt: shot.prompt,
       magnific_identifier: scene.magnific_identifier,
-      references: {
-        characters: charRefs,
-        locations: { [matchedEpLoc.Location.name]: matchedEpLoc.Location.magnific_identifier },
-        // Object sheets: the video workflow passes them to the generator with the other references.
-        objects: objectRefs,
-      },
+      // The older maps stay for the webhook's validation; `attachments` carries the order.
+      references: prepared.references,
+      attachments: prepared.attachments,
     }],
   };
 }
@@ -222,7 +196,6 @@ function errorText(error: unknown): string {
 
 export function VideoStage({
   scenes,
-  episodeLocations,
   onRefetchScenes,
   single = false,
 }: VideoStageProps & {
@@ -307,7 +280,7 @@ export function VideoStage({
     const shot = currentPlan(scene)?.shots.find((item) => item.shot === shotNumber);
     if (!shot) throw new Error(`Sequence ${scene.scene_number} has no planned clip ${shotNumber}. Plan its clip first.`);
 
-    const res = await sendVideoWebhook(buildShotPayload(scene, shot, episodeLocations));
+    const res = await sendVideoWebhook(await buildShotPayload(scene, shot));
     const responseBody = await res.text();
     const data = assertVideoWebhookResponse(res.status, responseBody);
     const clipUrl = extractVideoUrl(data);
@@ -502,6 +475,7 @@ export function VideoStage({
           {sceneViews.map(({ scene, plan, beats }, sceneIdx) => (
             <SceneShotsCard
               key={scene.id}
+              single={single}
               scene={scene}
               sceneIdx={sceneIdx}
               plan={plan}
@@ -526,6 +500,7 @@ export function VideoStage({
 }
 
 function SceneShotsCard({
+  single = false,
   scene,
   sceneIdx,
   plan,
@@ -541,6 +516,8 @@ function SceneShotsCard({
   onGenerateShot,
   onSavePrompt,
 }: {
+  /** On a sequence's own page: prompts open, the beats shown elsewhere on the page. */
+  single?: boolean;
   scene: SceneRow;
   sceneIdx: number;
   plan: SceneShotPlan | null;
@@ -674,6 +651,7 @@ function SceneShotsCard({
             {plan?.shots.map((shot) => (
               <ShotRow
                 key={shot.shot}
+                promptOpen={single}
                 shot={shot}
                 isGrid={isGrid}
                 disabled={disabled}
@@ -693,7 +671,7 @@ function SceneShotsCard({
           </div>
         </div>
 
-        {scene.script_beats && (
+        {scene.script_beats && !single && (
           <Collapsible>
             <CollapsibleTrigger
               render={
@@ -717,6 +695,7 @@ function SceneShotsCard({
 }
 
 function ShotRow({
+  promptOpen = false,
   shot,
   isGrid,
   disabled,
@@ -734,6 +713,7 @@ function ShotRow({
   onTake: (url: string, action: 'use' | 'delete') => void;
   onGenerate: () => void;
   onSavePrompt: (prompt: string) => void;
+  promptOpen?: boolean;
 }) {
   // The draft resets whenever the saved prompt changes (after a save or a re-plan).
   const [draft, setDraft] = useState({ source: shot.prompt, text: shot.prompt });
@@ -824,7 +804,7 @@ function ShotRow({
         <video controls preload="metadata" src={shot.videoUrl} className="aspect-video w-full max-w-md rounded-lg border bg-black object-contain" />
       )}
 
-      <Collapsible>
+      <Collapsible defaultOpen={promptOpen}>
         <CollapsibleTrigger
           render={
             <Button variant="ghost" size="sm" className="group/trigger -ml-2 text-muted-foreground">

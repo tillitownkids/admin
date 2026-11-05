@@ -24,6 +24,17 @@ import { clipPromptOf, isMissingTable, listPromptVersions, recordPromptVersion }
 import { restorePromptVersion, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
 import { addSequenceNote, listSequenceNotes, setSequenceNoteStatus } from '@/lib/sequenceNotes';
 import {
+  MAX_ATTACHMENTS,
+  clipAttachLine,
+  resolveSequenceAttachments,
+  saveSequenceAttachments,
+  sheetVersions,
+  storyboardAttachLine,
+  withClipAttachLine,
+  type AttachmentSet,
+  type StoredAttachment,
+} from '@/lib/sequenceAttachments';
+import {
   NOT_IN_EPISODE,
   ToolError,
   loadEpisodeCast,
@@ -176,10 +187,12 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
       id = match.id;
     }
     const scene = await loadScene(id);
-    const [imageTakes, notes, history] = await Promise.all([
+    const [imageTakes, notes, history, storyboardAttachments, clipAttachments] = await Promise.all([
       listGeneratedImageHistory('scene_storyboard', scene.id),
       listSequenceNotes({ sceneId: scene.id }).catch(() => ({ available: false, notes: [] })),
       listPromptVersions(scene.id).catch(() => ({ available: false, versions: [] })),
+      resolveSequenceAttachments(scene.id, 'storyboard'),
+      resolveSequenceAttachments(scene.id, 'clip'),
     ]);
     const clip = parseShotPlan(scene.video_prompt)?.shots[0];
     return {
@@ -205,6 +218,7 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
         }
         : { planned: false, legacy_prompt: clipPromptOf(scene.video_prompt) },
       issues_and_notes: notes.notes.map((note) => ({ id: note.id, kind: note.kind, status: note.status, author: note.author, body: note.body, media_url: note.media_url, created_at: note.created_at })),
+      attachments: { storyboard: attachmentSummary(storyboardAttachments), clip: attachmentSummary(clipAttachments) },
       history: history.versions.slice(0, 15).map((version) => ({ id: version.id, field: version.field, author: version.author, created_at: version.created_at, preview: version.value.slice(0, 160) })),
       url: sequenceUrl(origin, scene.story_id, scene.scene_number),
     };
@@ -325,6 +339,113 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
     }
   }));
 
+  server.registerTool('get_attachable_assets', {
+    title: 'Get attachable assets',
+    description: "What a sequence's storyboard or clip can attach: the episode's characters, locations and objects with every version of their sheets (e.g. a location's golden-hour and night sheets), and the other sequences' storyboards (for a continuity reference). Use before set_attachments.",
+    inputSchema: { sequence_id: sequenceId },
+    annotations: READ,
+  }, ({ sequence_id }) => run(async () => {
+    const scene = await loadScene(sequence_id);
+    const [cast, scenes] = await Promise.all([loadEpisodeCast(scene.story_id), loadScenes(scene.story_id)]);
+    const [characterVersions, locationVersions, objectVersions] = await Promise.all([
+      sheetVersions('character', cast.characters.map((item) => item.id)),
+      sheetVersions('location', cast.locations.map((item) => item.id)),
+      sheetVersions('object', cast.objects.map((item) => item.id)),
+    ]);
+    type Version = (typeof characterVersions)[number];
+    const sheet = (item: { id: string; name: string; magnific_identifier: string | null }, rows: Version[]) => ({
+      name: item.name,
+      has_sheet: Boolean(item.magnific_identifier),
+      versions: rows.filter((row) => row.owner_id === item.id).map((row) => ({
+        version_id: row.id,
+        url: row.public_url,
+        in_use: row.is_selected,
+        attachable: Boolean(row.provider_identifier),
+        created_at: row.created_at,
+        ...(row.prompt_used ? { made_from: row.prompt_used.slice(0, 120) } : {}),
+      })),
+    });
+    return {
+      sequence_number: scene.scene_number,
+      characters: cast.characters.map((item) => sheet(item, characterVersions)),
+      locations: cast.locations.map((item) => sheet(item, locationVersions)),
+      objects: cast.objects.map((item) => sheet(item, objectVersions)),
+      storyboards: scenes.filter((item) => item.id !== scene.id).map((item) => ({
+        sequence_number: item.scene_number,
+        title: item.description,
+        has_storyboard: Boolean(item.storyboard_image_url),
+        url: item.storyboard_image_url,
+      })),
+    };
+  }));
+
+  server.registerTool('set_attachments', {
+    title: 'Set attachments',
+    description: `Chooses the reference images sent with a sequence's storyboard or clip request, in order: the first is Image 1, the next Image 2, and so on, so the prompt can name them by number. Pick a sheet by its exact name, optionally a specific version (version_id from get_attachable_assets), or a sequence's storyboard by number (continuity reference). A clip always opens with its own storyboard as Image 1. At most ${MAX_ATTACHMENTS}. Pass automatic: true to go back to the sequence's cast, location and objects.`,
+    inputSchema: {
+      sequence_id: sequenceId,
+      target: z.enum(['storyboard', 'clip']),
+      automatic: z.boolean().optional().describe('true: forget the chosen list and attach automatically.'),
+      attachments: z.array(z.object({
+        type: z.enum(['character', 'location', 'object', 'storyboard']),
+        name: z.string().optional().describe('Exact name of an episode character, location or object.'),
+        sequence_number: z.number().int().min(1).optional().describe("For a storyboard: whose storyboard (this sequence's for a clip, an earlier one for continuity)."),
+        version_id: z.string().uuid().optional().describe('A specific version of the sheet or storyboard; default is the one in use.'),
+        label: z.string().optional().describe('How the prompt names it, e.g. "Oasis Camp Night sheet". Default: "<name> sheet" or "SEQ 15 storyboard".'),
+        role: z.string().optional().describe('Its job, e.g. "appearance only", "environment only", "continuity reference: match the SHOT 2 panel".'),
+      })).max(MAX_ATTACHMENTS).optional(),
+    },
+    annotations: WRITE,
+  }, ({ sequence_id, target, automatic, attachments }) => run(async () => {
+    const scene = await loadScene(sequence_id);
+    let list: StoredAttachment[] | null = null;
+    if (!automatic) {
+      if (!attachments?.length) throw new ToolError('Give the attachments in order, or automatic: true.');
+      const [cast, scenes] = await Promise.all([loadEpisodeCast(scene.story_id), loadScenes(scene.story_id)]);
+      const pools = { character: cast.characters, location: cast.locations, object: cast.objects } as const;
+      list = attachments.map((item): StoredAttachment => {
+        if (item.type === 'storyboard') {
+          const number = item.sequence_number ?? scene.scene_number;
+          const other = scenes.find((candidate) => candidate.scene_number === number);
+          if (!other) throw new ToolError(`This episode has no sequence ${number}.`);
+          return { kind: 'storyboard', id: other.id, take_id: item.version_id ?? null, label: item.label || `SEQ ${String(number).padStart(2, '0')} storyboard`, role: item.role ?? null };
+        }
+        if (!item.name) throw new ToolError(`A ${item.type} attachment needs its exact name.`);
+        const [asset] = resolveNames(item.type, pools[item.type], [item.name], NOT_IN_EPISODE);
+        return { kind: item.type, id: asset.id, take_id: item.version_id ?? null, label: item.label || `${asset.name} sheet`, role: item.role ?? null };
+      });
+    }
+    const { notes } = await saveSequenceAttachments(scene.id, target, list);
+    const set = await resolveSequenceAttachments(scene.id, target);
+    const warnings = [...notes, ...set.problems];
+    if (target === 'storyboard') {
+      const continuity = set.attachments.findIndex((item) => item.kind === 'storyboard');
+      if (continuity >= 0 && continuity !== set.attachments.length - 1) warnings.push('Put the continuity storyboard last, so the other images keep their numbers.');
+    }
+    // A planned clip's prompt names its attachments; keep that line in step with the list.
+    const clip = parseShotPlan(scene.video_prompt);
+    if (target === 'clip' && clip?.shots.length && !set.automatic) {
+      const previous = clip.shots[0].prompt;
+      const prompt = withClipAttachLine(previous, set);
+      if (prompt !== previous) {
+        clip.shots[0] = { ...clip.shots[0], prompt };
+        const { error } = await supabase.from('Scene').update({ video_prompt: serializeShotPlan(clip), updated_at: new Date().toISOString() }).eq('id', scene.id);
+        if (error) throw new ToolError(error.message);
+        await recordPromptVersion(scene.id, 'clip_prompt', prompt, 'claude', previous);
+        warnings.push("The clip prompt's Attachments line was updated to this list.");
+      }
+    }
+    return {
+      ...attachmentSummary(set),
+      prompt_line: target === 'storyboard' ? storyboardAttachLine(set) : clipAttachLine(set),
+      next: target === 'storyboard'
+        ? 'Start the storyboard prompt with prompt_line and refer to each image as "Image N" (update_sequence).'
+        : 'The clip prompt now lists these in order; refer to them as "Image N" in the shot text if needed (save_video_plan with prompt_override, or keep the built prompt).',
+      warnings,
+      url: sequenceUrl(origin, scene.story_id, scene.scene_number),
+    };
+  }));
+
   server.registerTool('restore_prompt_version', {
     title: 'Restore a version',
     description: 'Puts back an earlier version of a sequence\'s beats, storyboard prompt or clip prompt (ids from get_sequence\'s history). The current text stays in the history.',
@@ -372,6 +493,11 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
     const previous = parseShotPlan(scene.video_prompt);
     const plan = buildShotPlan(context, direction, previous);
     if (prompt_override) plan.shots[0].prompt = prompt_override;
+    else {
+      // A clip with chosen attachments names them, in order, in its prompt.
+      const chosen = await resolveSequenceAttachments(scene.id, 'clip');
+      if (!chosen.automatic) plan.shots[0].prompt = withClipAttachLine(plan.shots[0].prompt, chosen);
+    }
     const { error } = await supabase.from('Scene').update({ video_prompt: serializeShotPlan(plan), updated_at: new Date().toISOString() }).eq('id', sequence_id);
     if (error) throw new ToolError(error.message);
     await recordPromptVersion(scene.id, 'clip_prompt', plan.shots[0].prompt, 'claude', clipPromptOf(scene.video_prompt));
@@ -391,4 +517,19 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
       url: sequenceUrl(origin, scene.story_id, scene.scene_number),
     };
   }));
+}
+
+/** A sequence's attachments for one request, as Claude reads them. */
+function attachmentSummary(set: AttachmentSet) {
+  return {
+    chosen_by: set.automatic ? 'automatic (cast, location, objects)' : 'chosen',
+    images: set.attachments.map((item) => ({
+      image: item.image,
+      type: item.kind,
+      label: item.label,
+      role: item.role ?? null,
+      version: item.take_id ? 'specific version' : 'in use',
+      ...(item.problem ? { problem: item.problem } : {}),
+    })),
+  };
 }

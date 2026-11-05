@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, ArrowRight, Box, Check, Clock, Loader2, MapPin, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Box, Check, Loader2, MapPin, Users } from "lucide-react";
 
 import { ButtonLink } from "@/components/ButtonLink";
 import { StoryboardImages } from "@/components/episode/StoryboardImages";
 import { useEpisodeScenes } from "@/components/episode/useEpisodeScenes";
 import { VideoStage } from "@/components/episode-production/VideoStage";
 import { ClipUploadButton } from "@/components/sequence/ClipUploadButton";
+import { SequenceAttachments } from "@/components/sequence/SequenceAttachments";
 import { SequenceBeats } from "@/components/sequence/SequenceBeats";
 import { SequenceHistory } from "@/components/sequence/SequenceHistory";
 import { SequenceNotes } from "@/components/sequence/SequenceNotes";
@@ -59,6 +60,7 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
     await Promise.all([
       refetch(),
       queryClient.invalidateQueries({ queryKey: queryKeys.promptVersions(scene.id) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sequenceAttachments(scene.id) }),
     ]);
     router.refresh();
   };
@@ -87,11 +89,12 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
       </div>
 
       <header className="space-y-2">
-        <p className="font-mono text-xs text-muted-foreground">{sequenceCode(scene.scene_number)}</p>
-        <h2 className="text-xl font-semibold text-foreground">{scene.description || "Untitled sequence"}</h2>
+        {/* Named as in the episode doc: "SEQ 16 — Beats 32–33 (10 s)". */}
+        <h2 className="text-xl font-semibold text-foreground">
+          {sequenceCode(scene.scene_number)} — {beatRange(beatNumbersOf(scene))} ({sceneRuntime(scene)} s)
+        </h2>
+        <p className="text-sm text-foreground">{scene.description || "Untitled sequence"}</p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-          <span>{beatRange(beatNumbersOf(scene))}</span>
-          <span className="flex items-center gap-1"><Clock className="size-3.5" />{sceneRuntime(scene)} s</span>
           {scene.locationName && <span className="flex items-center gap-1"><MapPin className="size-3.5" />{scene.locationName}</span>}
           <span className="flex items-center gap-1"><Users className="size-3.5" />{cast.length ? cast.join(", ") : "No characters"}</span>
           {objects.length > 0 && <span className="flex items-center gap-1"><Box className="size-3.5" />{objects.join(", ")}</span>}
@@ -100,16 +103,16 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-10">
-          <SequenceBeats key={scene.script_beats || ""} scene={scene} onSaved={reload} />
-
+          {/* The order of the episode doc: storyboard, then video, then the script of these beats. */}
           <section className="space-y-3" aria-labelledby="sequence-storyboard">
             <h3 id="sequence-storyboard" className="text-base font-semibold text-foreground">Storyboard</h3>
+            <SequenceAttachments sceneId={scene.id} target="storyboard" onChanged={reload} />
             <StoryboardImages storyId={storyId} scenes={[scene]} episodeLocations={episodeLocations} onChanged={reload} single />
           </section>
 
-          <section className="space-y-3" aria-labelledby="sequence-clip">
+          <section className="space-y-3" aria-labelledby="sequence-video">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 id="sequence-clip" className="text-base font-semibold text-foreground">Clip</h3>
+              <h3 id="sequence-video" className="text-base font-semibold text-foreground">Video</h3>
               <ClipUploadButton
                 sceneId={scene.id}
                 planned={planned}
@@ -119,6 +122,7 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
                 }}
               />
             </div>
+            <SequenceAttachments sceneId={scene.id} target="clip" onChanged={reload} />
             {clipMessage && (
               <Alert variant={clipMessage.type === "error" ? "destructive" : "default"}>
                 {clipMessage.type === "error" ? <AlertTriangle /> : <Check />}
@@ -127,6 +131,8 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
             )}
             <VideoStage scenes={[scene]} episodeLocations={episodeLocations} onRefetchScenes={reload} single />
           </section>
+
+          <SequenceBeats key={scene.script_beats || ""} scene={scene} onSaved={reload} />
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">

@@ -8,8 +8,10 @@ Endpoint: `https://<admin-domain>/api/mcp` (code in `src/lib/mcp/`, route in `sr
 
 ## Setup
 
-1. Run `supabase/migrations/20261102000000_sequence_workspace.sql` in the Supabase SQL editor once.
-   It adds issue notes and prompt history; without it those tools report that it is not set up.
+1. Run `supabase/migrations/20261102000000_sequence_workspace.sql` and
+   `supabase/migrations/20261105000000_sequence_attachments.sql` in the Supabase SQL editor once.
+   They add issue notes, prompt history and chosen attachments; without them those tools report
+   that they are not set up, and attachments stay automatic.
 2. Make a long random token, for example `openssl rand -hex 32`.
 3. Set it as `MCP_ACCESS_TOKEN` in the Vercel project's environment variables (and `.env` for local
    use), then redeploy. Without it the endpoint answers 503 and stays off.
@@ -44,6 +46,8 @@ A sequence is one 2x2 storyboard and one clip (a `Scene` row), holding up to 4 b
 | `save_video_plan` | Saves one sequence's lighting and per-beat camera, action and placement; the server adds dialogue and timing and builds the clip prompt (`src/lib/sceneShots.ts`). |
 | `add_sequence_note` / `resolve_sequence_note` | Records an issue or note on a sequence; resolves or reopens an issue. |
 | `record_storyboard_take` / `record_clip_take` | Saves an image or clip made outside the admin (e.g. with the Magnific connector) as a take, copied to the admin's storage. Pass the Magnific identifier so the admin can generate clips from the storyboard. |
+| `get_attachable_assets` | The sheets a sequence can attach (every version, e.g. a location's day and night sheets) and the other sequences' storyboards. |
+| `set_attachments` | Claude's ordered attachment list for a sequence's storyboard or clip (Image 1, 2, …): sheets by exact name, a specific version, or another sequence's storyboard as a continuity reference. A clip always opens with its own storyboard. Returns the "Attach N images in this order…" line for the prompt. `automatic: true` goes back to cast + location + objects. |
 | `restore_prompt_version` | Puts back an earlier version of beats, storyboard prompt or clip prompt; the current text stays in history. |
 
 Every text Claude saves is recorded in the sequence's history as written by Claude. Not available

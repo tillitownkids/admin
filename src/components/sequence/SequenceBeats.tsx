@@ -37,7 +37,7 @@ export function SequenceBeats({ scene, onSaved }: { scene: SceneRow; onSaved: ()
   return (
     <section className="space-y-3" aria-labelledby="sequence-beats">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="sequence-beats" className="text-base font-semibold text-foreground">Beats</h3>
+        <h3 id="sequence-beats" className="text-base font-semibold text-foreground">Script</h3>
         {!editing && (
           <Button variant="outline" size="sm" onClick={() => { setDraft(scene.script_beats || ""); setEditing(true); setMessage(null); }}>
             <Pencil />

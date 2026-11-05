@@ -20,6 +20,8 @@ export const queryKeys = {
   episodeVideos: (storyId: string) => ['episode', storyId, 'videos'] as const,
   /** Issues and notes of an episode's sequences. */
   sequenceNotes: (storyId: string) => ['episode', storyId, 'sequence-notes'] as const,
+  /** A sequence's storyboard and clip attachments, in order. */
+  sequenceAttachments: (sceneId: string) => ['sequence-attachments', sceneId] as const,
   /** The history of one sequence's beats and prompts. */
   promptVersions: (sceneId: string) => ['prompt-versions', sceneId] as const,
   /** Generated image takes of some owners (scenes, characters, locations, objects). */
