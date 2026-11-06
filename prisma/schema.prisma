@@ -28,6 +28,7 @@ model Story {
   Prop              Prop[]
   StoryProp         StoryProp[]
   SequenceNote      SequenceNote[]
+  SequenceReference SequenceReference[]
 }
 
 model Script {
@@ -131,6 +132,7 @@ model Scene {
   SceneProp                 SceneProp[]
   SequenceNote              SequenceNote[]
   PromptVersion             PromptVersion[]
+  SequenceReference         SequenceReference[]
 
   @@unique([episode_location_id, scene_number])
 }
@@ -149,9 +151,32 @@ model SequenceNote {
   resolved_at DateTime? @db.Timestamptz(6)
   Scene       Scene     @relation(fields: [scene_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   Story       Story     @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  SequenceReference SequenceReference[]
 
   @@index([story_id], map: "idx_sequence_note_story")
   @@index([scene_id, created_at(sort: Desc)], map: "idx_sequence_note_scene")
+}
+
+/// A reference image made to fix a sequence's storyboard (camera map, seating map, other).
+model SequenceReference {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scene_id            String        @db.Uuid
+  story_id            String        @db.Uuid
+  kind                String        @default("camera_map")
+  label               String
+  image_url           String
+  storage_bucket      String?
+  storage_path        String?
+  magnific_identifier String?
+  note_id             String?       @db.Uuid
+  author              String        @default("admin")
+  created_at          DateTime      @default(now()) @db.Timestamptz(6)
+  Scene               Scene         @relation(fields: [scene_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  Story               Story         @relation(fields: [story_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  SequenceNote        SequenceNote? @relation(fields: [note_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([scene_id, created_at], map: "idx_sequence_reference_scene")
+  @@index([story_id], map: "idx_sequence_reference_story")
 }
 
 /// A saved version of a sequence's beats, storyboard prompt or clip prompt.

@@ -1,10 +1,19 @@
 "use server";
 
 import { supabase } from "@/lib/supabase";
-import { SCENE_VIDEOS_BUCKET } from "@/lib/storage";
+import { SCENE_VIDEOS_BUCKET, STORYBOARDS_BUCKET } from "@/lib/storage";
 import { ClipTakeError, addClipTake } from "@/lib/sceneClips";
 import { listPromptVersions, type PromptVersion } from "@/lib/promptHistory";
 import { SequenceWriteError, restorePromptVersion, updateSequenceBeats } from "@/lib/sequenceWrites";
+import {
+  SequenceReferenceError,
+  deleteSequenceReference,
+  listSequenceReferences,
+  recordSequenceReference,
+  setReferenceIdentifier,
+  type ReferenceKind,
+  type SequenceReference,
+} from "@/lib/sequenceReferences";
 import {
   AttachmentError,
   resolveSequenceAttachments,
@@ -30,7 +39,7 @@ type Result<T> = ({ ok: true } & T) | { ok: false; error: string };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function failure(error: unknown, fallback: string): { ok: false; error: string } {
-  if (error instanceof SequenceWriteError || error instanceof SequenceNoteError || error instanceof ClipTakeError || error instanceof AttachmentError) {
+  if (error instanceof SequenceWriteError || error instanceof SequenceNoteError || error instanceof ClipTakeError || error instanceof AttachmentError || error instanceof SequenceReferenceError) {
     return { ok: false, error: error.message };
   }
   console.error(fallback, error);
@@ -161,5 +170,63 @@ export async function resetSequenceAttachmentsAction(sceneId: string, target: At
     return { ok: true };
   } catch (error) {
     return failure(error, "The attachments could not be reset.");
+  }
+}
+
+const REFERENCE_IMAGE_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+/** A sequence's reference images (camera maps, seating maps), oldest first. */
+export async function listSequenceReferencesAction(sceneId: string): Promise<Result<{ available: boolean; references: SequenceReference[] }>> {
+  try {
+    return { ok: true, ...(await listSequenceReferences({ sceneId })) };
+  } catch (error) {
+    return failure(error, "Reference images could not be loaded.");
+  }
+}
+
+/** Step 1 of uploading a reference image: a one-time link the browser sends the file to directly. */
+export async function startReferenceUploadAction(sceneId: string, contentType: string, size: number): Promise<Result<{ bucket: string; path: string; token: string }>> {
+  if (!UUID_PATTERN.test(sceneId)) return { ok: false, error: "The sequence could not be identified." };
+  const ext = REFERENCE_IMAGE_TYPES[contentType];
+  if (!ext) return { ok: false, error: "Upload a PNG, JPEG or WebP image." };
+  if (!(size > 0) || size > 25 * 1024 * 1024) return { ok: false, error: "The image must be smaller than 25 MB." };
+  const path = `${sceneId}_ref_${Date.now()}.${ext}`;
+  const { data, error } = await supabase.storage.from(STORYBOARDS_BUCKET).createSignedUploadUrl(path);
+  if (error || !data) return { ok: false, error: `The upload could not be started: ${error?.message || "no upload link"}.` };
+  return { ok: true, bucket: STORYBOARDS_BUCKET, path, token: data.token };
+}
+
+/** Step 2: records the uploaded file as a reference image of the sequence. */
+export async function finishReferenceUploadAction(input: { sceneId: string; path: string; label: string; kind: ReferenceKind }): Promise<Result<{ reference: SequenceReference }>> {
+  if (!UUID_PATTERN.test(input.sceneId) || !new RegExp(`^${input.sceneId}_ref_\d+\.(png|jpg|webp)$`).test(input.path)) {
+    return { ok: false, error: "The uploaded file does not belong to this sequence." };
+  }
+  const { data } = supabase.storage.from(STORYBOARDS_BUCKET).getPublicUrl(input.path);
+  try {
+    const reference = await recordSequenceReference({
+      sceneId: input.sceneId, label: input.label, kind: input.kind, imageUrl: data.publicUrl, author: "admin",
+      stored: { bucket: STORYBOARDS_BUCKET, path: input.path },
+    });
+    return { ok: true, reference };
+  } catch (error) {
+    return failure(error, "The image was uploaded but could not be saved.");
+  }
+}
+
+export async function setReferenceIdentifierAction(referenceId: string, identifier: string): Promise<Result<{ reference: SequenceReference }>> {
+  try {
+    if (!identifier.trim()) return { ok: false, error: "Paste the image's Magnific identifier." };
+    return { ok: true, reference: await setReferenceIdentifier(referenceId, identifier) };
+  } catch (error) {
+    return failure(error, "The identifier could not be saved.");
+  }
+}
+
+export async function deleteReferenceAction(referenceId: string): Promise<Result<object>> {
+  try {
+    await deleteSequenceReference(referenceId);
+    return { ok: true };
+  } catch (error) {
+    return failure(error, "The reference image could not be removed.");
   }
 }

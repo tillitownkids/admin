@@ -15,6 +15,7 @@ const KIND_LABELS: Record<ResolvedAttachment["kind"], string> = {
   location: "Location sheet",
   object: "Object sheet",
   storyboard: "Storyboard",
+  reference: "Reference image",
 };
 
 /**

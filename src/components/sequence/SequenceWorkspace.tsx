@@ -14,6 +14,7 @@ import { SequenceAttachments } from "@/components/sequence/SequenceAttachments";
 import { SequenceBeats } from "@/components/sequence/SequenceBeats";
 import { SequenceHistory } from "@/components/sequence/SequenceHistory";
 import { SequenceNotes } from "@/components/sequence/SequenceNotes";
+import { SequenceReferences } from "@/components/sequence/SequenceReferences";
 import { beatNumbersOf, beatRange, castOf, objectsOf, sequenceCode } from "@/components/sequence/sequenceFormat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { parseShotPlan, sceneClips } from "@/lib/sceneShots";
@@ -61,6 +62,7 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
       refetch(),
       queryClient.invalidateQueries({ queryKey: queryKeys.promptVersions(scene.id) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.sequenceAttachments(scene.id) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.sequenceReferences(scene.id) }),
     ]);
     router.refresh();
   };
@@ -107,6 +109,7 @@ export function SequenceWorkspace({ storyId, number }: { storyId: string; number
           <section className="space-y-3" aria-labelledby="sequence-storyboard">
             <h3 id="sequence-storyboard" className="text-base font-semibold text-foreground">Storyboard</h3>
             <SequenceAttachments sceneId={scene.id} target="storyboard" onChanged={reload} />
+            <SequenceReferences sceneId={scene.id} sequenceCode={sequenceCode(scene.scene_number)} onChanged={reload} />
             <StoryboardImages storyId={storyId} scenes={[scene]} episodeLocations={episodeLocations} onChanged={reload} single />
           </section>
 
