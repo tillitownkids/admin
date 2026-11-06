@@ -23,7 +23,7 @@ export interface PromptVersion {
 /** True when a Supabase error says the table does not exist yet. */
 export function isMissingTable(error: { code?: string; message?: string } | null | undefined): boolean {
   if (!error) return false;
-  return error.code === '42P01' || error.code === 'PGRST205' || /does not exist|could not find the table/i.test(error.message || '');
+  return error.code === '42P01' || error.code === 'PGRST205' || /relation "[^"]+" does not exist|could not find the table/i.test(error.message || '');
 }
 
 /** The clip prompt text of a sequence: its planned clip's prompt, or an older plain-text prompt. */

@@ -18,11 +18,17 @@ export interface ScriptBeat {
 }
 
 export const BEAT_HEADER = /^\s*(?:#{1,6}\s*)?\**\s*BEAT\s*(\d+)\b(.*)$/;
-const TAG_NAMES = 'EMOTION|WPM|TIMING|DURATION|ACTION|DIALOGUE|CAMERA|MOTION|SFX|END';
+// SUBJECT, SETTING, LIGHT, CONSTRAINTS, TYPE and TIER come from the episode-doc beat format
+// ("BEAT 45 — Title [TIER] Standard [DURATION] 6s", then one [TAG] line each).
+const TAG_NAMES = 'EMOTION|WPM|TIMING|DURATION|ACTION|DIALOGUE|CAMERA|MOTION|SFX|END|SUBJECT|SETTING|LIGHT|CONSTRAINTS|TYPE|TIER';
 // Saved scripts use **[ACTION]**, [ACTION] and **ACTION:**. A bare "Dialogue: 3.3 seconds"
 // (inside a timing block) is not a tag.
 const TAG_LINE = new RegExp(`^\\s*(?:\\*\\*\\[(${TAG_NAMES})\\]\\*\\*|\\[(${TAG_NAMES})\\]|\\*\\*(${TAG_NAMES}):?\\*\\*)\\s*:?\\s*(.*)$`, 'i');
 const PAUSE_TAG = /<-?\s*break\s*(?:time\s*=\s*["']?)?([\d.]+)\s*(?:seconds?|secs?|s)?["']?\s*\/?\s*-?>/gi;
+// "[pause 04]": a pause in tenths of a second (episode-doc format).
+const PAUSE_TENTHS = /\[pause\s*(\d+(?:\.\d+)?)\]/gi;
+// A performance cue inside a line, such as "[laugh]": not spoken words.
+const DIALOGUE_CUE = /\[(?!pause\b)([a-z][a-z ]{1,20})\]/gi;
 const SETTING_LINE = /^\**\s*(EXT|INT)\b/i;
 // Placeholders written for a silent beat: "None", "None.", "*None*", "[No dialogue]", "—".
 function isNoDialogue(text: string): boolean {
@@ -41,8 +47,12 @@ export function parseScriptBeats(script: string): ScriptBeat[] {
   for (const line of (script || '').replaceAll('\r\n', '\n').split('\n')) {
     const header = line.match(BEAT_HEADER);
     if (header) {
-      const title = header[2].replace(/\*/g, '').replace(/^\s*[—–:-]\s*/, '').trim();
+      // The doc format puts [TIER]/[TYPE] and [DURATION] on the header line, after the title.
+      const rest = header[2].replace(/\*/g, '');
+      const title = rest.replace(/\s*\[[A-Z]+\].*$/, '').replace(/^\s*[—–:-]\s*/, '').trim();
       beat = emptyBeat(Number(header[1]), title);
+      const headerSeconds = rest.match(/\[DURATION\]\s*(\d+(?:\.\d+)?)/i);
+      if (headerSeconds) beat.seconds = Number(headerSeconds[1]) || null;
       beats.push(beat);
       field = null;
       continue;
@@ -66,6 +76,7 @@ export function parseScriptBeats(script: string): ScriptBeat[] {
       // "[WPM] 132" is also written without its unit.
       if (name === 'wpm' && beat.wpm === null) beat.wpm = Number(tag[4].match(/\d{2,3}/)?.[0]) || null;
       if (name === 'duration') beat.seconds = Number(tag[4].match(/\d+(?:\.\d+)?/)?.[0]) || null;
+      if (name === 'setting' && !beat.setting) beat.setting = tag[4].trim();
       field = name === 'action' || name === 'dialogue' || name === 'camera' || name === 'motion' ? name : null;
       if (field) beat[field] = tag[4].trim();
       continue;
@@ -83,11 +94,12 @@ export function parseScriptBeats(script: string): ScriptBeat[] {
 export function dialoguePauseSeconds(dialogue: string): number {
   let total = 0;
   for (const match of (dialogue || '').matchAll(PAUSE_TAG)) total += Number(match[1]) || 0;
-  return total;
+  for (const match of (dialogue || '').matchAll(PAUSE_TENTHS)) total += (Number(match[1]) || 0) / 10;
+  return Math.round(total * 10) / 10;
 }
 
 export function dialogueWordCount(dialogue: string): number {
-  const text = (dialogue || '').replace(PAUSE_TAG, ' ');
+  const text = (dialogue || '').replace(PAUSE_TAG, ' ').replace(PAUSE_TENTHS, ' ').replace(DIALOGUE_CUE, ' ');
   const quoted = text.match(/["“][^"”]*["”]/g);
   const spoken = quoted ? quoted.join(' ') : text.replace(/^[^:\n]{1,40}:\s*/, '');
   return spoken.replace(/[—–]/g, ' ').split(/\s+/).filter((word) => /[\p{L}\p{N}]/u.test(word)).length;
@@ -95,7 +107,7 @@ export function dialogueWordCount(dialogue: string): number {
 
 /** Spoken lines as the video model should receive them: words untouched, pause tags as "(pause)". */
 export function dialogueForVideo(dialogue: string): string {
-  return (dialogue || '').replace(PAUSE_TAG, ' (pause) ').replace(/\s+/g, ' ').trim();
+  return (dialogue || '').replace(PAUSE_TAG, ' (pause) ').replace(PAUSE_TENTHS, ' (pause) ').replace(DIALOGUE_CUE, '($1)').replace(/\s+/g, ' ').trim();
 }
 
 /** Clip lengths the video model accepts. */

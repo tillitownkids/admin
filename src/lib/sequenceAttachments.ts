@@ -7,7 +7,8 @@ import { isMissingTable } from '@/lib/promptHistory';
 // are automatic: the sequence's cast, its location and its objects, and for a clip its own
 // storyboard first.
 
-export type AttachmentKind = 'character' | 'location' | 'object' | 'storyboard';
+// 'reference' is a sequence reference image: a camera map, seating map or other fix (SequenceReference).
+export type AttachmentKind = 'character' | 'location' | 'object' | 'storyboard' | 'reference';
 export type AttachmentTarget = 'storyboard' | 'clip';
 
 export const MAX_ATTACHMENTS = 8;
@@ -15,7 +16,7 @@ export const MAX_ATTACHMENTS = 8;
 /** As stored in Scene.storyboard_attachments / clip_attachments. */
 export interface StoredAttachment {
   kind: AttachmentKind;
-  /** Character, Location or Prop id; for a storyboard, the Scene id of that sequence. */
+  /** Character, Location or Prop id; for a storyboard, the Scene id of that sequence; for a reference, its SequenceReference id. */
   id: string;
   /** A specific version (ImageAsset id) of the sheet or storyboard; null = the one in use. */
   take_id?: string | null;
@@ -45,7 +46,7 @@ export interface AttachmentSet {
 
 export class AttachmentError extends Error {}
 
-const KINDS: AttachmentKind[] = ['character', 'location', 'object', 'storyboard'];
+const KINDS: AttachmentKind[] = ['character', 'location', 'object', 'storyboard', 'reference'];
 const COLUMN: Record<AttachmentTarget, 'storyboard_attachments' | 'clip_attachments'> = {
   storyboard: 'storyboard_attachments',
   clip: 'clip_attachments',
@@ -105,7 +106,8 @@ async function loadSceneForAttachments(sceneId: string): Promise<SceneForAttachm
   return scene;
 }
 
-const TABLE: Record<Exclude<AttachmentKind, 'storyboard'>, { table: string; url: string; owner: string }> = {
+type SheetKind = Exclude<AttachmentKind, 'storyboard' | 'reference'>;
+const TABLE: Record<SheetKind, { table: string; url: string; owner: string }> = {
   character: { table: 'Character', url: 'generated_image_url', owner: 'character_generated' },
   location: { table: 'Location', url: 'generated_image_url', owner: 'location_generated' },
   object: { table: 'Prop', url: 'generated_image_url', owner: 'prop_generated' },
@@ -115,26 +117,27 @@ const TABLE: Record<Exclude<AttachmentKind, 'storyboard'>, { table: string; url:
 export async function resolveAttachmentList(list: StoredAttachment[]): Promise<ResolvedAttachment[]> {
   const takeIds = list.flatMap((item) => (item.take_id ? [item.take_id] : []));
   const byKind = (kind: AttachmentKind) => [...new Set(list.filter((item) => item.kind === kind && !item.take_id).map((item) => item.id))];
-  const [takes, characters, locations, objects, storyboards] = await Promise.all([
+  const [takes, characters, locations, objects, storyboards, references] = await Promise.all([
     takeIds.length ? supabase.from('ImageAsset').select('id, owner_type, owner_id, public_url, provider_identifier').in('id', takeIds) : null,
     byKind('character').length ? supabase.from('Character').select('id, name, magnific_identifier, generated_image_url').in('id', byKind('character')) : null,
     byKind('location').length ? supabase.from('Location').select('id, name, magnific_identifier, generated_image_url').in('id', byKind('location')) : null,
     byKind('object').length ? supabase.from('Prop').select('id, name, magnific_identifier, generated_image_url').in('id', byKind('object')) : null,
     byKind('storyboard').length ? supabase.from('Scene').select('id, scene_number, magnific_identifier, storyboard_image_url').in('id', byKind('storyboard')) : null,
+    byKind('reference').length ? supabase.from('SequenceReference').select('id, label, magnific_identifier, image_url').in('id', byKind('reference')) : null,
   ]);
-  for (const result of [takes, characters, locations, objects, storyboards]) {
+  for (const result of [takes, characters, locations, objects, storyboards, references]) {
     if (result?.error) throw new AttachmentError(result.error.message);
   }
   type Row = Record<string, string | number | null>;
   const rows = (result: { data: unknown } | null) => new Map(((result?.data || []) as Row[]).map((row) => [row.id as string, row]));
   const takeRows = rows(takes);
   const assetRows: Record<AttachmentKind, Map<string, Row>> = {
-    character: rows(characters), location: rows(locations), object: rows(objects), storyboard: rows(storyboards),
+    character: rows(characters), location: rows(locations), object: rows(objects), storyboard: rows(storyboards), reference: rows(references),
   };
 
   return list.map((item, index): ResolvedAttachment => {
     const base = { ...item, image: index + 1 };
-    if (item.take_id) {
+    if (item.take_id && item.kind !== 'reference') {
       const take = takeRows.get(item.take_id);
       const owner = item.kind === 'storyboard' ? 'scene_storyboard' : TABLE[item.kind].owner;
       if (!take || take.owner_id !== item.id || take.owner_type !== owner) {
@@ -149,8 +152,10 @@ export async function resolveAttachmentList(list: StoredAttachment[]): Promise<R
     const row = assetRows[item.kind].get(item.id);
     if (!row) return { ...base, identifier: null, url: null, problem: `${item.label}: it no longer exists.` };
     const identifier = (row.magnific_identifier as string | null) || null;
-    const url = ((item.kind === 'storyboard' ? row.storyboard_image_url : row.generated_image_url) as string | null) || null;
+    const url = ((item.kind === 'storyboard' ? row.storyboard_image_url : item.kind === 'reference' ? row.image_url : row.generated_image_url) as string | null) || null;
     const problem = identifier ? undefined
+      : item.kind === 'reference'
+        ? `${item.label}: it is not in Magnific yet, so the generator cannot attach it. Upload it to Magnific and record its identifier.`
       : item.kind === 'storyboard'
         ? `${item.label}: it has no generated storyboard in use (an uploaded one has no Magnific reference).`
         : `${item.label}: it has no reference sheet yet.`;
@@ -179,7 +184,7 @@ export function webhookReferences(set: AttachmentSet) {
   const maps = { characters: {} as Record<string, string>, locations: {} as Record<string, string>, objects: {} as Record<string, string> };
   const key = { character: 'characters', location: 'locations', object: 'objects' } as const;
   for (const item of set.attachments) {
-    if (item.identifier && item.kind !== 'storyboard') maps[key[item.kind]][item.label] = item.identifier;
+    if (item.identifier && item.kind !== 'storyboard' && item.kind !== 'reference') maps[key[item.kind]][item.label] = item.identifier;
   }
   return {
     references: maps,
@@ -233,7 +238,7 @@ export function withClipAttachLine(prompt: string, set: AttachmentSet): string {
 }
 
 /** Every version of the given sheets (ImageAsset takes), oldest first, for choosing one. */
-export async function sheetVersions(kind: Exclude<AttachmentKind, 'storyboard'>, ids: string[]) {
+export async function sheetVersions(kind: SheetKind, ids: string[]) {
   if (!ids.length) return [];
   const { data, error } = await supabase.from('ImageAsset').select('id, owner_id, public_url, provider_identifier, is_selected, created_at, prompt_used')
     .eq('owner_type', TABLE[kind].owner).in('owner_id', ids).order('created_at', { ascending: true });
@@ -242,17 +247,20 @@ export async function sheetVersions(kind: Exclude<AttachmentKind, 'storyboard'>,
 }
 
 async function checkBelongsToEpisode(storyId: string, list: StoredAttachment[]) {
-  const [cast, places, objects, scenes] = await Promise.all([
+  const [cast, places, objects, scenes, references] = await Promise.all([
     supabase.from('StoryCharacter').select('character_id').eq('story_id', storyId),
     supabase.from('EpisodeLocation').select('location_id').eq('story_id', storyId),
     supabase.from('StoryProp').select('prop_id').eq('story_id', storyId),
     supabase.from('Scene').select('id').eq('story_id', storyId),
+    // Missing until its migration runs; then no reference can be attached.
+    supabase.from('SequenceReference').select('id').eq('story_id', storyId),
   ]);
   const ids: Record<AttachmentKind, Set<string>> = {
     character: new Set((cast.data || []).map((row) => row.character_id as string)),
     location: new Set((places.data || []).map((row) => row.location_id as string)),
     object: new Set((objects.data || []).map((row) => row.prop_id as string)),
     storyboard: new Set((scenes.data || []).map((row) => row.id as string)),
+    reference: new Set((references.data || []).map((row) => row.id as string)),
   };
   const outside = list.filter((item) => !ids[item.kind].has(item.id));
   if (outside.length) throw new AttachmentError(`Not part of this episode: ${outside.map((item) => item.label).join(', ')}. Link the asset to the episode first.`);

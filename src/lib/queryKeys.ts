@@ -22,6 +22,8 @@ export const queryKeys = {
   sequenceNotes: (storyId: string) => ['episode', storyId, 'sequence-notes'] as const,
   /** A sequence's storyboard and clip attachments, in order. */
   sequenceAttachments: (sceneId: string) => ['sequence-attachments', sceneId] as const,
+  /** A sequence's reference images (camera maps, seating maps). */
+  sequenceReferences: (sceneId: string) => ['sequence-references', sceneId] as const,
   /** The history of one sequence's beats and prompts. */
   promptVersions: (sceneId: string) => ['prompt-versions', sceneId] as const,
   /** Generated image takes of some owners (scenes, characters, locations, objects). */

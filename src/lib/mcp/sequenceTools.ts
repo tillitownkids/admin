@@ -9,6 +9,7 @@ import {
   buildShotPlan,
   parseScriptBeats,
   parseShotPlan,
+  planShotTiming,
   sceneBeats,
   serializeShotPlan,
   shotTakes,
@@ -16,13 +17,14 @@ import {
   type ShotSceneContext,
 } from '@/lib/sceneShots';
 import { MAX_BEATS_PER_SCENE } from '@/lib/storyboardGeneration';
-import { SCENE_MAX_SECONDS, SCENE_MIN_SECONDS, resolveBeatTimings, sceneLengthProblems, withBeatDurations } from '@/lib/sceneTiming';
+import { SCENE_MAX_SECONDS, SCENE_MIN_SECONDS, sceneLengthProblems, withBeatDurations } from '@/lib/sceneTiming';
 import { addClipTake } from '@/lib/sceneClips';
 import { processAndUploadStoryboardImageAsset } from '@/lib/storage';
 import { listGeneratedImageHistory, recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 import { clipPromptOf, isMissingTable, listPromptVersions, recordPromptVersion } from '@/lib/promptHistory';
 import { restorePromptVersion, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
 import { addSequenceNote, listSequenceNotes, setSequenceNoteStatus } from '@/lib/sequenceNotes';
+import { listSequenceReferences, recordSequenceReference, setReferenceIdentifier } from '@/lib/sequenceReferences';
 import {
   MAX_ATTACHMENTS,
   clipAttachLine,
@@ -111,7 +113,12 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
     if (errors.length) throw new ToolError(`The sequences were not saved:\n- ${errors.join('\n- ')}`);
 
     // Clip lengths: the script's [DURATION] lines, else what the dialogue needs.
-    const timings = resolveBeatTimings(beats, { beats: beats.flatMap((beat) => (beat.seconds ? [{ beat_number: beat.number, seconds: beat.seconds }] : [])) });
+    // Clip lengths as the script states them ([DURATION]), never shorter than the dialogue needs. A
+    // written length is the author's choice, so it is not capped the way the timing agent's guesses are.
+    const timings = beats.map((beat, index) => {
+      const timing = planShotTiming(beat);
+      return { beat: beat.number ?? index + 1, seconds: timing.seconds, speechSeconds: timing.dialogueWords ? timing.neededSeconds : 0, estimated: Boolean(beat.seconds) };
+    });
     const plans = sequences.map((sequence) => ({ ...sequence, scene_number: sequence.sequence_number }));
     const warnings = [
       ...sceneLengthProblems(plans, timings).map((problem) => problem.replace(/^Scene/, 'Sequence')),
@@ -219,6 +226,9 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
         : { planned: false, legacy_prompt: clipPromptOf(scene.video_prompt) },
       issues_and_notes: notes.notes.map((note) => ({ id: note.id, kind: note.kind, status: note.status, author: note.author, body: note.body, media_url: note.media_url, created_at: note.created_at })),
       attachments: { storyboard: attachmentSummary(storyboardAttachments), clip: attachmentSummary(clipAttachments) },
+      reference_images: (await listSequenceReferences({ sceneId: scene.id }).catch(() => ({ references: [] }))).references.map((item) => ({
+        reference_id: item.id, label: item.label, kind: item.kind, url: item.image_url, in_magnific: Boolean(item.magnific_identifier), issue_id: item.note_id,
+      })),
       history: history.versions.slice(0, 15).map((version) => ({ id: version.id, field: version.field, author: version.author, created_at: version.created_at, preview: version.value.slice(0, 160) })),
       url: sequenceUrl(origin, scene.story_id, scene.scene_number),
     };
@@ -376,6 +386,15 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
         has_storyboard: Boolean(item.storyboard_image_url),
         url: item.storyboard_image_url,
       })),
+      // Camera maps and other references made for this episode's sequences.
+      reference_images: (await listSequenceReferences({ storyId: scene.story_id }).catch(() => ({ references: [] }))).references.map((item) => ({
+        reference_id: item.id,
+        sequence_number: scenes.find((candidate) => candidate.id === item.scene_id)?.scene_number ?? null,
+        label: item.label,
+        kind: item.kind,
+        url: item.image_url,
+        in_magnific: Boolean(item.magnific_identifier),
+      })),
     };
   }));
 
@@ -387,8 +406,9 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
       target: z.enum(['storyboard', 'clip']),
       automatic: z.boolean().optional().describe('true: forget the chosen list and attach automatically.'),
       attachments: z.array(z.object({
-        type: z.enum(['character', 'location', 'object', 'storyboard']),
+        type: z.enum(['character', 'location', 'object', 'storyboard', 'reference']),
         name: z.string().optional().describe('Exact name of an episode character, location or object.'),
+        reference_id: z.string().uuid().optional().describe('For a reference image (camera map, seating map): its id from record_reference_image or get_attachable_assets.'),
         sequence_number: z.number().int().min(1).optional().describe("For a storyboard: whose storyboard (this sequence's for a clip, an earlier one for continuity)."),
         version_id: z.string().uuid().optional().describe('A specific version of the sheet or storyboard; default is the one in use.'),
         label: z.string().optional().describe('How the prompt names it, e.g. "Oasis Camp Night sheet". Default: "<name> sheet" or "SEQ 15 storyboard".'),
@@ -401,9 +421,18 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
     let list: StoredAttachment[] | null = null;
     if (!automatic) {
       if (!attachments?.length) throw new ToolError('Give the attachments in order, or automatic: true.');
-      const [cast, scenes] = await Promise.all([loadEpisodeCast(scene.story_id), loadScenes(scene.story_id)]);
+      const [cast, scenes, references] = await Promise.all([
+        loadEpisodeCast(scene.story_id),
+        loadScenes(scene.story_id),
+        listSequenceReferences({ storyId: scene.story_id }).catch(() => ({ references: [] })),
+      ]);
       const pools = { character: cast.characters, location: cast.locations, object: cast.objects } as const;
       list = attachments.map((item): StoredAttachment => {
+        if (item.type === 'reference') {
+          const reference = references.references.find((candidate) => candidate.id === item.reference_id);
+          if (!reference) throw new ToolError('A reference attachment needs the reference_id of a reference image of this episode (record_reference_image, get_attachable_assets).');
+          return { kind: 'reference', id: reference.id, take_id: null, label: item.label || reference.label, role: item.role ?? null };
+        }
         if (item.type === 'storyboard') {
           const number = item.sequence_number ?? scene.scene_number;
           const other = scenes.find((candidate) => candidate.scene_number === number);
@@ -444,6 +473,45 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
       warnings,
       url: sequenceUrl(origin, scene.story_id, scene.scene_number),
     };
+  }));
+
+  server.registerTool('record_reference_image', {
+    title: 'Record reference image',
+    description: "Saves a camera map, seating map or other reference image on a sequence, copied into the admin's storage. Make one only after the sequence's storyboard has failed several times on layout or positions (see the guide). Pass issue_id to link it to the issue it fixes, and magnific_identifier once the image is in Magnific (upload it with the Magnific connector); without one it cannot be sent to the generator. Then attach it with set_attachments (type reference).",
+    inputSchema: {
+      sequence_id: sequenceId,
+      image_url: z.string().url(),
+      label: z.string().min(1).describe('How prompts name it, e.g. "SEQ 03 camera map".'),
+      kind: z.enum(['camera_map', 'seating_map', 'reference']).optional().describe('Default: camera_map.'),
+      magnific_identifier: z.string().optional(),
+      issue_id: z.string().uuid().optional().describe('The issue (add_sequence_note) this reference image is the fix for.'),
+    },
+    annotations: WRITE,
+  }, ({ sequence_id, image_url, label, kind, magnific_identifier, issue_id }) => run(async () => {
+    const scene = await loadScene(sequence_id);
+    const reference = await recordSequenceReference({
+      sceneId: scene.id, label, kind: kind ?? 'camera_map', imageUrl: image_url,
+      magnificIdentifier: magnific_identifier, noteId: issue_id, author: 'claude',
+    });
+    return {
+      reference_id: reference.id,
+      url: reference.image_url,
+      in_magnific: Boolean(reference.magnific_identifier),
+      next: reference.magnific_identifier
+        ? 'Attach it with set_attachments (type reference, this reference_id) and describe each panel by left, center and right of frame; tell the model it is only a map and its arrows must never be drawn.'
+        : 'Upload it to Magnific to get its identifier, then call set_reference_identifier; until then it cannot be attached to a generation.',
+      sequence_url: sequenceUrl(origin, scene.story_id, scene.scene_number),
+    };
+  }));
+
+  server.registerTool('set_reference_identifier', {
+    title: 'Set reference identifier',
+    description: "Records the Magnific identifier of a reference image after it was uploaded to Magnific, so it can be sent with a storyboard or clip request.",
+    inputSchema: { reference_id: z.string().uuid(), magnific_identifier: z.string().min(1) },
+    annotations: WRITE,
+  }, ({ reference_id, magnific_identifier }) => run(async () => {
+    const reference = await setReferenceIdentifier(reference_id, magnific_identifier);
+    return { reference_id: reference.id, label: reference.label, in_magnific: true };
   }));
 
   server.registerTool('restore_prompt_version', {
