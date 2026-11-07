@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { parseScriptBeats, parseShotPlan, serializeShotPlan } from '@/lib/sceneShots';
+import { clipBeats, parseScriptBeats, parseShotPlan, serializeShotPlan, SHOT_DURATIONS, SHOT_PLAN_FORMAT, snapShotSeconds, type ClipSegment, type SceneShot } from '@/lib/sceneShots';
 import { replaceBeatBlocks, stripHtmlToMarkdown } from '@/lib/scriptText';
 import { clipPromptOf, loadPromptVersion, recordPromptVersion, type PromptAuthor } from '@/lib/promptHistory';
 
@@ -108,4 +108,71 @@ export async function restorePromptVersion(versionId: string, author: PromptAuth
   if (version.field === 'beats') return updateSequenceBeats(version.scene_id, version.value, author);
   if (version.field === 'storyboard_prompt') return updateStoryboardPrompt(version.scene_id, version.value, author);
   return updateClipPrompt(version.scene_id, version.value, author);
+}
+
+export interface ClipPromptInput {
+  /** The sequence's beats this clip plays, in order, each with its natural length in seconds. */
+  beats: { beat: number; seconds: number }[];
+  /** The full clip prompt, written by hand (attachments, panels, staging, script, timing). */
+  prompt: string;
+  title?: string;
+}
+
+/**
+ * Saves hand-written clip prompts for a sequence: one clip, or several clips of whole beats when the
+ * beats need more than one clip can hold at a natural pace (dialogue is never shortened or sped up).
+ * Each clip's length is the shortest accepted length that holds its beats; the last beat takes any
+ * slack. A clip that plays the same beats as before keeps its takes. A sequence's older single clip
+ * stays in use until the new clips are made.
+ */
+export async function saveClipPrompts(sceneId: string, clips: ClipPromptInput[], author: PromptAuthor) {
+  const scene = await loadSequence(sceneId);
+  if (!clips.length) throw new SequenceWriteError('Give at least one clip.');
+  const sequenceBeats = scene.beat_numbers || [];
+  const covered = clips.flatMap((clip) => clip.beats.map((entry) => entry.beat));
+  if (sequenceBeats.length && (covered.length !== sequenceBeats.length || covered.some((beat, index) => beat !== sequenceBeats[index]))) {
+    throw new SequenceWriteError(`The clips must play the sequence's beats ${sequenceBeats.join(', ')} once each, in order (got ${covered.join(', ')}).`);
+  }
+  const parsed = parseScriptBeats(stripHtmlToMarkdown(scene.script_beats || ''));
+  const titleOf = (beat: number) => parsed.find((entry) => entry.number === beat)?.title ?? `Beat ${beat}`;
+  const panelOf = (beat: number) => Math.max(1, sequenceBeats.indexOf(beat) + 1);
+  const previous = parseShotPlan(scene.video_prompt);
+
+  const shots: SceneShot[] = clips.map((clip, index) => {
+    if (!clip.prompt.trim()) throw new SequenceWriteError(`Clip ${index + 1} has no prompt.`);
+    const needed = clip.beats.reduce((sum, entry) => sum + entry.seconds, 0);
+    if (needed > SHOT_DURATIONS[SHOT_DURATIONS.length - 1]) {
+      throw new SequenceWriteError(`Clip ${index + 1} needs ${needed} s; a clip holds at most ${SHOT_DURATIONS[SHOT_DURATIONS.length - 1]} s. Split it into more clips.`);
+    }
+    const seconds = snapShotSeconds(needed);
+    let cursor = 0;
+    const segments: ClipSegment[] = clip.beats.map((entry, k) => {
+      const start = cursor;
+      const end = k === clip.beats.length - 1 ? seconds : Math.round((cursor + entry.seconds) * 10) / 10;
+      cursor = end;
+      return { panel: panelOf(entry.beat), beat: entry.beat, title: titleOf(entry.beat), start, end, neededSeconds: entry.seconds, dialogueWords: 0 };
+    });
+    const same = previous?.shots.find((shot) => {
+      const beats = clipBeats(shot);
+      return beats.length === clip.beats.length && beats.every((beat, k) => beat === clip.beats[k].beat);
+    });
+    return {
+      shot: index + 1,
+      beat: clip.beats.length === 1 ? clip.beats[0].beat : null,
+      title: clip.title ?? clip.beats.map((entry) => titleOf(entry.beat)).join(' · '),
+      seconds,
+      neededSeconds: needed,
+      dialogueWords: 0,
+      prompt: clip.prompt.trim(),
+      segments,
+      videoUrl: same?.videoUrl ?? null,
+      magnificId: same?.magnificId ?? null,
+      ...(same?.takes?.length ? { takes: same.takes } : {}),
+    };
+  });
+
+  await update(sceneId, { video_prompt: serializeShotPlan({ format: SHOT_PLAN_FORMAT, shots }) });
+  // History keeps the first clip's prompt (what restore puts back); the others are in the plan.
+  await recordPromptVersion(sceneId, 'clip_prompt', shots[0].prompt, author, clipPromptOf(scene.video_prompt));
+  return shots.map((shot) => ({ clip: shot.shot, beats: clipBeats(shot), seconds: shot.seconds, keptTakes: shot.takes?.length ?? 0 }));
 }

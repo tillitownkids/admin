@@ -22,7 +22,7 @@ import { addClipTake } from '@/lib/sceneClips';
 import { processAndUploadStoryboardImageAsset } from '@/lib/storage';
 import { listGeneratedImageHistory, recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 import { clipPromptOf, isMissingTable, listPromptVersions, recordPromptVersion } from '@/lib/promptHistory';
-import { restorePromptVersion, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
+import { restorePromptVersion, saveClipPrompts, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
 import { addSequenceNote, listSequenceNotes, setSequenceNoteStatus } from '@/lib/sequenceNotes';
 import { listSequenceReferences, recordSequenceReference, setReferenceIdentifier } from '@/lib/sequenceReferences';
 import {
@@ -201,7 +201,8 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
       resolveSequenceAttachments(scene.id, 'storyboard'),
       resolveSequenceAttachments(scene.id, 'clip'),
     ]);
-    const clip = parseShotPlan(scene.video_prompt)?.shots[0];
+    const shots = parseShotPlan(scene.video_prompt)?.shots ?? [];
+    const clip = shots[0];
     return {
       id: scene.id,
       sequence_number: scene.scene_number,
@@ -224,6 +225,9 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
           takes: shotTakes(clip).map((take) => ({ url: take.url, in_use: take.url === clip.videoUrl, created_at: take.createdAt })),
         }
         : { planned: false, legacy_prompt: clipPromptOf(scene.video_prompt) },
+      clips: shots.length > 1
+        ? shots.map((shot) => ({ clip: shot.shot, beats: shot.segments?.map((segment) => segment.beat) ?? [shot.beat], seconds: shot.seconds, prompt: shot.prompt, clip_in_use: shot.videoUrl ?? null, takes: shotTakes(shot).length }))
+        : undefined,
       issues_and_notes: notes.notes.map((note) => ({ id: note.id, kind: note.kind, status: note.status, author: note.author, body: note.body, media_url: note.media_url, created_at: note.created_at })),
       attachments: { storyboard: attachmentSummary(storyboardAttachments), clip: attachmentSummary(clipAttachments) },
       reference_images: (await listSequenceReferences({ sceneId: scene.id }).catch(() => ({ references: [] }))).references.map((item) => ({
@@ -512,6 +516,25 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
   }, ({ reference_id, magnific_identifier }) => run(async () => {
     const reference = await setReferenceIdentifier(reference_id, magnific_identifier);
     return { reference_id: reference.id, label: reference.label, in_magnific: true };
+  }));
+
+  server.registerTool('save_clip_prompts', {
+    title: 'Save clip prompts',
+    description:
+      "Saves clip prompts written by hand in the production guide's clip prompt template (section 4b): one clip for the whole sequence, or several clips of whole beats when the beats need more than 15 s at a natural pace — never shorten dialogue or speed it up to fit. Give each clip its beats in order with each beat's natural length; together the clips must play the sequence's beats once each. A clip that plays the same beats as before keeps its takes; an older single clip stays in use until new clips are made.",
+    inputSchema: {
+      sequence_id: sequenceId,
+      clips: z.array(z.object({
+        beats: z.array(z.object({ beat: z.number().int(), seconds: z.number().positive().max(15) })).min(1),
+        prompt: z.string().min(1),
+        title: z.string().optional(),
+      })).min(1).max(6),
+    },
+    annotations: WRITE,
+  }, ({ sequence_id, clips }) => run(async () => {
+    const result = await saveClipPrompts(sequence_id, clips, 'claude');
+    const scene = await loadScene(sequence_id);
+    return { saved: true, clips: result, url: sequenceUrl(origin, scene.story_id, scene.scene_number) };
   }));
 
   server.registerTool('restore_prompt_version', {
