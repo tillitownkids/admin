@@ -22,7 +22,7 @@ import { addClipTake } from '@/lib/sceneClips';
 import { processAndUploadStoryboardImageAsset } from '@/lib/storage';
 import { listGeneratedImageHistory, recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 import { clipPromptOf, isMissingTable, listPromptVersions, recordPromptVersion } from '@/lib/promptHistory';
-import { restorePromptVersion, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
+import { restorePromptVersion, saveClipPrompts, splitSequence, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
 import { addSequenceNote, listSequenceNotes, setSequenceNoteStatus } from '@/lib/sequenceNotes';
 import { listSequenceReferences, recordSequenceReference, setReferenceIdentifier } from '@/lib/sequenceReferences';
 import {
@@ -512,6 +512,38 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
   }, ({ reference_id, magnific_identifier }) => run(async () => {
     const reference = await setReferenceIdentifier(reference_id, magnific_identifier);
     return { reference_id: reference.id, label: reference.label, in_magnific: true };
+  }));
+
+  server.registerTool('save_clip_prompt', {
+    title: 'Save clip prompt',
+    description:
+      "Saves a sequence's clip prompt written by hand in the production guide's clip prompt template (section 4b). One sequence is one clip. Give the sequence's beats in order with each beat's natural length (dialogue at a natural pace, every pause counted); the clip is the shortest accepted length that holds them. If they need more than 15 s, do not shorten or speed up dialogue: split the sequence with split_sequence first and write a prompt for each part. Takes of a clip with the same beats are kept.",
+    inputSchema: {
+      sequence_id: sequenceId,
+      beats: z.array(z.object({ beat: z.number().int(), seconds: z.number().positive().max(15) })).min(1),
+      prompt: z.string().min(1),
+    },
+    annotations: WRITE,
+  }, ({ sequence_id, beats, prompt }) => run(async () => {
+    const result = await saveClipPrompts(sequence_id, [{ beats, prompt }], 'claude');
+    const scene = await loadScene(sequence_id);
+    return { saved: true, clip: result[0], url: sequenceUrl(origin, scene.story_id, scene.scene_number) };
+  }));
+
+  server.registerTool('split_sequence', {
+    title: 'Split sequence',
+    description:
+      "Splits a sequence in two after one of its beats, when its beats need more than one 15 s clip at a natural pace (one sequence is always one clip). The new sequence comes right after it and the later sequences move up one number. It gets the same location, cast and objects, and either a copy of the same storyboard (storyboard: 'same' — its clip can open on the later panels; upload that copy to Magnific and record_storyboard_take before generating its clip) or none ('new' — make its own). Then save a clip prompt for each part. Show the user the split before doing it.",
+    inputSchema: {
+      sequence_id: sequenceId,
+      after_beat: z.number().int().describe('The last beat that stays in this sequence'),
+      storyboard: z.enum(['same', 'new']),
+    },
+    annotations: WRITE,
+  }, ({ sequence_id, after_beat, storyboard }) => run(async () => {
+    const result = await splitSequence(sequence_id, { afterBeat: after_beat, storyboard: storyboard === 'same' ? 'same' : 'none' }, 'claude');
+    const scene = await loadScene(sequence_id);
+    return { ...result, next: 'Save a clip prompt for each part (save_clip_prompt).', url: sequenceUrl(origin, scene.story_id, scene.scene_number) };
   }));
 
   server.registerTool('restore_prompt_version', {

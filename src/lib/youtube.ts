@@ -84,10 +84,33 @@ export interface YouTubeUploadInput {
   onProgress?: (progress: number) => void;
 }
 
+/**
+ * Renders made in TilliTown Studio stay on the editor's PC and are served through a Cloudflare
+ * Tunnel protected by Cloudflare Access. The admin passes Access with a service token, sent only to
+ * that host (STUDIO_MEDIA_HOST).
+ */
+function sourceHeaders(sourceUrl: string): Record<string, string> {
+  const host = process.env.STUDIO_MEDIA_HOST?.trim().toLowerCase();
+  const id = process.env.CF_ACCESS_CLIENT_ID?.trim();
+  const secret = process.env.CF_ACCESS_CLIENT_SECRET?.trim();
+  if (!host || !id || !secret) return {};
+  try {
+    if (new URL(sourceUrl).host.toLowerCase() !== host) return {};
+  } catch {
+    return {};
+  }
+  return { "CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret };
+}
+
 export async function uploadVideoToYouTube(input: YouTubeUploadInput) {
-  const source = await fetch(input.sourceUrl);
+  const source = await fetch(input.sourceUrl, { headers: sourceHeaders(input.sourceUrl) });
   if (!source.ok || !source.body) {
-    throw new Error(`Could not download the stitched video (${source.status}).`);
+    const fromStudio = Object.keys(sourceHeaders(input.sourceUrl)).length > 0;
+    throw new Error(
+      fromStudio
+        ? `Could not download the video from TilliTown Studio (${source.status}). The editor's PC must be on with the review tunnel running.`
+        : `Could not download the stitched video (${source.status}).`,
+    );
   }
 
   const contentType = source.headers.get("content-type") || "video/mp4";
