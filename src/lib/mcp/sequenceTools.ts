@@ -22,7 +22,7 @@ import { addClipTake } from '@/lib/sceneClips';
 import { processAndUploadStoryboardImageAsset } from '@/lib/storage';
 import { listGeneratedImageHistory, recordGeneratedImageVersion } from '@/lib/generatedImageHistory';
 import { clipPromptOf, isMissingTable, listPromptVersions, recordPromptVersion } from '@/lib/promptHistory';
-import { restorePromptVersion, saveClipPrompts, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
+import { restorePromptVersion, saveClipPrompts, splitSequence, updateSequenceBeats, updateStoryboardPrompt } from '@/lib/sequenceWrites';
 import { addSequenceNote, listSequenceNotes, setSequenceNoteStatus } from '@/lib/sequenceNotes';
 import { listSequenceReferences, recordSequenceReference, setReferenceIdentifier } from '@/lib/sequenceReferences';
 import {
@@ -201,8 +201,7 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
       resolveSequenceAttachments(scene.id, 'storyboard'),
       resolveSequenceAttachments(scene.id, 'clip'),
     ]);
-    const shots = parseShotPlan(scene.video_prompt)?.shots ?? [];
-    const clip = shots[0];
+    const clip = parseShotPlan(scene.video_prompt)?.shots[0];
     return {
       id: scene.id,
       sequence_number: scene.scene_number,
@@ -225,9 +224,6 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
           takes: shotTakes(clip).map((take) => ({ url: take.url, in_use: take.url === clip.videoUrl, created_at: take.createdAt })),
         }
         : { planned: false, legacy_prompt: clipPromptOf(scene.video_prompt) },
-      clips: shots.length > 1
-        ? shots.map((shot) => ({ clip: shot.shot, beats: shot.segments?.map((segment) => segment.beat) ?? [shot.beat], seconds: shot.seconds, prompt: shot.prompt, clip_in_use: shot.videoUrl ?? null, takes: shotTakes(shot).length }))
-        : undefined,
       issues_and_notes: notes.notes.map((note) => ({ id: note.id, kind: note.kind, status: note.status, author: note.author, body: note.body, media_url: note.media_url, created_at: note.created_at })),
       attachments: { storyboard: attachmentSummary(storyboardAttachments), clip: attachmentSummary(clipAttachments) },
       reference_images: (await listSequenceReferences({ sceneId: scene.id }).catch(() => ({ references: [] }))).references.map((item) => ({
@@ -518,23 +514,36 @@ export function registerSequenceTools(server: McpServer, { origin }: { origin: s
     return { reference_id: reference.id, label: reference.label, in_magnific: true };
   }));
 
-  server.registerTool('save_clip_prompts', {
-    title: 'Save clip prompts',
+  server.registerTool('save_clip_prompt', {
+    title: 'Save clip prompt',
     description:
-      "Saves clip prompts written by hand in the production guide's clip prompt template (section 4b): one clip for the whole sequence, or several clips of whole beats when the beats need more than 15 s at a natural pace — never shorten dialogue or speed it up to fit. Give each clip its beats in order with each beat's natural length; together the clips must play the sequence's beats once each. A clip that plays the same beats as before keeps its takes; an older single clip stays in use until new clips are made.",
+      "Saves a sequence's clip prompt written by hand in the production guide's clip prompt template (section 4b). One sequence is one clip. Give the sequence's beats in order with each beat's natural length (dialogue at a natural pace, every pause counted); the clip is the shortest accepted length that holds them. If they need more than 15 s, do not shorten or speed up dialogue: split the sequence with split_sequence first and write a prompt for each part. Takes of a clip with the same beats are kept.",
     inputSchema: {
       sequence_id: sequenceId,
-      clips: z.array(z.object({
-        beats: z.array(z.object({ beat: z.number().int(), seconds: z.number().positive().max(15) })).min(1),
-        prompt: z.string().min(1),
-        title: z.string().optional(),
-      })).min(1).max(6),
+      beats: z.array(z.object({ beat: z.number().int(), seconds: z.number().positive().max(15) })).min(1),
+      prompt: z.string().min(1),
     },
     annotations: WRITE,
-  }, ({ sequence_id, clips }) => run(async () => {
-    const result = await saveClipPrompts(sequence_id, clips, 'claude');
+  }, ({ sequence_id, beats, prompt }) => run(async () => {
+    const result = await saveClipPrompts(sequence_id, [{ beats, prompt }], 'claude');
     const scene = await loadScene(sequence_id);
-    return { saved: true, clips: result, url: sequenceUrl(origin, scene.story_id, scene.scene_number) };
+    return { saved: true, clip: result[0], url: sequenceUrl(origin, scene.story_id, scene.scene_number) };
+  }));
+
+  server.registerTool('split_sequence', {
+    title: 'Split sequence',
+    description:
+      "Splits a sequence in two after one of its beats, when its beats need more than one 15 s clip at a natural pace (one sequence is always one clip). The new sequence comes right after it and the later sequences move up one number. It gets the same location, cast and objects, and either a copy of the same storyboard (storyboard: 'same' — its clip can open on the later panels; upload that copy to Magnific and record_storyboard_take before generating its clip) or none ('new' — make its own). Then save a clip prompt for each part. Show the user the split before doing it.",
+    inputSchema: {
+      sequence_id: sequenceId,
+      after_beat: z.number().int().describe('The last beat that stays in this sequence'),
+      storyboard: z.enum(['same', 'new']),
+    },
+    annotations: WRITE,
+  }, ({ sequence_id, after_beat, storyboard }) => run(async () => {
+    const result = await splitSequence(sequence_id, { afterBeat: after_beat, storyboard: storyboard === 'same' ? 'same' : 'none' }, 'claude');
+    const scene = await loadScene(sequence_id);
+    return { ...result, next: 'Save a clip prompt for each part (save_clip_prompt).', url: sequenceUrl(origin, scene.story_id, scene.scene_number) };
   }));
 
   server.registerTool('restore_prompt_version', {

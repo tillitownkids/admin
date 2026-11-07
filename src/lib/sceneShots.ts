@@ -515,10 +515,8 @@ export function clipBeats(shot: Pick<SceneShot, 'beat' | 'segments'>): (number |
 
 /** Whether the plan is one clip holding exactly these beats, as planning makes it now. */
 export function planMatchesBeats(plan: SceneShotPlan, beatNumbers: (number | null)[]): boolean {
-  // One clip holding every beat, or several clips of whole beats (a sequence whose dialogue needs
-  // more than one clip at a natural pace). Older one-clip-per-panel plans have no segments.
-  if (plan.shots.length > 1 && plan.shots.some((shot) => !shot.segments?.length)) return false;
-  const covered = plan.shots.flatMap((shot) => clipBeats(shot));
+  if (plan.shots.length !== 1) return false;
+  const covered = clipBeats(plan.shots[0]);
   return covered.length === beatNumbers.length && covered.every((beat, index) => beat === beatNumbers[index]);
 }
 

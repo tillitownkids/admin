@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { clipBeats, parseScriptBeats, parseShotPlan, serializeShotPlan, SHOT_DURATIONS, SHOT_PLAN_FORMAT, snapShotSeconds, type ClipSegment, type SceneShot } from '@/lib/sceneShots';
-import { replaceBeatBlocks, stripHtmlToMarkdown } from '@/lib/scriptText';
+import { replaceBeatBlocks, scriptBeatBlocks, stripHtmlToMarkdown } from '@/lib/scriptText';
 import { clipPromptOf, loadPromptVersion, recordPromptVersion, type PromptAuthor } from '@/lib/promptHistory';
 
 // Writes to one sequence's beats and prompts, each recorded in its history. Used by the admin's
@@ -127,7 +127,7 @@ export interface ClipPromptInput {
  */
 export async function saveClipPrompts(sceneId: string, clips: ClipPromptInput[], author: PromptAuthor) {
   const scene = await loadSequence(sceneId);
-  if (!clips.length) throw new SequenceWriteError('Give at least one clip.');
+  if (clips.length !== 1) throw new SequenceWriteError('One sequence is one clip. If its beats need more than 15 s at a natural pace, split the sequence first (split_sequence) and give each part its own clip prompt.');
   const sequenceBeats = scene.beat_numbers || [];
   const covered = clips.flatMap((clip) => clip.beats.map((entry) => entry.beat));
   if (sequenceBeats.length && (covered.length !== sequenceBeats.length || covered.some((beat, index) => beat !== sequenceBeats[index]))) {
@@ -142,7 +142,7 @@ export async function saveClipPrompts(sceneId: string, clips: ClipPromptInput[],
     if (!clip.prompt.trim()) throw new SequenceWriteError(`Clip ${index + 1} has no prompt.`);
     const needed = clip.beats.reduce((sum, entry) => sum + entry.seconds, 0);
     if (needed > SHOT_DURATIONS[SHOT_DURATIONS.length - 1]) {
-      throw new SequenceWriteError(`Clip ${index + 1} needs ${needed} s; a clip holds at most ${SHOT_DURATIONS[SHOT_DURATIONS.length - 1]} s. Split it into more clips.`);
+      throw new SequenceWriteError(`This clip needs ${needed} s; a clip holds at most ${SHOT_DURATIONS[SHOT_DURATIONS.length - 1]} s. Split the sequence (split_sequence) instead of shortening or speeding up the dialogue.`);
     }
     const seconds = snapShotSeconds(needed);
     let cursor = 0;
@@ -175,4 +175,102 @@ export async function saveClipPrompts(sceneId: string, clips: ClipPromptInput[],
   // History keeps the first clip's prompt (what restore puts back); the others are in the plan.
   await recordPromptVersion(sceneId, 'clip_prompt', shots[0].prompt, author, clipPromptOf(scene.video_prompt));
   return shots.map((shot) => ({ clip: shot.shot, beats: clipBeats(shot), seconds: shot.seconds, keptTakes: shot.takes?.length ?? 0 }));
+}
+
+/**
+ * Splits a sequence in two after one of its beats, when its beats need more than one clip at a
+ * natural pace: one sequence is always one clip. The new sequence comes right after it (the later
+ * sequences move up one number), with the same location, cast and objects, and either a copy of the
+ * same storyboard (its clip can open on the later panels) or none yet. The original keeps its takes,
+ * notes and history; its clip prompt should then be saved again for its remaining beats.
+ */
+export async function splitSequence(sceneId: string, input: { afterBeat: number; storyboard: 'same' | 'none' }, author: PromptAuthor) {
+  const { data: scene, error } = await supabase.from('Scene').select('*').eq('id', sceneId).maybeSingle();
+  if (error) throw new SequenceWriteError(error.message);
+  if (!scene) throw new SequenceWriteError('The sequence no longer exists.');
+  const beats: number[] = scene.beat_numbers || [];
+  const cut = beats.indexOf(input.afterBeat);
+  if (cut < 0 || cut >= beats.length - 1) throw new SequenceWriteError(`Split after one of beats ${beats.slice(0, -1).join(', ')} (the sequence has beats ${beats.join(', ')}).`);
+  const first = beats.slice(0, cut + 1);
+  const second = beats.slice(cut + 1);
+
+  const markdown = stripHtmlToMarkdown(scene.script_beats || '');
+  const blocks = scriptBeatBlocks(markdown);
+  const missing = beats.filter((beat) => !blocks.has(beat));
+  if (missing.length) throw new SequenceWriteError(`The sequence's beat text is missing beat(s) ${missing.join(', ')}; fix its beats first.`);
+  const textOf = (list: number[]) => list.map((beat) => blocks.get(beat)!).join('\n\n---\n\n');
+  const titles = parseScriptBeats(markdown);
+  const titleOf = (list: number[]) => list.map((beat) => titles.find((entry) => entry.number === beat)?.title || `Beat ${beat}`).join(' · ');
+
+  // Make room: later sequences move up one, highest first (numbers are unique per location).
+  const { data: later, error: laterError } = await supabase
+    .from('Scene').select('id, scene_number, order_index').eq('story_id', scene.story_id).gt('scene_number', scene.scene_number).order('scene_number', { ascending: false });
+  if (laterError) throw new SequenceWriteError(laterError.message);
+  for (const row of later || []) {
+    const { error: moveError } = await supabase.from('Scene').update({ scene_number: row.scene_number + 1, order_index: (row.order_index ?? row.scene_number) + 1 }).eq('id', row.id);
+    if (moveError) throw new SequenceWriteError(`Sequence ${row.scene_number} could not be renumbered: ${moveError.message}`);
+  }
+
+  const now = new Date().toISOString();
+  const { data: created, error: createError } = await supabase.from('Scene').insert([{
+    episode_location_id: scene.episode_location_id,
+    story_id: scene.story_id,
+    scene_number: scene.scene_number + 1,
+    order_index: (scene.order_index ?? scene.scene_number) + 1,
+    description: titleOf(second),
+    storyboard_prompt: input.storyboard === 'same' ? scene.storyboard_prompt : '',
+    storyboard_image_url: null,
+    storyboard_status: 'pending',
+    beats_status: scene.beats_status,
+    script_beats: textOf(second),
+    beat_numbers: second,
+    video_prompt: '',
+    created_at: now,
+    updated_at: now,
+  }]).select('id').single();
+  if (createError) throw new SequenceWriteError(`The new sequence could not be made: ${createError.message}`);
+  const newId = created.id as string;
+
+  const [{ data: cast }, { data: props }] = await Promise.all([
+    supabase.from('SceneCharacter').select('character_id').eq('scene_id', sceneId),
+    supabase.from('SceneProp').select('prop_id').eq('scene_id', sceneId),
+  ]);
+  if (cast?.length) await supabase.from('SceneCharacter').insert(cast.map((row) => ({ scene_id: newId, character_id: row.character_id })));
+  if (props?.length) await supabase.from('SceneProp').insert(props.map((row) => ({ scene_id: newId, prop_id: row.prop_id })));
+
+  // The same storyboard, as the new sequence's own file, so deleting one never breaks the other.
+  // It has no Magnific identifier yet (identifiers are one per sequence): upload it to Magnific and
+  // record it with record_storyboard_take before generating the clip.
+  if (input.storyboard === 'same' && scene.storyboard_image_url) {
+    const { data: asset } = await supabase
+      .from('ImageAsset').select('*').eq('owner_type', 'scene_storyboard').eq('owner_id', sceneId).eq('public_url', scene.storyboard_image_url).limit(1).maybeSingle();
+    let publicUrl = scene.storyboard_image_url as string;
+    const bucket: string | null = asset?.storage_bucket ?? null;
+    let path: string | null = asset?.storage_path ?? null;
+    if (bucket && path) {
+      const copyPath = `${newId}/${Date.now()}-${path.split('/').pop()}`;
+      const { error: copyError } = await supabase.storage.from(bucket).copy(path, copyPath);
+      if (!copyError) {
+        path = copyPath;
+        publicUrl = supabase.storage.from(bucket).getPublicUrl(copyPath).data.publicUrl;
+      }
+    }
+    await supabase.from('ImageAsset').insert([{
+      owner_type: 'scene_storyboard',
+      owner_id: newId,
+      storage_path: path ?? publicUrl,
+      storage_bucket: bucket,
+      public_url: publicUrl,
+      source: 'split',
+      prompt_used: scene.storyboard_prompt,
+      is_selected: true,
+      provider_identifier: null,
+    }]);
+    await supabase.from('Scene').update({ storyboard_image_url: publicUrl, storyboard_status: scene.storyboard_status }).eq('id', newId);
+  }
+
+  await update(sceneId, { beat_numbers: first, script_beats: textOf(first), description: titleOf(first) });
+  await recordPromptVersion(sceneId, 'beats', textOf(first), author, scene.script_beats);
+  await recordPromptVersion(newId, 'beats', textOf(second), author);
+  return { sequence: scene.scene_number, beats: first, newSequenceId: newId, newSequence: scene.scene_number + 1, newBeats: second };
 }
